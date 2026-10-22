@@ -73,3 +73,7 @@ systemctl disable --now ats-beta-api ats-beta-worker@scheduler ats-beta-worker@t
 ## Доказательства и ограничения
 
 В среде разработки отдельно проверены 45 backend-тестов на PostgreSQL 16, сквозной simulator/HTTP workflow с пятью процессами и 100 запросами без ошибок, официальный checksum архива Node и синтаксис shell. Отчёты: `docs/evidence/postgres16-tests.txt` и `docs/evidence/postgres16-http-smoke.json`. Полный root-установщик, APT и запуск systemd на пользовательском Ubuntu-сервере **ещё не выполнялись**. В облачном контейнере нет целевых `/opt/ats-beta` и `postgresql.service`, поэтому проверка unit dependencies должна завершиться на сервере после установки prerequisites. Установщик запускает `systemd-analyze verify` перед включением units. Нельзя считать эту установку либо live-телефонию уже выполненными по наличию файлов в Git.
+
+## Обновление кабинета 0.2
+
+Для уже установленной и работающей беты используйте [отдельный updater и импорт](WORKSPACE_UPDATE_RU.md), а не повторный начальный installer. Новый кабинет и его ограничения описаны в [матрице переноса](FEATURE_PARITY_RU.md). На пользовательском сервере исходная бета была подтверждена выводом ready/live_calls=false и active для API/четырёх воркеров; новый updater на этом сервере ещё не выполнялся.

@@ -128,6 +128,136 @@ class AmoCRM:
             ],
         )
 
+    def read(self, path, params=None):
+        try:
+            response = self.client.get(
+                self.url + path, headers={"Authorization": f"Bearer {self.token}"}, params=params
+            )
+        except httpx.TransportError as exc:
+            raise Retryable("crm_read_failed") from exc
+        if response.status_code == 204:
+            return {}
+        if response.status_code == 429 or response.status_code >= 500:
+            raise Retryable("crm_read_unavailable")
+        if response.status_code != 200:
+            raise Rejected(f"crm_read_http_{response.status_code}")
+        try:
+            result = response.json()
+            if not isinstance(result, dict):
+                raise ValueError("object required")
+            return result
+        except ValueError as exc:
+            raise Retryable("crm_invalid_read_response") from exc
+
+    def ensure_contact(self, name, phone, responsible=None):
+        digits = phone.lstrip("+")
+        for page in range(1, 21):
+            contacts = (
+                self.read("/api/v4/contacts", {"query": digits, "limit": 250, "page": page})
+                .get("_embedded", {})
+                .get("contacts", [])
+            )
+            for contact in contacts:
+                for field in contact.get("custom_fields_values") or []:
+                    if field.get("field_code") == "PHONE":
+                        for value in field.get("values") or []:
+                            number = "".join(c for c in str(value.get("value", "")) if c.isdigit())
+                            if len(number) == 11 and number.startswith("8"):
+                                number = "7" + number[1:]
+                            if number == digits:
+                                return int(contact["id"])
+            if len(contacts) < 250:
+                break
+        else:
+            raise Rejected("crm_contact_search_limit")
+        data = {
+            "name": name,
+            "custom_fields_values": [
+                {"field_code": "PHONE", "values": [{"value": phone, "enum_code": "WORK"}]}
+            ],
+        }
+        if responsible:
+            data["responsible_user_id"] = responsible
+        response = write_request(
+            self.client,
+            self.url + "/api/v4/contacts",
+            headers={"Authorization": f"Bearer {self.token}"},
+            json=[data],
+        )
+        try:
+            return int(response.json()["_embedded"]["contacts"][0]["id"])
+        except (ValueError, KeyError, TypeError, IndexError) as exc:
+            raise DeliveryUnknown() from exc
+
+    def create_task(self, attempt_id, contact_id, due_hours=24, responsible=None):
+        from datetime import UTC, datetime, timedelta
+
+        marker = f"ATS#{attempt_id}"
+        for page in range(1, 21):
+            tasks = (
+                self.read(
+                    "/api/v4/tasks",
+                    {
+                        "filter[entity_id]": contact_id,
+                        "filter[entity_type]": "contacts",
+                        "limit": 250,
+                        "page": page,
+                    },
+                )
+                .get("_embedded", {})
+                .get("tasks", [])
+            )
+            if any(marker in str(t.get("text", "")) for t in tasks):
+                return
+            if len(tasks) < 250:
+                break
+        else:
+            raise Rejected("crm_task_reconciliation_limit")
+        task = {
+            "text": f"{marker} Обработать результат звонка ATS",
+            "entity_id": contact_id,
+            "entity_type": "contacts",
+            "task_type_id": 1,
+            "complete_till": int((datetime.now(UTC) + timedelta(hours=due_hours)).timestamp()),
+        }
+        if responsible:
+            task["responsible_user_id"] = responsible
+        write_request(
+            self.client,
+            self.url + "/api/v4/tasks",
+            headers={"Authorization": f"Bearer {self.token}"},
+            json=[task],
+        )
+
+    def register_call(
+        self,
+        attempt_id,
+        phone,
+        status,
+        created_at,
+        duration=0,
+        responsible=None,
+        direction="outbound",
+    ):
+        data = {
+            "phone": phone.lstrip("+"),
+            "direction": direction,
+            "duration": duration,
+            "source": "ATS",
+            "call_status": 4 if status == "completed" else 6,
+            "call_result": status,
+            "created_at": int(created_at.timestamp()),
+            "uniq": str(attempt_id),
+        }
+        if responsible:
+            data["responsible_user_id"] = responsible
+        write_request(
+            self.client,
+            self.url + "/api/v4/calls",
+            headers={"Authorization": f"Bearer {self.token}"},
+            json=[data],
+        )
+
 
 class AMI:
     """One connection, one reader, correlated responses. Asterisk UserEvents carry call UUIDs."""
@@ -227,7 +357,7 @@ class AMI:
                     self.sock = None
             raw.close()
 
-    def originate(self, attempt_id, phone):
+    def originate(self, attempt_id, phone, caller_id=None, media=False, operator_ext=""):
         from ats.schemas import phone_e164
 
         phone = phone_e164(phone)
@@ -241,8 +371,10 @@ class AMI:
                 ("Priority", "1"),
                 ("Timeout", "30000"),
                 ("Async", "true"),
-                ("CallerID", self.config.ami_caller_id),
+                ("CallerID", caller_id or self.config.ami_caller_id),
                 ("Variable", f"__ATS_ATTEMPT_ID={attempt_id}"),
+                ("Variable", f"__ATS_MEDIA={int(media)}"),
+                ("Variable", f"__ATS_OPERATOR_EXT={operator_ext}"),
             ],
             action_id=str(attempt_id),
         )

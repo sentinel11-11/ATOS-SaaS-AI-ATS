@@ -90,6 +90,7 @@ def principal(request: Request, db=Depends(session)) -> Principal:
     if row is None:
         raise Problem(401, "session_expired")
     session_row, user = row
+    request.state.tenant_id = user.tenant_id
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         csrf = request.headers.get("x-csrf-token", "")
         if not csrf or not secrets.compare_digest(digest(csrf), session_row.csrf_hash):

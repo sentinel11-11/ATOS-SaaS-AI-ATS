@@ -101,6 +101,12 @@ def main():
                 raise RuntimeError("Separate workers did not complete simulated call")
             assert client.get("/").status_code == 200
             assert "ATS" in client.get("/").text
+            if os.environ.get("ATS_BROWSER_SMOKE") == "true":
+                subprocess.run(["node", "scripts/ui-smoke.mjs"], check=True)
+            workspace = client.get("/api/v1/workspace/calls")
+            workspace.raise_for_status()
+            assert workspace.json()["total"] == 1
+            assert client.get("/api/v1/workspace/reports").json()["total"] == 1
             cookie = client.cookies["ats_session"]
 
             def request(_):

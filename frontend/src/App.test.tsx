@@ -46,38 +46,60 @@ it("keeps the login screen after a rejected password", async () => {
 
 it("preserves a rejected contact and lets the user correct its phone", async () => {
   const contacts: unknown[] = [];
-  const fetcher = vi.fn().mockImplementation((path: string, options?: RequestInit) => {
-    if (path.endsWith("/auth/me"))
-      return Promise.resolve(json({ login: "admin", role: "admin" }));
-    if (path.endsWith("/health/ready"))
-      return Promise.resolve(json({ live_calls: false }));
-    if (path.endsWith("/contacts") && options?.method === "POST") {
-      const data = JSON.parse(String(options.body));
-      if (!data.phone.startsWith("+")) return Promise.resolve(json({
-        error: "validation_failed",
-        fields: [{ location: ["body", "phone"], type: "phone_e164" }],
-      }, 422));
-      const contact = { ...data, id: "contact-1", blocked: false };
-      contacts.push(contact);
-      return Promise.resolve(json(contact, 201));
-    }
-    return Promise.resolve(json(path.endsWith("/contacts") ? contacts : []));
-  });
+  const fetcher = vi
+    .fn()
+    .mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/auth/me"))
+        return Promise.resolve(json({ login: "admin", role: "admin" }));
+      if (path.endsWith("/health/ready"))
+        return Promise.resolve(json({ live_calls: false }));
+      if (path.endsWith("/contacts") && options?.method === "POST") {
+        const data = JSON.parse(String(options.body));
+        if (!data.phone.startsWith("+"))
+          return Promise.resolve(
+            json(
+              {
+                error: "validation_failed",
+                fields: [{ location: ["body", "phone"], type: "phone_e164" }],
+              },
+              422,
+            ),
+          );
+        const contact = { ...data, id: "contact-1", blocked: false };
+        contacts.push(contact);
+        return Promise.resolve(json(contact, 201));
+      }
+      if (path.includes("/workspace/contacts?"))
+        return Promise.resolve(
+          json({ items: contacts, total: contacts.length }),
+        );
+      if (path.endsWith("/workspace/dashboard"))
+        return Promise.resolve(
+          json({ counts: {}, tenant: {}, active_calls: [] }),
+        );
+      return Promise.resolve(json(path.endsWith("/contacts") ? contacts : []));
+    });
   vi.stubGlobal("fetch", fetcher);
   render(<App />);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Контакты" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Контакты и базы" }),
+  );
   await user.type(screen.getByLabelText("Имя"), "Тест");
   const phone = screen.getByLabelText(/Телефон/);
   await user.type(phone, "89990000101");
-  const consent = screen.getByLabelText("Есть подтверждённое согласие на звонок");
+  const consent = screen.getByLabelText(
+    "Есть подтверждённое согласие на звонок",
+  );
   const source = screen.getByLabelText("Источник согласия") as HTMLInputElement;
   expect(source.required).toBe(false);
   await user.click(consent);
   expect(source.required).toBe(true);
   await user.type(source, "Собственный номер для тестирования");
   await user.click(screen.getByRole("button", { name: "Добавить" }));
-  expect((await screen.findByRole("alert")).textContent).toContain("Телефон: укажите международный номер");
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "Телефон: укажите международный номер",
+  );
   expect((phone as HTMLInputElement).value).toBe("89990000101");
   await user.clear(phone);
   await user.type(phone, "+79990000101");
@@ -87,8 +109,12 @@ it("preserves a rejected contact and lets the user correct its phone", async () 
   await screen.findByRole("cell", { name: "+79990000101" });
   await waitFor(() => expect(source.required).toBe(false));
   expect((phone as HTMLInputElement).value).toBe("");
-  const posts = fetcher.mock.calls.filter(([, options]) => options?.method === "POST");
+  const posts = fetcher.mock.calls.filter(
+    ([, options]) => options?.method === "POST",
+  );
   expect(JSON.parse(posts[1][1].body)).toMatchObject({
-    consent: true, crm_contact_id: null, phone: "+79990000101",
+    consent: true,
+    crm_contact_id: null,
+    phone: "+79990000101",
   });
 });

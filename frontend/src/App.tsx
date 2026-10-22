@@ -1,7 +1,19 @@
-import type { Me, Contact, Campaign, Attempt } from "./types";
+import type { Me } from "./types";
 import { CampaignsView } from "./CampaignsView";
 import { ContactsView } from "./ContactsView";
 import { CallsView } from "./CallsView";
+import { DashboardView, LogsView, ReportsView } from "./WorkspaceOverview";
+import {
+  BlacklistView,
+  NumbersView,
+  TemplatesView,
+} from "./WorkspaceResources";
+import {
+  OperatorsView,
+  PasswordView,
+  SettingsView,
+  UsersView,
+} from "./WorkspaceAdmin";
 import { FormEvent, useEffect, useState } from "react";
 
 import { api, ApiError } from "./api";
@@ -17,11 +29,9 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [attempts, setAttempts] = useState<Attempt[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
 
-  const [tab, setTab] = useState("campaigns");
+  const [tab, setTab] = useState("dashboard");
   const [live, setLive] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -36,19 +46,13 @@ export function App() {
   }, []);
 
   async function refresh(signal?: AbortSignal) {
-    const [c, p, a] = await Promise.all([
-      api<Contact[]>("/contacts", { signal }),
-      api<Campaign[]>("/campaigns", { signal }),
-      api<Attempt[]>("/attempts", { signal }),
-    ]);
+    const result = await api<{
+      counts: Record<string, number>;
+      live_calls: boolean;
+    }>("/workspace/dashboard", { signal });
     if (signal?.aborted) return;
-    setContacts(c);
-    setCampaigns(p);
-    setAttempts(a);
-    const health = await fetch("/health/ready", { signal });
-    if (!health.ok) throw new Error("not_ready");
-    const ready = await health.json();
-    if (!signal?.aborted) setLive(Boolean(ready.live_calls));
+    setCounts(result.counts ?? {});
+    setLive(Boolean(result.live_calls));
   }
   useEffect(() => {
     if (!me) return;
@@ -135,6 +139,26 @@ export function App() {
     );
 
   const admin = me.role === "admin";
+  const workspace = { admin, busy, action, setNotice };
+  const tabs = [
+    ["dashboard", "Дашборд"],
+    ["campaigns", "Кампании"],
+    ["contacts", "Контакты и базы"],
+    ["calls", "Журнал звонков"],
+    ["numbers", "Пул номеров"],
+    ["operators", "Операторы и очередь"],
+    ["templates", "Сценарии"],
+    ["blacklist", "Чёрный список"],
+    ["reports", "Отчёты"],
+    ...(admin
+      ? [
+          ["users", "Пользователи"],
+          ["settings", "Настройки"],
+          ["logs", "Логи"],
+        ]
+      : []),
+    ["password", "Мой пароль"],
+  ];
   return (
     <div className="shell">
       <aside>
@@ -143,15 +167,15 @@ export function App() {
         </div>
         <p>Управление обзвоном</p>
         <nav>
-          {[
-            ["campaigns", "Кампании"],
-            ["contacts", "Контакты"],
-            ["calls", "Журнал звонков"],
-          ].map(([value, label]) => (
+          {tabs.map(([value, label]) => (
             <button
               key={value}
               aria-current={tab === value ? "page" : undefined}
-              onClick={() => setTab(value)}
+              onClick={() => {
+                setTab(value);
+                setError("");
+                setNotice("");
+              }}
             >
               {label}
             </button>
@@ -166,9 +190,7 @@ export function App() {
               void action(async () => {
                 await api("/auth/logout", { method: "POST" });
                 setMe(null);
-                setContacts([]);
-                setCampaigns([]);
-                setAttempts([]);
+                setCounts({});
               })
             }
           >
@@ -180,13 +202,7 @@ export function App() {
         <header>
           <div>
             <p className="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</p>
-            <h1>
-              {tab === "campaigns"
-                ? "Кампании"
-                : tab === "contacts"
-                  ? "Контакты"
-                  : "Журнал звонков"}
-            </h1>
+            <h1>{tabs.find(([value]) => value === tab)?.[1]}</h1>
           </div>
           <span className={live ? "badge live" : "badge"}>
             {live ? "Тестовые вызовы разрешены" : "Реальные вызовы выключены"}
@@ -200,26 +216,20 @@ export function App() {
         {notice && <p role="status">{notice}</p>}
         <div className="stats">
           <article>
-            <small>Кампаний на странице</small>
-            <strong>{campaigns.length}</strong>
+            <small>Кампании</small>
+            <strong>{counts.campaigns ?? 0}</strong>
           </article>
           <article>
-            <small>Доступно контактов на странице</small>
-            <strong>
-              {contacts.filter((c) => c.consent && !c.blocked).length}
-            </strong>
+            <small>Доступно к обзвону</small>
+            <strong>{counts.callable ?? 0}</strong>
           </article>
           <article>
-            <small>Требуют сверки · последние 100</small>
-            <strong>
-              {attempts.filter((c) => c.status === "unknown").length}
-            </strong>
+            <small>Требуют сверки</small>
+            <strong>{counts.unknown ?? 0}</strong>
           </article>
         </div>
         {tab === "campaigns" && (
           <CampaignsView
-            contacts={contacts}
-            campaigns={campaigns}
             admin={admin}
             busy={busy}
             action={action}
@@ -229,7 +239,6 @@ export function App() {
         )}
         {tab === "contacts" && (
           <ContactsView
-            contacts={contacts}
             admin={admin}
             busy={busy}
             action={action}
@@ -237,7 +246,17 @@ export function App() {
             setNotice={setNotice}
           />
         )}
-        {tab === "calls" && <CallsView attempts={attempts} />}
+        {tab === "calls" && <CallsView {...workspace} />}
+        {tab === "dashboard" && <DashboardView />}
+        {tab === "numbers" && <NumbersView {...workspace} />}
+        {tab === "blacklist" && <BlacklistView {...workspace} />}
+        {tab === "templates" && <TemplatesView {...workspace} />}
+        {tab === "operators" && <OperatorsView {...workspace} />}
+        {tab === "reports" && <ReportsView />}
+        {tab === "users" && admin && <UsersView {...workspace} />}
+        {tab === "settings" && admin && <SettingsView {...workspace} />}
+        {tab === "logs" && admin && <LogsView {...workspace} />}
+        {tab === "password" && <PasswordView {...workspace} />}
       </main>
     </div>
   );

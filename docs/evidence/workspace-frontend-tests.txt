@@ -1,0 +1,12 @@
+
+> ats-beta-ui@0.2.0 test
+> vitest run
+
+
+ RUN  v5.0.5 /workspace/ATOS-SaaS-AI-ATS/frontend
+
+
+ Test Files  3 passed (3)
+      Tests  14 passed (14)
+   Start at  23:18:02
+   Duration  1.38s (environment 50%, tests 32%, transform 9%, import 8%)

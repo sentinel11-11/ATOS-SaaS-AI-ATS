@@ -1,6 +1,6 @@
 [project]
 name = "atos-ats"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tenant-aware outbound calling beta"
 requires-python = ">=3.12,<3.14"
 dependencies = [

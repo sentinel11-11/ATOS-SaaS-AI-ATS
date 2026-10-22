@@ -1,0 +1,22 @@
+{
+  "screens": [
+    "Дашборд",
+    "Кампании",
+    "Контакты и базы",
+    "Журнал звонков",
+    "Пул номеров",
+    "Операторы и очередь",
+    "Сценарии",
+    "Чёрный список",
+    "Отчёты",
+    "Пользователи",
+    "Настройки",
+    "Логи"
+  ],
+  "browser": "Chromium",
+  "contact": "saved",
+  "campaign": "simulated_completed",
+  "timeline": "visible",
+  "javascript_errors": 0,
+  "live_telephony_tested": false
+}

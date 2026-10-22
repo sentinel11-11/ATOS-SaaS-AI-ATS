@@ -304,6 +304,11 @@ def test_concurrent_schedulers_respect_tenant_channels(factory, tenants, prepare
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(allocate, range(24)))
     with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Attempt)) <= 2
+    # SKIP LOCKED may skip every contending allocator; subsequent scheduler ticks fill capacity.
+    allocate(None)
+    allocate(None)
+    with factory() as db:
         assert db.scalar(select(func.count()).select_from(Attempt)) == 2
         assert db.scalar(select(func.count()).select_from(Outbox)) == 2
 
@@ -460,7 +465,7 @@ def test_terminal_event_before_timeout_stays_terminal(factory, tenants, prepared
         db.scalar(select(Campaign)).route = "multicom_ami"
 
     class Driver:
-        def originate(self, attempt_id, phone):
+        def originate(self, attempt_id, phone, caller_id=None, media=False, operator_ext=""):
             with factory.begin() as db:
                 finish_attempt(db, db.get(Attempt, attempt_id), "completed")
             raise DeliveryUnknown()

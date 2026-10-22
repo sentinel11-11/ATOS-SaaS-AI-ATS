@@ -10,8 +10,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from starlette.concurrency import run_in_threadpool
 
 from ats import schemas
+from ats.api_recording_links import router as recording_links_router
 from ats.config import settings
 from ats.db import session
 from ats.domain import Problem
@@ -19,9 +21,10 @@ from ats.models import Attempt, Audit, Campaign, Contact, Inbox, Outbox, Session
 from ats.repositories import TenantRepository
 from ats.security import admin, authenticate, digest, principal
 from ats.services import create_campaign, finish_attempt, ingest, validate_route
+from ats.workspace_api import router as workspace_router
 
 log = logging.getLogger("ats.api")
-app = FastAPI(title="ATS Beta", version="0.1.0")
+app = FastAPI(title="ATS Beta", version="0.2.0")
 
 
 @app.middleware("http")
@@ -37,11 +40,52 @@ async def request_guard(request: Request, call_next):
         parts = []
         async for part in request.stream():
             size += len(part)
-            if size > 256 * 1024:
+            limit = (
+                11 * 1024 * 1024
+                if request.url.path.startswith("/api/v1/workspace/calls/")
+                and request.url.path.endswith("/recordings")
+                else 6 * 1024 * 1024
+                if request.url.path == "/api/v1/workspace/contacts-import-file"
+                else 256 * 1024
+            )
+            if size > limit:
                 return JSONResponse({"error": "request_too_large"}, status_code=413)
             parts.append(part)
         request._body = b"".join(parts)
     response = await call_next(request)
+    route_path = getattr(request.scope.get("route"), "path", "unmatched")
+    if unsafe or response.status_code >= 400:
+        log.info(
+            "http_request request_id=%s method=%s path=%s status=%s",
+            request.state.request_id,
+            request.method,
+            route_path,
+            response.status_code,
+        )
+        tenant_id = getattr(request.state, "tenant_id", None)
+        if tenant_id and response.status_code < 500:
+            from ats.db import session_factory
+            from ats.models import RuntimeLog
+
+            def persist_request_log():
+                try:
+                    with session_factory().begin() as db:
+                        db.add(
+                            RuntimeLog(
+                                tenant_id=tenant_id,
+                                level="WARNING" if response.status_code >= 400 else "INFO",
+                                component="api",
+                                code=getattr(request.state, "error_code", "http_request"),
+                                request_id=UUID(request.state.request_id),
+                                method=request.method,
+                                path=route_path[:200],
+                                http_status=response.status_code,
+                            )
+                        )
+                except SQLAlchemyError:
+                    log.error("request_log_unavailable request_id=%s", request.state.request_id)
+
+            await run_in_threadpool(persist_request_log)
     response.headers.update(
         {
             "X-Request-ID": request.state.request_id,
@@ -56,6 +100,7 @@ async def request_guard(request: Request, call_next):
 
 @app.exception_handler(Problem)
 async def problem_handler(request, exc):
+    request.state.error_code = exc.code
     return JSONResponse(
         {"error": exc.code, "request_id": request.state.request_id}, status_code=exc.status
     )
@@ -63,6 +108,7 @@ async def problem_handler(request, exc):
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request, exc):
+    request.state.error_code = "validation_failed"
     # Never echo passwords, tokens or raw webhook input in error responses.
     return JSONResponse(
         {
@@ -108,10 +154,10 @@ def live():
 def ready(db=Depends(session)):
     # Verify required schema, not merely TCP/Postgres availability.
     version = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if version != "0001":
+    if version != "0004":
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
-    return {"status": "ready", "live_calls": settings().live_calls_enabled}
+    return {"status": "ready", "live_calls": settings().live_calls_enabled, "version": app.version}
 
 
 @app.post("/api/v1/auth/login")
@@ -151,6 +197,7 @@ def contacts(p=Depends(principal), db=Depends(session), offset: int = 0):
     return db.scalars(
         TenantRepository(db, p.tenant_id)
         .query(Contact)
+        .where(~Contact.archived)
         .order_by(Contact.created_at.desc())
         .offset(max(0, offset))
         .limit(100)
@@ -159,8 +206,13 @@ def contacts(p=Depends(principal), db=Depends(session), offset: int = 0):
 
 @app.post("/api/v1/contacts", status_code=201)
 def add_contact(data: schemas.ContactCreate, p=Depends(admin), db=Depends(session)):
+    from ats.models import BlacklistEntry
+
     repo = TenantRepository(db, p.tenant_id)
-    row = repo.add(Contact, **data.model_dump())
+    blocked = (
+        db.scalar(repo.query(BlacklistEntry).where(BlacklistEntry.phone == data.phone)) is not None
+    )
+    row = repo.add(Contact, blocked=blocked, **data.model_dump())
     db.flush()
     repo.add(Audit, actor_id=p.user_id, action="contact.created", entity_id=row.id)
     db.commit()
@@ -172,6 +224,14 @@ def patch_contact(
     contact_id: UUID, data: schemas.ContactPatch, p=Depends(admin), db=Depends(session)
 ):
     row = TenantRepository(db, p.tenant_id).get(Contact, contact_id, lock=True)
+    from ats.models import BlacklistEntry
+
+    if not data.blocked and db.scalar(
+        TenantRepository(db, p.tenant_id)
+        .query(BlacklistEntry)
+        .where(BlacklistEntry.phone == row.phone)
+    ):
+        raise Problem(409, "phone_blacklisted")
     for key, value in data.model_dump().items():
         setattr(row, key, value)
     db.add(
@@ -191,6 +251,7 @@ def campaigns(p=Depends(principal), db=Depends(session), offset: int = 0):
     return db.scalars(
         TenantRepository(db, p.tenant_id)
         .query(Campaign)
+        .where(~Campaign.archived)
         .order_by(Campaign.created_at.desc())
         .offset(max(0, offset))
         .limit(100)
@@ -219,10 +280,12 @@ def campaign_state(
     db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
     repo = TenantRepository(db, p.tenant_id)
     row = repo.get(Campaign, campaign_id, lock=True)
+    if row.archived:
+        raise Problem(409, "campaign_archived")
     if row.status == "completed":
         raise Problem(409, "campaign_completed")
     if data.status == "running":
-        validate_route(p.tenant_id, row.route)
+        validate_route(p.tenant_id, row.route, db)
     row.status = data.status
     repo.add(Audit, actor_id=p.user_id, action=f"campaign.{data.status}", entity_id=row.id)
     db.commit()
@@ -291,6 +354,63 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
         raise Problem(403, "webhook_rejected")
     # Never store crm_token or the raw form. History is authoritative for callback outcome.
     cmd = str(form.get("cmd", ""))
+    if cmd == "contact":
+        from ats.inbound import normalize_phone
+
+        contact = db.scalar(
+            select(Contact).where(
+                Contact.tenant_id == tenant_id,
+                Contact.phone == normalize_phone(form.get("phone", "")),
+                ~Contact.archived,
+            )
+        )
+        return {"contact_name": contact.name if contact else ""}
+    direction = (
+        str(form.get("direction", "")).lower()
+        if cmd == "event"
+        else str(form.get("type", "")).lower()
+    )
+    if direction == "in" and config.inbound_enabled:
+        from ats.inbound import ingest_inbound
+
+        if cmd == "history" and str(form.get("status", "")).lower() not in {
+            "success",
+            "missed",
+            "cancel",
+            "busy",
+            "notavailable",
+            "notallowed",
+            "notfound",
+        }:
+            raise Problem(422, "unsupported_history_status")
+
+        state = (
+            {"INCOMING": "ringing", "ACCEPTED": "answered"}.get(str(form.get("type", "")).upper())
+            if cmd == "event"
+            else "completed"
+            if str(form.get("status", "")).lower() == "success"
+            else "failed"
+            if cmd == "history"
+            else None
+        )
+        if not state:
+            raise Problem(422, "unsupported_inbound_event")
+        try:
+            duration = int(form.get("duration", "0"))
+        except (ValueError, TypeError):
+            raise Problem(422, "invalid_duration") from None
+        ingest_inbound(
+            db,
+            tenant_id,
+            "megafon_vats",
+            str(form.get("callid", "")),
+            form.get("phone", ""),
+            form.get("telnum", ""),
+            state,
+            duration,
+        )
+        db.commit()
+        return {"result": "success"}
     if cmd == "event":
         event = {"RINGING": "accepted"}.get(str(form.get("type", "")).upper())
     elif cmd == "history":
@@ -318,6 +438,9 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     db.commit()  # Acknowledge only after durable storage.
     return {"result": "success"}
 
+
+app.include_router(workspace_router)
+app.include_router(recording_links_router)
 
 web = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if web.is_dir():

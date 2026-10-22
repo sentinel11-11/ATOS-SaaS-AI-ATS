@@ -12,7 +12,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -116,6 +117,88 @@ nav {
   display: grid;
   gap: 8px;
   margin-top: 30px;
+}
+nav {
+  max-height: calc(100vh - 270px);
+  overflow-y: auto;
+}
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.toolbar input {
+  max-width: 300px;
+}
+.toolbar select {
+  max-width: 260px;
+}
+.toolbar h2 {
+  margin: 0 auto 0 0;
+}
+.row-actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.row-actions button {
+  font-size: 12px;
+  padding: 7px 9px;
+}
+.danger {
+  background: #9b352b;
+}
+.secondary {
+  background: #e7edf2;
+  color: #263e4c;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #10251fcc;
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  padding: 24px;
+}
+.modal {
+  width: min(1050px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  margin: 0;
+  box-shadow: 0 24px 80px #0004;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 18px;
+}
+dt {
+  color: #647286;
+  font-size: 12px;
+}
+dd {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 90px;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f4f6f8;
+  padding: 16px;
+  border-radius: 8px;
+}
+audio {
+  display: block;
+  width: min(500px, 100%);
+  margin: 12px 0;
 }
 nav button {
   text-align: left;
@@ -245,6 +328,8 @@ form button {
   nav {
     display: flex;
     margin-top: 10px;
+    flex-wrap: wrap;
+    max-height: none;
   }
   .identity {
     display: flex;

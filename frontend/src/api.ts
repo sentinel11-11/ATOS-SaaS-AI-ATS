@@ -29,7 +29,8 @@ function validationMessage(fields: ValidationIssue[]): string {
     if (type === "string_too_long") return `${label}: сократите значение.`;
     if (field === "crm_contact_id")
       return "ID контакта amoCRM: укажите целое число больше нуля или оставьте поле пустым.";
-    if (field === "tenant_id") return "ID пространства: укажите UUID, выданный администратором.";
+    if (field === "tenant_id")
+      return "ID пространства: укажите UUID, выданный администратором.";
     return `${label}: проверьте значение.`;
   });
   return [...new Set(messages)].join(" ") || "Проверьте заполненные поля.";
@@ -37,11 +38,15 @@ function validationMessage(fields: ValidationIssue[]): string {
 
 function validationFields(value: unknown): ValidationIssue[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((item): item is ValidationIssue =>
-    item !== null && typeof item === "object" &&
-    Array.isArray(item.location) &&
-    item.location.every((part: unknown) => typeof part === "string" || typeof part === "number") &&
-    typeof item.type === "string",
+  return value.filter(
+    (item): item is ValidationIssue =>
+      item !== null &&
+      typeof item === "object" &&
+      Array.isArray(item.location) &&
+      item.location.every(
+        (part: unknown) => typeof part === "string" || typeof part === "number",
+      ) &&
+      typeof item.type === "string",
   );
 }
 
@@ -68,7 +73,9 @@ export async function api<T>(
     ...options,
     credentials: "same-origin",
     headers: {
-      "Content-Type": "application/json",
+      ...(options.body instanceof FormData
+        ? {}
+        : { "Content-Type": "application/json" }),
       "X-CSRF-Token": csrf,
       ...options.headers,
     },

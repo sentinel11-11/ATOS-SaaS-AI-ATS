@@ -34,9 +34,17 @@ class Settings(BaseSettings):
     amo_tenant_id: UUID | None = None
     crm_enabled: bool = False
     worker_poll_seconds: float = Field(default=1, ge=0.05, le=60)
+    recordings_dir: str = "var/recordings"
+    inbound_enabled: bool = False
+    inbound_contexts: str = "from-mcm,ats-in"
+    media_enabled: bool = False
+    media_dir: str = "/var/lib/ats-beta-media"
+    asterisk_recordings_dir: str = "/var/spool/asterisk/monitor/ats-beta"
 
     @model_validator(mode="after")
     def validate_live(self):
+        if self.inbound_enabled and not self.telephony_tenant_id:
+            raise ValueError("Inbound calls require a tenant binding")
         if self.live_calls_enabled and (not self.telephony_tenant_id or not self.destinations):
             raise ValueError("Live calls require tenant binding and explicit test destinations")
         if not self.ami_tls and self.ami_host not in {"localhost", "127.0.0.1", "::1"}:

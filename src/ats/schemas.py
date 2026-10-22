@@ -18,6 +18,17 @@ def phone_e164(value: str) -> str:
     return value
 
 
+def phone_from_import(value: str) -> str:
+    """Permit known phone punctuation, never salvage digits from arbitrary text/formulas."""
+    value = re.sub(r"[\s()-]", "", value.strip().removeprefix("'"))
+    digits = value.removeprefix("+")
+    if not re.fullmatch(r"[0-9]{8,15}", digits):
+        raise ValueError("Invalid imported phone")
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    return phone_e164("+" + digits)
+
+
 class Login(Input):
     tenant_id: UUID
     login: str = Field(min_length=1, max_length=120)
@@ -58,6 +69,12 @@ class CampaignCreate(Input):
     max_channels: int = Field(default=1, ge=1, le=100)
     window_start: int = Field(default=9, ge=0, le=23)
     window_end: int = Field(default=18, ge=1, le=24)
+    template_id: UUID | None = None
+    mode: Literal["message", "agent", "operator"] = "message"
+    connect_on_qualify: bool = True
+    weekdays: list[int] = Field(default_factory=lambda: list(range(7)), min_length=1, max_length=7)
+    retry_max: int = Field(default=0, ge=0, le=5)
+    retry_delay_minutes: int = Field(default=30, ge=1, le=1440)
 
     @model_validator(mode="after")
     def valid_window(self):
@@ -65,6 +82,10 @@ class CampaignCreate(Input):
             raise ValueError("Use a daytime window with start < end")
         if len(set(self.contact_ids)) != len(self.contact_ids):
             raise ValueError("Duplicate contacts")
+        if len(set(self.weekdays)) != len(self.weekdays) or any(
+            d not in range(7) for d in self.weekdays
+        ):
+            raise ValueError("Use unique weekdays 0 to 6")
         return self
 
 

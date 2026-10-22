@@ -6,5 +6,5 @@ secret = REPLACE_SECURELY_ON_PBX
 deny = 0.0.0.0/0.0.0.0
 permit = 127.0.0.1/255.255.255.255
 read = call,user
-write = originate
+write = originate,call
 ; Do not grant system,command,config. Use a dedicated PBX in the beta.

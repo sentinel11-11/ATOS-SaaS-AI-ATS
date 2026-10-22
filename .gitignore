@@ -12,3 +12,9 @@ frontend/node_modules/
 frontend/dist/
 artifacts/*
 !artifacts/.gitkeep
+
+# Runtime recordings and private operator/database diagnostics
+var/
+*.dump
+*.pcap*
+*.sqlite*

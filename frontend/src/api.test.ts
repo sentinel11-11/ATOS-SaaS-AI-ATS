@@ -36,11 +36,19 @@ it("rejects invalid non-JSON gateway errors", async () => {
 });
 
 it("explains a phone validation error from the existing server response", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-    error: "validation_failed",
-    fields: [{ location: ["body", "phone"], type: "value_error" }],
-    request_id: "request-123",
-  }), { status: 422 })));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "validation_failed",
+          fields: [{ location: ["body", "phone"], type: "value_error" }],
+          request_id: "request-123",
+        }),
+        { status: 422 },
+      ),
+    ),
+  );
   await expect(api("/contacts")).rejects.toMatchObject({
     code: "validation_failed",
     message: "Телефон: укажите международный номер с +, например +79991234567.",
@@ -49,21 +57,55 @@ it("explains a phone validation error from the existing server response", async 
 });
 
 it("explains consent errors without displaying raw server input", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-    error: "validation_failed",
-    fields: [{ location: ["body"], type: "consent_source_required", input: "private-value" }],
-    detail: "private-value",
-  }), { status: 422 })));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "validation_failed",
+          fields: [
+            {
+              location: ["body"],
+              type: "consent_source_required",
+              input: "private-value",
+            },
+          ],
+          detail: "private-value",
+        }),
+        { status: 422 },
+      ),
+    ),
+  );
   await expect(api("/contacts")).rejects.toMatchObject({
     message: "Источник согласия: укажите основание согласия на звонок.",
   });
 });
 
 it("handles malformed validation details with a useful fallback", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-    error: "validation_failed", fields: [null, { location: "invalid", type: "value_error" }],
-  }), { status: 422 })));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "validation_failed",
+          fields: [null, { location: "invalid", type: "value_error" }],
+        }),
+        { status: 422 },
+      ),
+    ),
+  );
   await expect(api("/contacts")).rejects.toMatchObject({
     message: "Проверьте заполненные поля.",
   });
+});
+
+it("lets the browser set the multipart boundary for recording uploads", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(new Response("{}", { status: 201 }));
+  vi.stubGlobal("fetch", fetcher);
+  const form = new FormData();
+  form.set("file", new File(["RIFF"], "sample.wav", { type: "audio/wav" }));
+  await api("/workspace/calls/test/recordings", { method: "POST", body: form });
+  expect(fetcher.mock.calls[0][1].headers["Content-Type"]).toBeUndefined();
 });
