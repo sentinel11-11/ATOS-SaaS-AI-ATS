@@ -34,3 +34,36 @@ it("rejects invalid non-JSON gateway errors", async () => {
   );
   await expect(api("/contacts")).rejects.toBeInstanceOf(ApiError);
 });
+
+it("explains a phone validation error from the existing server response", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    error: "validation_failed",
+    fields: [{ location: ["body", "phone"], type: "value_error" }],
+    request_id: "request-123",
+  }), { status: 422 })));
+  await expect(api("/contacts")).rejects.toMatchObject({
+    code: "validation_failed",
+    message: "Телефон: укажите международный номер с +, например +79991234567.",
+    requestId: "request-123",
+  });
+});
+
+it("explains consent errors without displaying raw server input", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    error: "validation_failed",
+    fields: [{ location: ["body"], type: "consent_source_required", input: "private-value" }],
+    detail: "private-value",
+  }), { status: 422 })));
+  await expect(api("/contacts")).rejects.toMatchObject({
+    message: "Источник согласия: укажите основание согласия на звонок.",
+  });
+});
+
+it("handles malformed validation details with a useful fallback", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    error: "validation_failed", fields: [null, { location: "invalid", type: "value_error" }],
+  }), { status: 422 })));
+  await expect(api("/contacts")).rejects.toMatchObject({
+    message: "Проверьте заполненные поля.",
+  });
+});

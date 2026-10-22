@@ -68,6 +68,45 @@ def test_validation_does_not_echo_password(client):
     assert "sensitive-value" not in response.text
 
 
+@pytest.mark.parametrize(
+    "changes,error_type,location",
+    [
+        ({"phone": "89990000101"}, "phone_e164", ["body", "phone"]),
+        ({"consent_source": "  "}, "consent_source_required", ["body"]),
+    ],
+)
+def test_contact_validation_explains_rejected_field(logged, changes, error_type, location):
+    payload = {
+        "name": "Private contact name",
+        "phone": "+79990000101",
+        "consent": True,
+        "consent_source": "Test consent",
+        "crm_contact_id": None,
+    }
+    response = logged.post("/api/v1/contacts", json={**payload, **changes})
+    assert response.status_code == 422
+    assert {"location": location, "type": error_type} in response.json()["fields"]
+    assert "Private contact name" not in response.text
+    assert "89990000101" not in response.text
+    assert logged.get("/api/v1/contacts").json() == []
+
+
+def test_contact_can_be_created_without_crm_id(logged):
+    response = logged.post(
+        "/api/v1/contacts",
+        json={
+            "name": "Тест",
+            "phone": "+7 (999) 000-01-01",
+            "consent": True,
+            "consent_source": "Собственный номер для тестирования",
+            "crm_contact_id": None,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["phone"] == "+79990000101"
+    assert response.json()["crm_contact_id"] is None
+
+
 def test_body_limit(client):
     assert client.post("/api/v1/auth/login", content=b"x" * (256 * 1024 + 1)).status_code == 413
 

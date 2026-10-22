@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { api } from "./api";
 import type { Actions, Contact } from "./types";
 export function ContactsView({
@@ -8,6 +9,7 @@ export function ContactsView({
   refresh,
   setNotice,
 }: Actions & { contacts: Contact[] }) {
+  const [consent, setConsent] = useState(false);
   return (
     <>
       <section>
@@ -82,6 +84,7 @@ export function ContactsView({
                   }),
                 });
                 form.reset();
+                setConsent(false);
                 setNotice("Контакт добавлен.");
                 await refresh();
               });
@@ -94,11 +97,12 @@ export function ContactsView({
               </label>
               <label>
                 Телефон
-                <input name="phone" placeholder="+79991234567" required />
+                <input name="phone" type="tel" placeholder="+79991234567" required />
+                <small>Международный формат с +, например +79991234567.</small>
               </label>
               <label>
                 Источник согласия
-                <input name="consent_source" maxLength={256} />
+                <input name="consent_source" required={consent} maxLength={256} />
               </label>
               <label>
                 ID контакта amoCRM
@@ -106,7 +110,12 @@ export function ContactsView({
               </label>
             </div>
             <label className="check">
-              <input name="consent" type="checkbox" />
+              <input
+                name="consent"
+                type="checkbox"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+              />
               Есть подтверждённое согласие на звонок
             </label>
             <button disabled={busy}>Добавить</button>

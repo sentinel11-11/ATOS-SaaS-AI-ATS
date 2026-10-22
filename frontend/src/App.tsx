@@ -8,7 +8,7 @@ import { api, ApiError } from "./api";
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError)
-    return `Не удалось выполнить действие: ${error.code}${error.requestId ? ` · ${error.requestId}` : ""}`;
+    return `Не удалось выполнить действие: ${error.message}${error.requestId ? ` · ${error.requestId}` : ""}`;
   return "Нет связи с сервером. Проверьте соединение и повторите.";
 }
 

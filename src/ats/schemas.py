@@ -4,6 +4,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 
 class Input(BaseModel):
@@ -13,7 +14,7 @@ class Input(BaseModel):
 def phone_e164(value: str) -> str:
     value = re.sub(r"[ ()-]", "", value.strip())
     if not re.fullmatch(r"\+[1-9][0-9]{7,14}", value):
-        raise ValueError("Use an international number, e.g. +79991234567")
+        raise PydanticCustomError("phone_e164", "Use an international number, e.g. +79991234567")
     return value
 
 
@@ -34,7 +35,7 @@ class ContactCreate(Input):
     @model_validator(mode="after")
     def source_required(self):
         if self.consent and not self.consent_source.strip():
-            raise ValueError("Consent requires a source")
+            raise PydanticCustomError("consent_source_required", "Consent requires a source")
         return self
 
 
