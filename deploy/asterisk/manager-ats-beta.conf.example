@@ -1,0 +1,10 @@
+; Review minimum AMI privilege requirements against the installed Asterisk release.
+; Bind TLS AMI to the private interface; firewall to this app only.
+; Inject the actual secret on the PBX, never commit it.
+[ats-beta]
+secret = REPLACE_SECURELY_ON_PBX
+deny = 0.0.0.0/0.0.0.0
+permit = 127.0.0.1/255.255.255.255
+read = call,user
+write = originate
+; Do not grant system,command,config. Use a dedicated PBX in the beta.

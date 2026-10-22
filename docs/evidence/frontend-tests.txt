@@ -1,0 +1,18 @@
+
+> ats-beta-ui@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.5 /workspace/ATOS-SaaS-AI-ATS/frontend
+
+
+ Test Files  2 passed (2)
+      Tests  5 passed (5)
+   Start at  18:04:43
+   Duration  1.01s (environment 66%, tests 20%, import 8%, transform 5%, worker 1%)
+
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.1
+npm notice To update run: npm install -g npm@12.2.1
+npm notice

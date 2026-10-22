@@ -1,0 +1,6 @@
+..swarning: You appear to have cloned an empty repository.
+......
+----------------------------------------------------------------------
+Ran 9 tests in 0.233s
+
+OK (skipped=1)

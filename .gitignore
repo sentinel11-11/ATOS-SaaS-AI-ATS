@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.env
+.runtime/
+*.log
+*.db*
+frontend/node_modules/
+frontend/dist/
+artifacts/*
+!artifacts/.gitkeep

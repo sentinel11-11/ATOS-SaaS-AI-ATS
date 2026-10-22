@@ -1,0 +1,10 @@
+{
+  "requests": 100,
+  "concurrency": 8,
+  "errors": 0,
+  "median_ms": 60.86,
+  "p95_ms": 96.95,
+  "call": "simulated_completed",
+  "separate_processes": 5,
+  "live_telephony_tested": false
+}

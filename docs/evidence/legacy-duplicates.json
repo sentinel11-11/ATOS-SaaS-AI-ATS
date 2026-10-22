@@ -1,0 +1,38 @@
+[
+  [
+    {
+      "file": "app/engine.py",
+      "function": "_megafon_mark",
+      "line": 447
+    },
+    {
+      "file": "app/engine.py",
+      "function": "_multicom_mark",
+      "line": 958
+    }
+  ],
+  [
+    {
+      "file": "app/providers/multicom.py",
+      "function": "_is_masked_value",
+      "line": 88
+    },
+    {
+      "file": "app/providers/megafon_vats.py",
+      "function": "_is_masked_value",
+      "line": 52
+    }
+  ],
+  [
+    {
+      "file": "app/providers/multicom.py",
+      "function": "external_id",
+      "line": 376
+    },
+    {
+      "file": "app/providers/megafon_vats.py",
+      "function": "external_id",
+      "line": 452
+    }
+  ]
+]
