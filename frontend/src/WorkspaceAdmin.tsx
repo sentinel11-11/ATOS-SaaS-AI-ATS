@@ -334,7 +334,13 @@ export function SettingsView({ busy, action, setNotice }: WorkspaceProps) {
     </>
   );
 }
-export function OperatorsView({ action, busy }: WorkspaceProps) {
+export function OperatorsView({
+  action,
+  busy,
+  role,
+  userId,
+  admin,
+}: WorkspaceProps) {
   const r = useResource<{ operators: Row[]; queue: Row[] }>("/operators");
   return (
     <>
@@ -351,27 +357,28 @@ export function OperatorsView({ action, busy }: WorkspaceProps) {
           ]}
         />
         <div className="toolbar">
-          {[
-            ["free", "Готов к работе"],
-            ["break", "Перерыв"],
-            ["offline", "Не в сети"],
-          ].map(([status, title]) => (
-            <button
-              key={status}
-              disabled={busy}
-              onClick={() =>
-                void action(async () => {
-                  await api("/workspace/operator-status", {
-                    method: "POST",
-                    body: JSON.stringify({ status }),
-                  });
-                  r.reload();
-                })
-              }
-            >
-              {title}
-            </button>
-          ))}
+          {role === "operator" &&
+            [
+              ["free", "Готов к работе"],
+              ["break", "Перерыв"],
+              ["offline", "Не в сети"],
+            ].map(([status, title]) => (
+              <button
+                key={status}
+                disabled={busy}
+                onClick={() =>
+                  void action(async () => {
+                    await api("/workspace/operator-status", {
+                      method: "POST",
+                      body: JSON.stringify({ status }),
+                    });
+                    r.reload();
+                  })
+                }
+              >
+                {title}
+              </button>
+            ))}
         </div>
       </section>
       <section>
@@ -385,13 +392,15 @@ export function OperatorsView({ action, busy }: WorkspaceProps) {
           rows={r.data?.queue ?? []}
           columns={[
             ["created_at", "Время"],
+            ["contact_name", "Контакт"],
+            ["phone", "Телефон"],
             ["attempt_id", "Звонок"],
             ["status", "Состояние"],
             ["operator_id", "Оператор"],
           ]}
           actions={(row) => (
             <>
-              {row.status === "waiting" && (
+              {row.status === "waiting" && role === "operator" && (
                 <button
                   disabled={busy}
                   onClick={() =>
@@ -406,24 +415,58 @@ export function OperatorsView({ action, busy }: WorkspaceProps) {
                   Взять в работу
                 </button>
               )}
-              {row.status === "accepted" && (
-                <button
-                  disabled={busy}
-                  onClick={() => {
-                    const outcome = prompt("Результат обработки");
-                    if (outcome)
-                      void action(async () => {
-                        await api(`/workspace/queue/${row.id}/complete`, {
-                          method: "POST",
-                          body: JSON.stringify({ outcome }),
+              {row.can_hangup &&
+                (admin ||
+                  r.data?.operators.some(
+                    (op) => op.id === row.operator_id && op.user_id === userId,
+                  )) && (
+                  <button
+                    className="danger"
+                    disabled={busy}
+                    onClick={() => {
+                      if (confirm("Завершить этот вызов?"))
+                        void action(async () => {
+                          await api(
+                            `/workspace/calls/${row.attempt_id}/hangup`,
+                            { method: "POST" },
+                          );
+                          r.reload();
                         });
-                        r.reload();
-                      });
-                  }}
-                >
-                  Завершить обработку
-                </button>
-              )}
+                    }}
+                  >
+                    Завершить вызов
+                  </button>
+                )}
+              {row.status === "accepted" &&
+                (row.route === "sim" ||
+                  ![
+                    "prepared",
+                    "dispatching",
+                    "accepted",
+                    "answered",
+                    "unknown",
+                  ].includes(String(row.call_status))) &&
+                (admin ||
+                  r.data?.operators.some(
+                    (op) => op.id === row.operator_id && op.user_id === userId,
+                  )) && (
+                  <button
+                    disabled={busy}
+                    onClick={() => {
+                      const outcome = prompt("Результат обработки");
+                      if (outcome)
+                        void action(async () => {
+                          await api(`/workspace/queue/${row.id}/complete`, {
+                            method: "POST",
+                            body: JSON.stringify({ outcome }),
+                          });
+                          r.reload();
+                        });
+                    }}
+                  >
+                    Завершить обработку
+                  </button>
+                )}
             </>
           )}
         />

@@ -205,7 +205,9 @@ def test_workspace_snapshot_dry_run_and_repeat(factory, tenants, tmp_path):
     assert before == path.read_bytes()
 
 
-def test_live_operator_is_reserved_then_released(factory, prepared, tenants, monkeypatch, tmp_path):
+def test_live_operator_is_reserved_then_released(
+    factory, prepared, tenants, monkeypatch, tmp_path, logged
+):
     for key, value in {
         "ATS_LIVE_CALLS_ENABLED": "true",
         "ATS_TELEPHONY_TENANT_ID": str(tenants[0]),
@@ -237,11 +239,17 @@ def test_live_operator_is_reserved_then_released(factory, prepared, tenants, mon
     assert captured["operator_ext"] == "101" and captured["media"] is True
     with factory.begin() as db:
         attempt = db.scalar(select(Attempt))
+        aid = attempt.id
+        attempt.channel = "PJSIP/fixture-channel"
         assert db.scalar(select(Operator)).status == "busy"
         assert (tmp_path / f"{attempt.id}.json").is_file()
+    queue = logged.get(BASE + "/operators").json()["queue"]
+    assert queue[0]["phone"] == "+79990000101" and queue[0]["can_hangup"] is True
+    assert logged.post(BASE + f"/calls/{aid}/hangup").status_code == 202
+    with factory.begin() as db:
         from ats.services import finish_attempt
 
-        finish_attempt(db, attempt, "completed")
+        finish_attempt(db, db.get(Attempt, aid), "completed")
     with factory() as db:
         assert db.scalar(select(Operator)).status == "free"
         assert len(db.scalars(select(QueueEntry)).all()) == 1

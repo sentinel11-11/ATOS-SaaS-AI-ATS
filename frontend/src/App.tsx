@@ -139,7 +139,14 @@ export function App() {
     );
 
   const admin = me.role === "admin";
-  const workspace = { admin, busy, action, setNotice };
+  const workspace = {
+    admin,
+    busy,
+    action,
+    setNotice,
+    role: me.role,
+    userId: me.user_id,
+  };
   const tabs = [
     ["dashboard", "Дашборд"],
     ["campaigns", "Кампании"],

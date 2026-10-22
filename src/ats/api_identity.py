@@ -137,12 +137,35 @@ def operators(p=Depends(principal), db=Depends(session)):
                 .where(Operator.tenant_id == p.tenant_id, User.active, User.role == "operator")
             )
         ],
-        "queue": db.scalars(
-            TenantRepository(db, p.tenant_id)
-            .query(QueueEntry)
-            .where(QueueEntry.status.in_(["waiting", "accepted"]))
-            .order_by(QueueEntry.created_at)
-        ).all(),
+        "queue": [
+            {
+                **jsonable_encoder(row),
+                "contact_name": call.contact_name,
+                "phone": call.phone,
+                "call_status": call.status,
+                "route": call.route,
+                "can_hangup": call.status in ACTIVE
+                and (
+                    call.status == "prepared"
+                    or call.route == "sim"
+                    or (call.route == "multicom_ami" and bool(call.channel))
+                ),
+            }
+            for row, call in db.execute(
+                select(QueueEntry, Attempt)
+                .join(
+                    Attempt,
+                    (Attempt.id == QueueEntry.attempt_id)
+                    & (Attempt.tenant_id == QueueEntry.tenant_id),
+                )
+                .where(
+                    QueueEntry.tenant_id == p.tenant_id,
+                    QueueEntry.status.in_(["waiting", "accepted"]),
+                )
+                .order_by(QueueEntry.created_at)
+                .limit(100)
+            )
+        ],
     }
 
 

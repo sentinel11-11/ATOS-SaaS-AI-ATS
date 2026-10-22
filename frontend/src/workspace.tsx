@@ -5,6 +5,8 @@ export type Row = { id: string; [key: string]: unknown };
 export type Page<T> = { items: T[]; total: number };
 export type WorkspaceProps = {
   admin: boolean;
+  role?: string;
+  userId?: string;
   action: (fn: () => Promise<void>) => Promise<void>;
   busy: boolean;
   setNotice: (text: string) => void;

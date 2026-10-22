@@ -120,3 +120,26 @@ it("paginates the blacklist instead of hiding records after the first fifty", as
   await screen.findByText("contact-50");
   expect(screen.queryByText("contact-0")).toBeNull();
 });
+
+it("shows operator status controls only to an operator", async () => {
+  const { OperatorsView } = await import("./WorkspaceAdmin");
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(json({ operators: [], queue: [] })),
+      ),
+  );
+  const props = {
+    admin: true,
+    role: "admin",
+    busy: false,
+    action: async (fn: () => Promise<void>) => fn(),
+    setNotice: () => {},
+  };
+  const view = render(<OperatorsView {...props} />);
+  expect(screen.queryByRole("button", { name: "Готов к работе" })).toBeNull();
+  view.rerender(<OperatorsView {...props} admin={false} role="operator" />);
+  await screen.findByRole("button", { name: "Готов к работе" });
+});

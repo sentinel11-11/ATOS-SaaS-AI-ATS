@@ -2,8 +2,8 @@
   "requests": 100,
   "concurrency": 8,
   "errors": 0,
-  "median_ms": 57.45,
-  "p95_ms": 82.76,
+  "median_ms": 54.81,
+  "p95_ms": 84.93,
   "call": "simulated_completed",
   "separate_processes": 5,
   "live_telephony_tested": false

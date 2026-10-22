@@ -1,4 +1,9 @@
-export type Me = { tenant_id: string; login: string; role: string };
+export type Me = {
+  tenant_id: string;
+  user_id?: string;
+  login: string;
+  role: string;
+};
 export type Contact = {
   id: string;
   name: string;

@@ -7,6 +7,6 @@
 
 
  Test Files  3 passed (3)
-      Tests  14 passed (14)
-   Start at  23:18:02
-   Duration  1.38s (environment 50%, tests 32%, transform 9%, import 8%)
+      Tests  15 passed (15)
+   Start at  23:29:53
+   Duration  1.48s (environment 57%, tests 30%, import 9%, transform 4%)
