@@ -1,0 +1,30 @@
+[Unit]
+Description=ATS beta %i worker
+After=network.target postgresql.service
+Requires=postgresql.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ats-beta
+Group=ats-beta
+WorkingDirectory=/opt/ats-beta
+EnvironmentFile=/etc/ats-beta/ats.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/ats-beta/.venv/bin/python -m ats.workers %i
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ats-beta
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
