@@ -4,9 +4,16 @@ version = "0.2.0"
 description = "Tenant-aware outbound calling beta"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "sqlalchemy>=2.0,<2.1",
-  "psycopg[binary]>=3.2,<4", "alembic>=1.15,<2", "pydantic-settings>=2.8,<3",
-  "httpx>=0.28,<1", "argon2-cffi>=23.1,<26", "python-multipart>=0.0.20,<1",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "sqlalchemy>=2.0,<2.1",
+  "psycopg[binary]>=3.2,<4",
+  "alembic>=1.15,<2",
+  "pydantic-settings>=2.8,<3",
+  "httpx>=0.28,<1",
+  "argon2-cffi>=23.1,<26",
+  "python-multipart>=0.0.20,<1",
+  "cryptography>=46,<48",
 ]
 
 [dependency-groups]

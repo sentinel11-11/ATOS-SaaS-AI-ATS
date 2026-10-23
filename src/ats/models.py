@@ -47,6 +47,7 @@ class User(Owned, Base):
     password_hash: Mapped[str] = mapped_column(String(512))
     role: Mapped[str] = mapped_column(String(20), default="admin")
     active: Mapped[bool] = mapped_column(default=True)
+    archived: Mapped[bool] = mapped_column(default=False, server_default="false")
     __table_args__ = (
         UniqueConstraint("tenant_id", "id"),
         UniqueConstraint("tenant_id", "login"),
@@ -84,6 +85,7 @@ class Contact(Owned, Base):
     group: Mapped[str] = mapped_column(String(120), default="", server_default="")
     email: Mapped[str] = mapped_column(String(254), default="", server_default="")
     notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    tags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     archived: Mapped[bool] = mapped_column(default=False, server_default="false")
     crm_sync_state: Mapped[str] = mapped_column(String(20), default="idle", server_default="idle")
     crm_sync_token: Mapped[UUID | None]
@@ -91,6 +93,7 @@ class Contact(Owned, Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "phone"),
         UniqueConstraint("tenant_id", "id"),
+        Index("ix_contacts_tenant_group", "tenant_id", "group"),
     )
 
 
@@ -114,6 +117,9 @@ class Campaign(Owned, Base):
     )
     retry_max: Mapped[int] = mapped_column(default=0, server_default="0")
     retry_delay_minutes: Mapped[int] = mapped_column(default=30, server_default="30")
+    scenario: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    retry_map: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    schedule: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     __table_args__ = (
         UniqueConstraint("tenant_id", "id"),
         UniqueConstraint("tenant_id", "idempotency_key"),
@@ -175,6 +181,7 @@ class Attempt(Owned, Base):
             "status IN ('prepared','dispatching','accepted','answered','completed','failed','unknown')"
         ),
         Index("ix_attempts_active", "tenant_id", "status", "created_at"),
+        Index("ix_attempts_caller_day", "tenant_id", "caller_number", "created_at"),
     )
 
 
@@ -270,6 +277,13 @@ class CallerNumber(Owned, Base):
     daily_limit: Mapped[int] = mapped_column(default=30)
     cooldown_seconds: Mapped[int] = mapped_column(default=60)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider: Mapped[str] = mapped_column(String(24), default="sim", server_default="sim")
+    kind: Mapped[str] = mapped_column(String(50), default="mobile", server_default="mobile")
+    enabled_outgoing: Mapped[bool] = mapped_column(default=True, server_default="true")
+    weight: Mapped[int] = mapped_column(default=1, server_default="1")
+    carrier: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    provider_ref: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    counters_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (UniqueConstraint("tenant_id", "phone"),)
 
 
@@ -333,6 +347,15 @@ class WorkspaceSettings(Owned, Base):
     __table_args__ = (UniqueConstraint("tenant_id"),)
 
 
+class ConnectionProfile(Owned, Base):
+    __tablename__ = "connection_profiles"
+    provider: Mapped[str] = mapped_column(String(32))
+    public_values: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    encrypted_secrets: Mapped[str] = mapped_column(Text, default="", server_default="")
+    revision: Mapped[int] = mapped_column(default=1, server_default="1")
+    __table_args__ = (UniqueConstraint("tenant_id", "provider"),)
+
+
 class RuntimeLog(Owned, Base):
     __tablename__ = "runtime_logs"
     level: Mapped[str] = mapped_column(String(10))
@@ -373,6 +396,7 @@ class InboundCall(Owned, Base):
     duration_seconds: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    hidden_from_journal: Mapped[bool] = mapped_column(default=False, server_default="false")
     __table_args__ = (
         UniqueConstraint("tenant_id", "route", "external_id"),
         ForeignKeyConstraint(["tenant_id", "contact_id"], ["contacts.tenant_id", "contacts.id"]),
@@ -393,6 +417,7 @@ class HistoricalCall(Owned, Base):
     legacy_id: Mapped[int]
     source_id: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    hidden_from_journal: Mapped[bool] = mapped_column(default=False, server_default="false")
     __table_args__ = (
         UniqueConstraint("tenant_id", "source_id", "legacy_id"),
         Index("ix_history_tenant_created", "tenant_id", "created_at"),

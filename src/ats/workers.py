@@ -196,13 +196,19 @@ class Worker:
             # AMI doesn't replay events: stale attempts will become unknown, never be redialed.
             log.error("ami_event_persist_failed type=%s", type(e).__name__)
 
-    def driver(self, route):
-        if route not in self.drivers:
+    def driver(self, route, tenant_id=None, config=None):
+        key = (route, str(tenant_id or "deployment"))
+        # Preserve dependency injection used by provider contract tests and
+        # operators' dry-run adapters while production instances remain tenant keyed.
+        if key not in self.drivers and route in self.drivers:
+            return self.drivers[route]
+        if key not in self.drivers:
+            config = config or settings()
             if route == "multicom_ami":
-                self.drivers[route] = AMI(settings(), self.ami_event)
+                self.drivers[key] = AMI(config, self.ami_event)
             elif route == "megafon_vats":
-                self.drivers[route] = Megafon(settings())
-        return self.drivers[route]
+                self.drivers[key] = Megafon(config)
+        return self.drivers[key]
 
     def schedule(self):
         with self.factory() as db:
@@ -322,7 +328,11 @@ class Worker:
             if route == "sim":
                 external_id = str(attempt_id)
             else:
-                driver = self.driver(route)
+                from ats.connections import settings_for_tenant
+
+                with self.factory() as config_db:
+                    runtime_config = settings_for_tenant(config_db, tenant_id)
+                driver = self.driver(route, tenant_id, runtime_config)
                 if isinstance(driver, Megafon) and megafon_user:
                     driver.user = megafon_user
                 external_id = (
@@ -372,7 +382,11 @@ class Worker:
                     ("Local/", "PJSIP/", "SIP/")
                 ):
                     raise Rejected("call_channel_unavailable")
-                driver = self.driver("multicom_ami")
+                from ats.connections import settings_for_tenant
+
+                with self.factory() as config_db:
+                    runtime_config = settings_for_tenant(config_db, tenant_id)
+                driver = self.driver("multicom_ami", tenant_id, runtime_config)
                 driver.connect()
                 driver.action("Hangup", [("Channel", channel)])
         except (Rejected, Retryable, DeliveryUnknown) as exc:

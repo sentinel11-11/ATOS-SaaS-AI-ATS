@@ -1,0 +1,176 @@
+{
+  "reference": "ATS-arena-01a0cdee-ats.zip",
+  "interface": "original React JSX, Tailwind theme and complete page components",
+  "id_contract": "Opaque resource IDs; relational identifiers must not be converted to integers.",
+  "pages": [
+    {
+      "id": "dashboard",
+      "navigation": "Обзор",
+      "source": "src/pages/Dashboard.jsx",
+      "sha256": "8333705609ba8a3c2744a94423a2f9a8575e905b4f0b67eb09509a8b5b76b989",
+      "api_paths": [
+        "/dashboard"
+      ]
+    },
+    {
+      "id": "campaigns",
+      "navigation": "Кампании",
+      "source": "src/pages/Campaigns.jsx",
+      "sha256": "a09347c9db1b749e222c3460318553861148132f6c767c9c4168dc51b2748773",
+      "api_paths": [
+        "/campaigns",
+        "/campaigns/save",
+        "/contacts",
+        "/databases",
+        "/templates",
+        "/campaigns/${addContactsModalCampId}/add-contacts",
+        "/campaigns/${cid}",
+        "/campaigns/${cid}/${action}",
+        "/campaigns/${cid}/clear",
+        "/campaigns/${cid}/delete",
+        "/campaigns/${cid}/retry-exhausted"
+      ]
+    },
+    {
+      "id": "journal",
+      "navigation": "Журнал звонков",
+      "source": "src/pages/Journal.jsx",
+      "sha256": "f39e4e9e3a630c538a95581dd36c7b4c07bb9dbb9e53f92209d8dacfaa1cdca1",
+      "api_paths": [
+        "/calls",
+        "/calls/clear-non-campaign"
+      ]
+    },
+    {
+      "id": "contacts",
+      "navigation": "Контакты и базы",
+      "source": "src/pages/Contacts.jsx",
+      "sha256": "33d4e70eaae6da5b21804bab59e7e07675daaa3679ce5c4c55b0df7435b31153",
+      "api_paths": [
+        "/campaigns",
+        "/complaint",
+        "/contacts",
+        "/contacts/delete",
+        "/contacts/import-file",
+        "/contacts/save",
+        "/campaigns/${selectedTargetCampId}/add-contacts",
+        "/contacts/history?id=${cid}"
+      ]
+    },
+    {
+      "id": "numbers",
+      "navigation": "Пул номеров",
+      "source": "src/pages/NumberPool.jsx",
+      "sha256": "dc654cc347bd459184ae69c5c8880f56001a8d196117eeb85d22692d2415bacc",
+      "api_paths": [
+        "/numbers",
+        "/numbers/delete",
+        "/numbers/quarantine",
+        "/numbers/reset",
+        "/numbers/save"
+      ]
+    },
+    {
+      "id": "acd",
+      "navigation": "Операторы / ACD",
+      "source": "src/pages/Operators.jsx",
+      "sha256": "5638f94fd53d01f5ec92b7292c7dfc4ba20e3aaf227eed05391b6da63ba2cad7",
+      "api_paths": [
+        "/acd"
+      ]
+    },
+    {
+      "id": "templates",
+      "navigation": "Шаблоны и сценарии",
+      "source": "src/pages/Templates.jsx",
+      "sha256": "c1f01329cc9855c1d424a964b555f552124dec62314baf7c527cb87a778d50ec",
+      "api_paths": [
+        "/templates",
+        "/templates/delete",
+        "/templates/save"
+      ]
+    },
+    {
+      "id": "blacklist",
+      "navigation": "Чёрный список",
+      "source": "src/pages/Blacklist.jsx",
+      "sha256": "8666d4e95cd6c9eb3c29db34df4478bffb8aef210df383d3dacd4a43bb47cec0",
+      "api_paths": [
+        "/blacklist",
+        "/blacklist/add",
+        "/blacklist/delete"
+      ]
+    },
+    {
+      "id": "reports",
+      "navigation": "Отчёты",
+      "source": "src/pages/Reports.jsx",
+      "sha256": "0763568cc4a6d99be70915368468baeb69d28f52ce7469df86fa48ae84ff8738",
+      "api_paths": [
+        "/reports"
+      ]
+    },
+    {
+      "id": "settings",
+      "navigation": "Настройки",
+      "source": "src/pages/Settings.jsx",
+      "sha256": "26626b3b3acd359301c51564e5639bc79e0d1cd3f60e0f8f2c1b860cd32b9858",
+      "api_paths": [
+        "/amocrm/users",
+        "/settings",
+        "/settings/raw",
+        "/settings/save",
+        "/users",
+        "/users/delete",
+        "/users/save"
+      ]
+    },
+    {
+      "id": "admin-logs",
+      "navigation": "Админские логи",
+      "source": "src/pages/AdminLogs.jsx",
+      "sha256": "0057ee88712ba04702288b8ef7a23736702cd71318766b6542c82733be5abbda",
+      "api_paths": [
+        "/audit/logs?${params.toString()}"
+      ]
+    }
+  ],
+  "theme": {
+    "file": "tailwind.config.js",
+    "sha256": "83e5e17b9c465198a48407e2b8eba9f2df37349a5aaca2fa7c8abc11b974005d"
+  },
+  "styles": {
+    "file": "src/index.css",
+    "sha256": "b3a5bbd2855f4bdf46db5d987765b637f02bb0557df0c5ad4f6a4fcc74fdcf12"
+  },
+  "limits": {
+    "legacy_contacts_render_limit": 300,
+    "legacy_journal_limit": 500,
+    "live_telephony_requires_separate_test_bench": true
+  },
+  "browser_actions": [
+    "authenticate_cookie_session",
+    "navigate_all_original_pages",
+    "create_contact",
+    "open_contact_history",
+    "toggle_contact_consent",
+    "create_template",
+    "edit_template",
+    "create_campaign",
+    "add_selected_contacts_to_campaign",
+    "start_simulator_campaign",
+    "view_call_timeline",
+    "import_csv_file",
+    "export_contacts_csv",
+    "export_calls_csv",
+    "create_caller_number",
+    "quarantine_caller_number",
+    "reset_caller_number_counters",
+    "create_blacklist_entry",
+    "delete_blacklist_entry",
+    "save_workspace_settings",
+    "create_operator_user",
+    "filter_audit_logs",
+    "logout_revokes_session"
+  ]
+}

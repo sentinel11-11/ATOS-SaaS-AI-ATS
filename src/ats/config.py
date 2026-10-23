@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="ATS_", env_file=".env", env_ignore_empty=True, extra="ignore"
+        env_prefix="ATS_", env_file=".env", env_ignore_empty=True, extra="ignore", populate_by_name=True
     )
     database_url: str
     secure_cookies: bool = True
@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     ami_user: str = "ats-beta"
     ami_secret: SecretStr = SecretStr("")
     ami_caller_id: str = Field(default="", pattern=r"^(|[0-9]{10})$")
+    ami_trunk: str = Field(default="mcm", pattern=r"^[a-zA-Z0-9_.-]{1,80}$")
+    ami_tech: str = Field(default="PJSIP", pattern=r"^(PJSIP|SIP)$")
+    ami_context: str = Field(default="ats-beta", pattern=r"^[a-zA-Z0-9_.-]{1,80}$")
+    ami_number_format: str = Field(default="ru8", pattern=r"^(ru8|e164|d10)$")
+    ami_caller_id_format: str = Field(default="d10", pattern=r"^(d10|ru8|e164)$")
+    ami_dial_prefix: str = Field(default="", pattern=r"^[0-9]{0,10}$")
+    ami_play_message: bool = True
+    ami_record_calls: bool = True
     megafon_url: str = ""
     megafon_api_key: SecretStr = SecretStr("")
     megafon_crm_token: SecretStr = SecretStr("")
@@ -40,6 +48,8 @@ class Settings(BaseSettings):
     media_enabled: bool = False
     media_dir: str = "/var/lib/ats-beta-media"
     asterisk_recordings_dir: str = "/var/spool/asterisk/monitor/ats-beta"
+    connection_encryption_key: SecretStr = SecretStr("")
+    events_enabled: bool = True
 
     @model_validator(mode="after")
     def validate_live(self):

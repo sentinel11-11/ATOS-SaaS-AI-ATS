@@ -76,7 +76,12 @@ def create_campaign(db, principal, data, key):
 
 
 def validate_route(tenant_id, route, db=None):
-    config = settings()
+    if db is not None:
+        from ats.connections import settings_for_tenant
+
+        config = settings_for_tenant(db, tenant_id)
+    else:
+        config = settings()
     if route == "sim":
         return
     if not config.live_calls_enabled or tenant_id != config.telephony_tenant_id:

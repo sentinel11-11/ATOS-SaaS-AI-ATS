@@ -14,9 +14,16 @@ from starlette.concurrency import run_in_threadpool
 
 from ats import schemas
 from ats.api_recording_links import router as recording_links_router
+from ats.compat_auth import router as compat_auth_router
+from ats.compat_campaigns import router as compat_campaigns_router
+from ats.compat_contacts import router as compat_contacts_router
+from ats.compat_observability import router as compat_observability_router
+from ats.compat_resources import router as compat_resources_router
+from ats.compat_settings import router as compat_settings_router
 from ats.config import settings
 from ats.db import session
 from ats.domain import Problem
+from ats.events import router as events_router
 from ats.models import Attempt, Audit, Campaign, Contact, Inbox, Outbox, Session, Tenant
 from ats.repositories import TenantRepository
 from ats.security import admin, authenticate, digest, principal
@@ -24,7 +31,7 @@ from ats.services import create_campaign, finish_attempt, ingest, validate_route
 from ats.workspace_api import router as workspace_router
 
 log = logging.getLogger("ats.api")
-app = FastAPI(title="ATS Beta", version="0.2.0")
+app = FastAPI(title="ATS Beta", version="0.3.0")
 
 
 @app.middleware("http")
@@ -92,7 +99,7 @@ async def request_guard(request: Request, call_next):
             "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "no-referrer",
             "Cache-Control": "no-store",
-            "Content-Security-Policy": "default-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'",
+            "Content-Security-Policy": "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; frame-ancestors 'none'",
         }
     )
     return response
@@ -154,7 +161,7 @@ def live():
 def ready(db=Depends(session)):
     # Verify required schema, not merely TCP/Postgres availability.
     version = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if version != "0004":
+    if version != "0005":
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
     return {"status": "ready", "live_calls": settings().live_calls_enabled, "version": app.version}
@@ -440,6 +447,13 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
 
 
 app.include_router(workspace_router)
+app.include_router(compat_auth_router)
+app.include_router(compat_contacts_router)
+app.include_router(compat_campaigns_router)
+app.include_router(compat_resources_router)
+app.include_router(compat_observability_router)
+app.include_router(compat_settings_router)
+app.include_router(events_router)
 app.include_router(recording_links_router)
 
 web = Path(__file__).resolve().parents[2] / "frontend" / "dist"

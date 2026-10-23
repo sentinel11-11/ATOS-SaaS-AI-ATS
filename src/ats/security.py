@@ -62,7 +62,7 @@ def authenticate(db, data, ip):
         select(User).where(User.tenant_id == data.tenant_id, User.login == data.login.lower())
     )
     valid = verify_password(data.password, user.password_hash if user else _dummy)
-    if not valid or not user or not user.active:
+    if not valid or not user or not user.active or user.archived:
         raise Problem(401, "invalid_credentials")
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     db.add(
@@ -85,7 +85,7 @@ def principal(request: Request, db=Depends(session)) -> Principal:
     row = db.execute(
         select(Session, User)
         .join(User, (Session.user_id == User.id) & (Session.tenant_id == User.tenant_id))
-        .where(Session.token_hash == digest(token), Session.expires_at > now(), User.active)
+        .where(Session.token_hash == digest(token), Session.expires_at > now(), User.active, ~User.archived)
     ).first()
     if row is None:
         raise Problem(401, "session_expired")

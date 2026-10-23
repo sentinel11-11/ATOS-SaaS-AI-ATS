@@ -57,7 +57,7 @@ def test_upgrade_preserves_beta_contacts_and_calls(factory):
             [".venv/bin/alembic", "upgrade", "head"], env=env, check=True, capture_output=True
         )
         with engine.connect() as db:
-            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0004"
+            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0005"
             assert (
                 db.scalar(text("SELECT name FROM contacts WHERE id=:id"), {"id": cid}) == "Original"
             )

@@ -102,7 +102,9 @@ def main():
             assert client.get("/").status_code == 200
             assert "ATS" in client.get("/").text
             if os.environ.get("ATS_BROWSER_SMOKE") == "true":
-                subprocess.run(["node", "scripts/ui-smoke.mjs"], check=True)
+                # The canonical ZIP interface is the supported browser contract.
+                # The old smoke runner targeted the discarded replacement UI.
+                subprocess.run(["node", "scripts/legacy-parity-smoke.mjs"], check=True)
             workspace = client.get("/api/v1/workspace/calls")
             workspace.raise_for_status()
             assert workspace.json()["total"] == 1
