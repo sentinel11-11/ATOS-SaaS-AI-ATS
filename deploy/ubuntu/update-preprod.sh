@@ -24,7 +24,7 @@ ensure_key() {
   fi
 }
 missing_identity=0
-for key in ATS_DEPLOYMENT ATS_INSTANCE_NAME ATS_INBOUND_ENABLED ATS_MEDIA_ENABLED; do
+for key in ATS_DEPLOYMENT ATS_INSTANCE_NAME ATS_LIVE_CALLS_ENABLED ATS_CRM_ENABLED ATS_INBOUND_ENABLED ATS_MEDIA_ENABLED; do
   grep -q "^${key}=" "$env_file" || missing_identity=1
 done
 if [[ "$missing_identity" == 1 ]]; then
@@ -33,6 +33,8 @@ if [[ "$missing_identity" == 1 ]]; then
   install -o ats-beta -g ats-beta -m 0600 "$env_file" "$migration_backup"
   ensure_key ATS_DEPLOYMENT preprod
   ensure_key ATS_INSTANCE_NAME ats-preprod
+  ensure_key ATS_LIVE_CALLS_ENABLED false
+  ensure_key ATS_CRM_ENABLED false
   ensure_key ATS_INBOUND_ENABLED false
   ensure_key ATS_MEDIA_ENABLED false
   chown root:ats-beta "$env_file"
