@@ -19,11 +19,15 @@ node_version=24.19.0
 uv_version=0.12.23
 expected_env() {
   cat <<'ENV'
+ATS_DEPLOYMENT=preprod
+ATS_INSTANCE_NAME=ats-preprod
 ATS_DATABASE_URL=postgresql+psycopg://ats-beta@/ats_beta?host=/var/run/postgresql
 ATS_PUBLIC_ORIGIN=http://127.0.0.1:9130
 ATS_SECURE_COOKIES=false
 ATS_LIVE_CALLS_ENABLED=false
 ATS_CRM_ENABLED=false
+ATS_INBOUND_ENABLED=false
+ATS_MEDIA_ENABLED=false
 ENV
 }
 cd "$project_dir"

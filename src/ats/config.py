@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 from uuid import UUID
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
@@ -10,6 +11,10 @@ class Settings(BaseSettings):
         env_prefix="ATS_", env_file=".env", env_ignore_empty=True, extra="ignore", populate_by_name=True
     )
     database_url: str
+    # Deployment identity is deliberately explicit so health checks and
+    # operators can distinguish the pre-production instance from legacy ATS.
+    deployment: Literal["preprod", "production"] = "preprod"
+    instance_name: str = Field(default="ats-preprod", pattern=r"^[a-zA-Z0-9_.-]{1,64}$")
     secure_cookies: bool = True
     public_origin: str = "https://ats.example.invalid"
     session_hours: int = Field(default=8, ge=1, le=24)

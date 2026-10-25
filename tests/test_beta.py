@@ -27,7 +27,10 @@ from ats.workers import Worker, backoff, claim, complete_job
 
 
 def test_health_and_auth_required(client):
-    assert client.get("/health/ready").status_code == 200
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    assert response.json()["deployment"] == "preprod"
+    assert response.json()["instance"] == "ats-preprod"
     assert client.get("/api/v1/contacts").status_code == 401
 
 

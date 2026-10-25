@@ -164,7 +164,14 @@ def ready(db=Depends(session)):
     if version != "0005":
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
-    return {"status": "ready", "live_calls": settings().live_calls_enabled, "version": app.version}
+    config = settings()
+    return {
+        "status": "ready",
+        "live_calls": config.live_calls_enabled,
+        "deployment": config.deployment,
+        "instance": config.instance_name,
+        "version": app.version,
+    }
 
 
 @app.post("/api/v1/auth/login")
