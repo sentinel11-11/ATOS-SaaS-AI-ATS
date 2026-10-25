@@ -45,6 +45,10 @@ ssh -N -L 9130:127.0.0.1:9130 root@SERVER_IP
 На сервере выполняется только preprod updater:
 
 ```bash
+# Однократно для уже установленной старой beta, где updater ещё отсутствует:
+cd /opt/ats-beta
+runuser -u ats-beta -- git -C /opt/ats-beta pull --ff-only origin main
+
 bash /opt/ats-beta/deploy/ubuntu/update-preprod.sh
 ```
 
