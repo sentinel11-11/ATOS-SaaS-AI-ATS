@@ -31,7 +31,7 @@ SECRETS = {
 }
 FIELDS = {
     "ami": {"host", "port", "user", "secret", "tls", "trunk", "tech", "number_format",
-            "caller_id_format", "context", "inbound_contexts", "record_calls", "play_message",
+            "caller_id_format", "context", "answer_context", "inbound_contexts", "record_calls", "play_message",
             "inbound_enabled", "dial_prefix", "caller_id"},
     "megafon_vats": {"base_url", "api_key", "crm_token", "api_key_env", "crm_token_env",
                      "default_user", "default_group", "timeout_sec"},
@@ -163,7 +163,7 @@ def _validate(provider, field, value):
         value = _public_url(value, suffixes)
     if field == "subdomain" and value and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", value):
         raise Problem(422, "invalid_amocrm_subdomain")
-    if provider == "ami" and field in {"host", "user", "trunk", "context", "dial_prefix", "inbound_contexts"}:
+    if provider == "ami" and field in {"host", "user", "trunk", "context", "answer_context", "dial_prefix", "inbound_contexts"}:
         if value and not re.fullmatch(r"[a-zA-Z0-9_.:,\-]{1,200}", value):
             raise Problem(422, "invalid_ami_identifier")
     if provider == "ami" and field == "tech" and value not in {"PJSIP", "SIP"}:
@@ -191,6 +191,7 @@ def _defaults(config, tenant_id):
                 "secret": MASK if phone_bound and config.ami_secret.get_secret_value() else "",
                 "trunk": getattr(config, "ami_trunk", "mcm"), "tech": "PJSIP", "number_format": "ru8",
                 "caller_id_format": "d10", "context": getattr(config, "ami_context", "ats-beta"),
+                "answer_context": getattr(config, "ami_answer_context", "ats-beta-answer"),
                 "inbound_contexts": config.inbound_contexts, "record_calls": True, "play_message": True,
                 "inbound_enabled": config.inbound_enabled if phone_bound else False, "dial_prefix": ""},
         "megafon_vats": {"base_url": config.megafon_url if phone_bound else "", "api_key": MASK if phone_bound and config.megafon_api_key.get_secret_value() else "",
@@ -273,9 +274,10 @@ def settings_for_tenant(db, tenant_id):
     mappings = {
         "ami": {"host": "ami_host", "port": "ami_port", "user": "ami_user", "secret": "ami_secret",
                 "tls": "ami_tls", "caller_id": "ami_caller_id", "trunk": "ami_trunk", "context": "ami_context",
+                "answer_context": "ami_answer_context",
                 "tech": "ami_tech", "number_format": "ami_number_format", "caller_id_format": "ami_caller_id_format",
                 "dial_prefix": "ami_dial_prefix", "play_message": "ami_play_message", "record_calls": "ami_record_calls",
-                "inbound_contexts": "inbound_contexts"},
+                "inbound_contexts": "inbound_contexts", "inbound_enabled": "inbound_enabled"},
         "megafon_vats": {"base_url": "megafon_url", "api_key": "megafon_api_key", "crm_token": "megafon_crm_token", "default_user": "megafon_user"},
         "amocrm": {"access_token": "amo_access_token"},
     }

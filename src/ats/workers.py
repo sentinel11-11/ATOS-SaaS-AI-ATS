@@ -92,6 +92,7 @@ class Worker:
         self.drivers = drivers or {}
         self.crm = crm
         self.injected_crm = crm is not None
+        self.crm_drivers = {}
 
     def ami_event(self, frame):
         config = settings()
@@ -296,6 +297,11 @@ class Worker:
                     contact.name,
                 )
             try:
+                runtime_config = settings()
+                if route != "sim":
+                    from ats.connections import settings_for_tenant
+
+                    runtime_config = settings_for_tenant(db, tenant_id)
                 validate_route(tenant_id, route, db)
                 if route == "multicom_ami":
                     number = db.scalar(
@@ -303,9 +309,9 @@ class Worker:
                     )
                     if (
                         number and (not number.enabled or not number.verified or number.quarantined)
-                    ) or (not number and caller_number != settings().ami_caller_id):
+                    ) or (not number and caller_number != runtime_config.ami_caller_id):
                         raise Problem(409, "caller_number_unavailable")
-                if route != "sim" and phone not in settings().destinations:
+                if route != "sim" and phone not in runtime_config.destinations:
                     raise Problem(409, "destination_not_allowed")
             except Problem as e:
                 finish_attempt(db, attempt, "failed")
@@ -320,20 +326,21 @@ class Worker:
                 attempt.external_id = str(attempt_id)
         # Crash from here until persisted response is ambiguous. No automatic redial.
         try:
-            media = False
-            if media_inputs:
-                from ats.media import prepare_media
-
-                media = prepare_media(*media_inputs)
-            if route == "sim":
-                external_id = str(attempt_id)
-            else:
+            if route != "sim" or media_inputs:
                 from ats.connections import settings_for_tenant
 
                 with self.factory() as config_db:
                     runtime_config = settings_for_tenant(config_db, tenant_id)
+            media = False
+            if media_inputs:
+                from ats.media import prepare_media
+
+                media = prepare_media(*media_inputs, config=runtime_config)
+            if route == "sim":
+                external_id = str(attempt_id)
+            else:
                 driver = self.driver(route, tenant_id, runtime_config)
-                if isinstance(driver, Megafon) and megafon_user:
+                if isinstance(driver, Megafon) and not runtime_config.megafon_user and megafon_user:
                     driver.user = megafon_user
                 external_id = (
                     driver.originate(
@@ -346,6 +353,12 @@ class Worker:
                     if route == "multicom_ami"
                     else driver.originate(attempt_id, phone)
                 )
+        except Problem as e:
+            with self.factory.begin() as db:
+                row = TenantRepository(db, tenant_id).get(Attempt, attempt_id, lock=True)
+                finish_attempt(db, row, "failed", e.code)
+                complete_job(db, job_id, token, "dead", e.code)
+            return True
         except (DeliveryUnknown, Retryable, Rejected) as e:
             with self.factory.begin() as db:
                 row = TenantRepository(db, tenant_id).get(Attempt, attempt_id, lock=True)
@@ -378,17 +391,20 @@ class Worker:
                 call = TenantRepository(db, tenant_id).get(Attempt, UUID(payload["attempt_id"]))
                 channel, status = call.channel, call.status
             if status not in {"completed", "failed"}:
-                if tenant_id != settings().telephony_tenant_id or not channel.startswith(
-                    ("Local/", "PJSIP/", "SIP/")
-                ):
-                    raise Rejected("call_channel_unavailable")
                 from ats.connections import settings_for_tenant
 
                 with self.factory() as config_db:
                     runtime_config = settings_for_tenant(config_db, tenant_id)
+                if tenant_id != runtime_config.telephony_tenant_id or not channel.startswith(
+                    ("Local/", "PJSIP/", "SIP/")
+                ):
+                    raise Rejected("call_channel_unavailable")
                 driver = self.driver("multicom_ami", tenant_id, runtime_config)
                 driver.connect()
                 driver.action("Hangup", [("Channel", channel)])
+        except Problem as exc:
+            with self.factory.begin() as db:
+                complete_job(db, job_id, token, "dead", exc.code)
         except (Rejected, Retryable, DeliveryUnknown) as exc:
             with self.factory.begin() as db:
                 complete_job(
@@ -410,9 +426,13 @@ class Worker:
             return False
         job_id, token, tenant_id, payload, attempts = job
         try:
-            if not settings().crm_enabled and not self.injected_crm:
+            from ats.connections import settings_for_tenant
+
+            with self.factory() as config_db:
+                runtime_config = settings_for_tenant(config_db, tenant_id)
+            if not runtime_config.crm_enabled and not self.injected_crm:
                 raise Rejected("crm_disabled")
-            if not self.injected_crm and tenant_id != settings().amo_tenant_id:
+            if not self.injected_crm and tenant_id != runtime_config.amo_tenant_id:
                 raise Rejected("crm_tenant_not_bound")
             with self.factory() as db:
                 repo = TenantRepository(db, tenant_id)
@@ -437,17 +457,25 @@ class Worker:
                 created_at = attempt.created_at
                 provider = db.scalar(repo.query(WorkspaceSettings))
                 options = provider.values if provider else {}
-            if self.crm is None:
-                self.crm = AmoCRM(settings())
+            crm = self.crm
+            if crm is None:
+                crm = self.crm_drivers.get(str(tenant_id))
+                if crm is None:
+                    crm = self.crm_drivers[str(tenant_id)] = AmoCRM(runtime_config)
             if not crm_id and options.get("amo_auto_create_contacts") and not self.injected_crm:
                 crm_id = self.resolve_crm_contact(
-                    tenant_id, contact_id, name, phone, options.get("amo_responsible_user_id")
+                    tenant_id,
+                    contact_id,
+                    name,
+                    phone,
+                    options.get("amo_responsible_user_id"),
+                    crm,
                 )
             if not crm_id:
                 raise Rejected("crm_contact_mapping_missing")
-            self.crm.send(attempt_id, crm_id, status)
+            crm.send(attempt_id, crm_id, status)
             if not self.injected_crm:
-                self.crm.register_call(
+                crm.register_call(
                     attempt_id,
                     phone,
                     status,
@@ -457,7 +485,7 @@ class Worker:
                     direction,
                 )
                 if options.get("amo_auto_create_tasks"):
-                    self.crm.create_task(
+                    crm.create_task(
                         attempt_id,
                         crm_id,
                         options.get("task_due_hours", 24),
@@ -479,12 +507,15 @@ class Worker:
         except DeliveryUnknown:
             with self.factory.begin() as db:
                 complete_job(db, job_id, token, "unknown", "crm_write_outcome_unknown")
+        except Problem as exc:
+            with self.factory.begin() as db:
+                complete_job(db, job_id, token, "dead", exc.code)
         else:
             with self.factory.begin() as db:
                 complete_job(db, job_id, token)
         return True
 
-    def resolve_crm_contact(self, tenant_id, contact_id, name, phone, responsible):
+    def resolve_crm_contact(self, tenant_id, contact_id, name, phone, responsible, crm=None):
         """Fence creation per contact; a lost write is reconciled rather than posted again."""
         token = uuid4()
         with self.factory.begin() as db:
@@ -498,7 +529,7 @@ class Worker:
             contact.crm_sync_state, contact.crm_sync_token = "creating", token
             contact.crm_sync_until = now() + timedelta(minutes=2)
         try:
-            crm_id = self.crm.ensure_contact(name, phone, responsible)
+            crm_id = (crm or self.crm).ensure_contact(name, phone, responsible)
         except (Retryable, Rejected):
             with self.factory.begin() as db:
                 contact = TenantRepository(db, tenant_id).get(Contact, contact_id, lock=True)
@@ -544,8 +575,12 @@ class Worker:
         if job[3].get("sync"):
             return self.sync_directory(job)
         job_id, token, tenant_id, payload, _ = job
-        provider, config, code, status = payload["provider"], settings(), "connection_ok", "done"
+        provider, code, status = payload["provider"], "connection_ok", "done"
         try:
+            from ats.connections import settings_for_tenant
+
+            with self.factory() as config_db:
+                config = settings_for_tenant(config_db, tenant_id)
             if provider == "ami":
                 if (
                     tenant_id != config.telephony_tenant_id
@@ -581,6 +616,8 @@ class Worker:
                     response = client.get(url, headers=headers)
                 if response.status_code != 200:
                     raise Rejected(f"provider_http_{response.status_code}")
+        except Problem as exc:
+            status, code = "dead", exc.code
         except (Rejected, Retryable, DeliveryUnknown, httpx.HTTPError) as exc:
             status, code = "dead", getattr(exc, "code", "provider_unreachable")
         with self.factory.begin() as db:
@@ -600,12 +637,19 @@ class Worker:
         from ats.provider_sync import fetch_directory, store_directory
 
         job_id, token, tenant_id, payload, _ = job
-        provider, config = payload["provider"], settings()
+        provider = payload["provider"]
         try:
+            from ats.connections import settings_for_tenant
+
+            with self.factory() as config_db:
+                config = settings_for_tenant(config_db, tenant_id)
             binding = config.amo_tenant_id if provider == "amocrm" else config.telephony_tenant_id
             if tenant_id != binding:
                 raise Rejected("provider_not_bound_to_tenant")
             values = fetch_directory(config, provider, payload["sync"])
+        except Problem as exc:
+            with self.factory.begin() as db:
+                complete_job(db, job_id, token, "dead", exc.code)
         except (Rejected, Retryable) as exc:
             with self.factory.begin() as db:
                 complete_job(db, job_id, token, "dead", exc.code)
@@ -626,8 +670,13 @@ class Worker:
 
     def close(self):
         for driver in self.drivers.values():
-            if isinstance(driver, AMI):
+            if hasattr(driver, "close"):
                 driver.close()
+        for driver in self.crm_drivers.values():
+            if hasattr(driver, "close"):
+                driver.close()
+        if self.injected_crm and hasattr(self.crm, "close"):
+            self.crm.close()
 
 
 def main():

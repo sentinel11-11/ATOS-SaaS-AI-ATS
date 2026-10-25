@@ -14,6 +14,7 @@ bash deploy/ubuntu/install-preprod.sh
 ```
 
 `install-preprod.sh` клонирует проект в `/opt/ats-beta`; каталог bootstrap после успешного запуска можно удалить только после проверки, что `/opt/ats-beta` — нужная рабочая копия. Установщик создаёт отдельные OS user, PostgreSQL role/database, venv, caches и units. `ATS_LIVE_CALLS_ENABLED`, inbound, media и CRM остаются `false`.
+Также он один раз генерирует `ATS_CONNECTION_ENCRYPTION_KEY` и создаёт закрытый каталог записей `/var/lib/ats-beta/recordings`; этот ключ нужен, чтобы формы настроек могли безопасно сохранять секреты провайдеров. Ключ остаётся только в `/etc/ats-beta/ats.env` и не попадает в Git.
 
 Создайте администратора один раз:
 

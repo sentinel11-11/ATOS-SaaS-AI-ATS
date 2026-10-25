@@ -304,6 +304,37 @@ def test_settings_redact_secrets_and_validate(logged, monkeypatch):
     )
 
 
+def test_provider_secret_is_encrypted_and_round_trips(logged, factory, monkeypatch):
+    from cryptography.fernet import Fernet
+
+    from ats.config import settings
+    from ats.models import ConnectionProfile
+
+    monkeypatch.setenv("ATS_CONNECTION_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    settings.cache_clear()
+    response = logged.post(
+        "/api/v2/settings/raw",
+        json={
+            "provider_config": {
+                "ami": {
+                    "host": "127.0.0.1",
+                    "port": 5038,
+                    "user": "preprod-ami",
+                    "secret": "secret-never-returned",
+                }
+            }
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert "secret-never-returned" not in response.text
+    public = logged.get("/api/v2/settings/raw")
+    assert public.status_code == 200
+    assert public.json()["provider_config"]["ami"]["secret"] == "********"
+    with factory() as db:
+        row = db.scalar(select(ConnectionProfile))
+        assert row.encrypted_secrets and "secret-never-returned" not in row.encrypted_secrets
+
+
 def test_diagnostic_is_queued_and_does_not_call_network_in_api(logged, factory):
     result = logged.post(BASE + "/diagnostics/ami")
     assert result.status_code == 202

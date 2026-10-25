@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import String, case, cast, extract, func, literal, or_, select, union_all, update
 
 from ats import api_calls
-from ats.config import settings
 from ats.db import session
 from ats.domain import ACTIVE, Problem
 from ats.models import (
@@ -340,6 +339,9 @@ def _period(db, p, from_date=None, to_date=None):
 
 @router.get("/dashboard")
 def dashboard(p=Depends(principal), db=Depends(session)):
+    from ats.connections import settings_for_tenant
+
+    config = settings_for_tenant(db, p.tenant_id)
     _, _, _, start, end = _period(db, p)
     rows = legacy_calls_query(p)
     today = db.execute(
@@ -378,7 +380,7 @@ def dashboard(p=Depends(principal), db=Depends(session)):
         "acd_queued": db.scalar(select(func.count()).select_from(QueueEntry).where(
             QueueEntry.tenant_id == p.tenant_id, QueueEntry.status == "waiting",
         )),
-        "live_calls": settings().live_calls_enabled and settings().telephony_tenant_id == p.tenant_id,
+        "live_calls": config.live_calls_enabled and config.telephony_tenant_id == p.tenant_id,
     }
 
 

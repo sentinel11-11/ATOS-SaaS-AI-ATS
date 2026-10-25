@@ -15,8 +15,8 @@ from ats.config import settings
 from ats.models import Attempt, Recording
 
 
-def prepare_media(attempt, campaign, template, contact):
-    config = settings()
+def prepare_media(attempt, campaign, template, contact, config=None):
+    config = config or settings()
     if not config.media_enabled:
         if template:
             raise Rejected("enable_media_before_dialing_template")

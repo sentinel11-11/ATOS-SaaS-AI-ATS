@@ -1,8 +1,8 @@
-# ATS · рабочий кабинет закрытой беты 0.2
+# ATS · рабочий кабинет закрытой беты 0.3
 
 Исполняемый проект исходящего дозвона: FastAPI, PostgreSQL, React/TypeScript и независимые worker-процессы. Подготовлен по аудиту загруженного legacy ATS; код legacy не скопирован в новый runtime.
 
-**Статус:** локальный simulator/HTTP/PostgreSQL и контрактные интеграции проверены. Подключение настоящих МегаФон ВАТС, Asterisk/Мультиком и amoCRM ещё требует live UAT. Это не готовый публичный SaaS и не полная замена всех функций старой версии.
+**Статус:** preprod-кандидат с отдельными PostgreSQL/systemd контурами, simulator/HTTP/PostgreSQL, React UI и контрактными интеграциями проверен. Подключение настоящих МегаФон ВАТС, Asterisk/Мультиком и amoCRM ещё требует live UAT. Это закрытая тестовая эксплуатация, а не автоматически подтверждённый публичный SaaS.
 
 ## Документы
 
@@ -16,6 +16,7 @@
 8. [Обновление установленной беты](docs/WORKSPACE_UPDATE_RU.md) — backup, миграции и импорт рабочей SQLite.
 9. [Результаты проверки](docs/VALIDATION_RU.md) — что действительно запускалось и что не проверено.
 10. [Предпродакшен через SSH](docs/PREPROD_SSH_RU.md) — изолированная выкладка рядом с legacy ATS и безопасное обновление.
+11. [Проверка preprod-кандидата](docs/PREPROD_VALIDATION_RU.md) — актуальные backend/frontend/browser/smoke результаты и границы live UAT.
 
 ## Быстрый старт
 
@@ -54,7 +55,7 @@ HTTP + separate-process smoke:
 docker exec atos-dev-postgres createdb -U postgres ats_smoke
 ATS_DATABASE_URL="postgresql+psycopg://postgres@/ats_smoke?host=$(pwd)/.runtime/pgsocket" .venv/bin/alembic upgrade head
 ATS_DATABASE_URL="postgresql+psycopg://postgres@/ats_smoke?host=$(pwd)/.runtime/pgsocket" \
-ATS_PUBLIC_ORIGIN=http://127.0.0.1:8017 ATS_WORKER_POLL_SECONDS=.1 \
+ATS_PUBLIC_ORIGIN=http://127.0.0.1:8017 ATS_SECURE_COOKIES=false ATS_WORKER_POLL_SECONDS=.1 \
 .venv/bin/python scripts/smoke.py
 ```
 

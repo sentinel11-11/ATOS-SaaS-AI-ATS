@@ -186,7 +186,7 @@ def retry_failed(db, p, campaign):
     return len(items)
 
 
-def select_caller(db, tenant, route):
+def select_caller(db, tenant, route, config=None):
     """Caller selection shares the tenant allocation lock; counts persisted attempts, no reset races."""
     if route != "multicom_ami":
         return ""
@@ -199,7 +199,7 @@ def select_caller(db, tenant, route):
     if not numbers:
         from ats.config import settings
 
-        return settings().ami_caller_id
+        return (config or settings()).ami_caller_id
     day_start = (
         now()
         .astimezone(ZoneInfo(tenant.timezone))

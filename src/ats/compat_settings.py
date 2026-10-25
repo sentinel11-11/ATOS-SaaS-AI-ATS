@@ -209,4 +209,7 @@ def megafon_directory(p=Depends(admin), db=Depends(session)):
 @router.get("/health")
 @router.get("/health/details")
 def health(p=Depends(principal), db=Depends(session)):
-    return {"ok": True, "status": "ok", "live_calls": settings().live_calls_enabled and settings().telephony_tenant_id == p.tenant_id, "storage": "postgresql", "engine": "workers", "version": "0.3.0"}
+    from ats.connections import settings_for_tenant
+
+    config = settings_for_tenant(db, p.tenant_id)
+    return {"ok": True, "status": "ok", "live_calls": config.live_calls_enabled and config.telephony_tenant_id == p.tenant_id, "storage": "postgresql", "engine": "workers", "version": "0.3.0"}

@@ -122,9 +122,12 @@ def call_hangup(attempt_id: UUID, p=Depends(principal), db=Depends(session)):
         finish_attempt(db, row, "failed", "cancelled_by_user")
         result = {"status": "cancelled"}
     else:
+        from ats.connections import settings_for_tenant
+
+        config = settings_for_tenant(db, p.tenant_id)
         if (
             row.route != "multicom_ami"
-            or settings().telephony_tenant_id != p.tenant_id
+            or config.telephony_tenant_id != p.tenant_id
             or not row.channel
         ):
             raise Problem(409, "provider_hangup_unavailable")

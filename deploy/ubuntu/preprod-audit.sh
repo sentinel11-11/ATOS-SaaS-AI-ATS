@@ -28,6 +28,11 @@ grep -Fxq 'ATS_DATABASE_URL=postgresql+psycopg://ats-beta@/ats_beta?host=/var/ru
   || fail 'preprod must use the dedicated ats_beta database'
 grep -Fxq 'ATS_PUBLIC_ORIGIN=http://127.0.0.1:9130' "$env_file" \
   || fail 'preprod API must stay on loopback port 9130'
+grep -Fxq 'ATS_RECORDINGS_DIR=/var/lib/ats-beta/recordings' "$env_file" \
+  || fail 'recordings must stay under the writable preprod state directory'
+encryption_key=$(grep -E '^ATS_CONNECTION_ENCRYPTION_KEY=' "$env_file" | cut -d= -f2- || true)
+[[ "$encryption_key" =~ ^[A-Za-z0-9_-]{40,}$ ]] \
+  || fail 'ATS_CONNECTION_ENCRYPTION_KEY is missing or malformed'
 for key in ATS_LIVE_CALLS_ENABLED ATS_INBOUND_ENABLED ATS_MEDIA_ENABLED ATS_CRM_ENABLED; do
   grep -Fxq "$key=false" "$env_file" || fail "$key must remain false in preprod"
 done

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     ami_trunk: str = Field(default="mcm", pattern=r"^[a-zA-Z0-9_.-]{1,80}$")
     ami_tech: str = Field(default="PJSIP", pattern=r"^(PJSIP|SIP)$")
     ami_context: str = Field(default="ats-beta", pattern=r"^[a-zA-Z0-9_.-]{1,80}$")
+    ami_answer_context: str = Field(
+        default="ats-beta-answer", pattern=r"^[a-zA-Z0-9_.-]{1,80}$"
+    )
     ami_number_format: str = Field(default="ru8", pattern=r"^(ru8|e164|d10)$")
     ami_caller_id_format: str = Field(default="d10", pattern=r"^(d10|ru8|e164)$")
     ami_dial_prefix: str = Field(default="", pattern=r"^[0-9]{0,10}$")

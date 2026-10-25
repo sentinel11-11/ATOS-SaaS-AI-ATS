@@ -22,6 +22,9 @@ def main():
         raise SystemExit("Use a disposable database with ats_smoke prefix")
     if os.environ.get("ATS_LIVE_CALLS_ENABLED", "false").lower() != "false":
         raise SystemExit("Live calls must be disabled for smoke testing")
+    # The smoke server is plain HTTP on loopback; never create Secure cookies
+    # that an HTTP client would correctly refuse to send.
+    os.environ.setdefault("ATS_SECURE_COOKIES", "false")
     tenant_id, password = uuid4(), secrets.token_urlsafe(24)
     bootstrap(session_factory(), tenant_id, "Smoke test", "admin", password)
     artifacts = Path("artifacts")

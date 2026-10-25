@@ -121,6 +121,9 @@ def schedule_one(db, tenant_id):
     )
     if not tenant:
         return False
+    from ats.connections import settings_for_tenant
+
+    config = settings_for_tenant(db, tenant_id)
     repo = TenantRepository(db, tenant_id)
     hour = now().astimezone(ZoneInfo(tenant.timezone)).hour
     active = db.scalar(
@@ -199,7 +202,7 @@ def schedule_one(db, tenant_id):
         if (
             campaign.route == "multicom_ami"
             and (campaign.mode != "message" or campaign.template_id)
-            and not settings().media_enabled
+            and not config.media_enabled
         ):
             raise Problem(409, "media_not_configured")
         operator = None
@@ -221,14 +224,14 @@ def schedule_one(db, tenant_id):
             )
             if not operator:
                 return False
-        if campaign.route != "sim" and contact.phone not in settings().destinations:
+        if campaign.route != "sim" and contact.phone not in config.destinations:
             item.status = "blocked"
             repo.add(Audit, actor_id=None, entity_id=item.id, action="call.destination_blocked")
             return True
         from ats.workspace_service import event, select_caller
 
         try:
-            caller_number = select_caller(db, tenant, campaign.route)
+            caller_number = select_caller(db, tenant, campaign.route, config)
         except Problem as exc:
             if exc.code == "caller_pool_exhausted":
                 return False

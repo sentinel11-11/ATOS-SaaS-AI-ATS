@@ -1,6 +1,6 @@
 # Закрытая бета: МегаФон ВАТС, Мультиком/Asterisk и amoCRM
 
-Версия 0.1 — кандидат для тестового стенда. На этой машине выполнялся simulator, контрактные HTTP-тесты и AMI socket fixture. Реальные операторы/CRM не подключались; их доступы не были предоставлены.
+Версия 0.3 — кандидат для изолированного preprod-тест стенда. На этой машине выполнялись simulator, контрактные HTTP-тесты, AMI socket fixture и браузерный smoke. Реальные операторы/CRM не подключались; их доступы не были предоставлены.
 
 ## Локальная среда
 
@@ -44,7 +44,7 @@ Dev PostgreSQL не слушает TCP: только Unix socket в `.runtime` �
 5. TLS проверяется штатным trust store/официальным CA; для local tunnel допускается ATS_AMI_TLS=false только на loopback. Не отключать certificate verification для remote AMI.
 6. Добавить один consented test destination, выбрать 1 канал и `multicom_ami`. Сопоставить attempt UUID, Local channel, PJSIP channel, UserEvent и CDR/CEL. Проверить busy, no-answer, answer/playback, hangup обеих сторон и restart worker.
 
-Dialplan — **шаблон для ревью**, на настоящем Asterisk не загружался. Он показывает playback тестового prompt, не AI/ACD и не голосовой сценарий legacy. Семантику DIALSTATUS при hangup обоих плеч и наличие каждого terminal UserEvent нужно проверить live; missing event приводит к unknown. Входящие звонки и автоматическая выгрузка записей в версии 0.1 не реализованы.
+Dialplan — **шаблон для ревью**, на настоящем Asterisk не загружался. Он показывает playback тестового prompt, не AI/ACD и не голосовой сценарий legacy. Семантику DIALSTATUS при hangup обоих плеч и наличие каждого terminal UserEvent нужно проверить live; missing event приводит к unknown. Входящие и записи реализованы в коде через отдельные worker/контексты, но их SIP/RTP/MixMonitor поведение всё ещё требует live UAT.
 
 ## МегаФон ВАТС
 

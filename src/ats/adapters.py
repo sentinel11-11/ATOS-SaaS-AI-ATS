@@ -78,6 +78,9 @@ class Megafon:
             raise DeliveryUnknown()
         return result
 
+    def close(self):
+        self.client.close()
+
 
 class AmoCRM:
     """Contact notes with a stable external marker. No claim of remote exactly-once."""
@@ -258,6 +261,9 @@ class AmoCRM:
             json=[data],
         )
 
+    def close(self):
+        self.client.close()
+
 
 class AMI:
     """One connection, one reader, correlated responses. Asterisk UserEvents carry call UUIDs."""
@@ -361,12 +367,16 @@ class AMI:
         from ats.schemas import phone_e164
 
         phone = phone_e164(phone)
+        context = getattr(self.config, "ami_context", "ats-beta")
+        answer_context = getattr(self.config, "ami_answer_context", "ats-beta-answer")
+        trunk = getattr(self.config, "ami_trunk", "mcm")
+        tech = getattr(self.config, "ami_tech", "PJSIP")
         self.connect()
         self.action(
             "Originate",
             [
-                ("Channel", f"Local/{phone}@ats-beta/n"),
-                ("Context", "ats-beta-answer"),
+                ("Channel", f"Local/{phone}@{context}/n"),
+                ("Context", answer_context),
                 ("Exten", "s"),
                 ("Priority", "1"),
                 ("Timeout", "30000"),
@@ -375,6 +385,8 @@ class AMI:
                 ("Variable", f"__ATS_ATTEMPT_ID={attempt_id}"),
                 ("Variable", f"__ATS_MEDIA={int(media)}"),
                 ("Variable", f"__ATS_OPERATOR_EXT={operator_ext}"),
+                ("Variable", f"__ATS_TRUNK={trunk}"),
+                ("Variable", f"__ATS_TECH={tech}"),
             ],
             action_id=str(attempt_id),
         )

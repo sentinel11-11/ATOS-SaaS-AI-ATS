@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import String, cast, func, or_, select
 
 from ats import workspace_schemas as commands
-from ats.config import settings
 from ats.db import session
 from ats.domain import ACTIVE, Problem
 from ats.models import (
@@ -35,6 +34,9 @@ router = APIRouter(prefix="/api/v1/workspace", tags=["operations"])
 
 @router.get("/dashboard")
 def dashboard(p=Depends(principal), db=Depends(session)):
+    from ats.connections import settings_for_tenant
+
+    config = settings_for_tenant(db, p.tenant_id)
     counts = {}
     for model, key in [(Contact, "contacts"), (Campaign, "campaigns"), (Attempt, "attempts")]:
         query = select(func.count()).select_from(model).where(model.tenant_id == p.tenant_id)
@@ -62,8 +64,7 @@ def dashboard(p=Depends(principal), db=Depends(session)):
     return {
         "counts": counts,
         "tenant": tenant,
-        "live_calls": settings().live_calls_enabled
-        and settings().telephony_tenant_id == p.tenant_id,
+        "live_calls": config.live_calls_enabled and config.telephony_tenant_id == p.tenant_id,
         "active_calls": [
             call_dict(*row)
             for row in db.execute(

@@ -28,6 +28,7 @@ ATS_LIVE_CALLS_ENABLED=false
 ATS_CRM_ENABLED=false
 ATS_INBOUND_ENABLED=false
 ATS_MEDIA_ENABLED=false
+ATS_RECORDINGS_DIR=/var/lib/ats-beta/recordings
 ENV
 }
 cd "$project_dir"
@@ -145,10 +146,15 @@ run_beta nice -n 10 "$node_dir/bin/npm" --prefix frontend run build
 run_beta "$project_dir/.venv/bin/python" -m alembic upgrade head
 
 if [[ ! -e /etc/ats-beta/ats.env ]]; then
-  (umask 0027; set -o noclobber; expected_env > /etc/ats-beta/ats.env)
+  encryption_key="$($project_dir/.venv/bin/python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode("ascii"))')"
+  (umask 0027; set -o noclobber; {
+    expected_env
+    printf 'ATS_CONNECTION_ENCRYPTION_KEY=%s\n' "$encryption_key"
+  } > /etc/ats-beta/ats.env)
 fi
 chown root:ats-beta /etc/ats-beta/ats.env
 chmod 0640 /etc/ats-beta/ats.env
+install -d -o ats-beta -g ats-beta -m 0700 /var/lib/ats-beta/recordings
 for unit_file in ats-beta-api.service ats-beta-worker@.service; do
   install -o root -g root -m 0644 "deploy/ubuntu/$unit_file" "/etc/systemd/system/$unit_file"
 done

@@ -338,6 +338,10 @@ def resolve(attempt_id: UUID, data: schemas.ResolveAttempt, p=Depends(admin), db
 
 @app.get("/api/v1/operations")
 def operations(p=Depends(admin), db=Depends(session)):
+    from ats.connections import settings_for_tenant
+
+    config = settings_for_tenant(db, p.tenant_id)
+
     def counts(model):
         return dict(
             db.execute(
@@ -351,13 +355,15 @@ def operations(p=Depends(admin), db=Depends(session)):
         "outbox": counts(Outbox),
         "inbox": counts(Inbox),
         "attempts": counts(Attempt),
-        "live_calls_enabled": settings().live_calls_enabled,
+        "live_calls_enabled": config.live_calls_enabled and config.telephony_tenant_id == p.tenant_id,
     }
 
 
 @app.post("/webhooks/megafon/{tenant_id}")
 async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)):
-    config = settings()
+    from ats.connections import settings_for_tenant
+
+    config = settings_for_tenant(db, tenant_id)
     form = dict(await request.form())
     expected = config.megafon_crm_token.get_secret_value()
     if (
