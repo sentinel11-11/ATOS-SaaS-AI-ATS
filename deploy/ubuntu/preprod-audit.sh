@@ -26,8 +26,14 @@ grep -Fxq 'ATS_DEPLOYMENT=preprod' "$env_file" || fail 'ATS_DEPLOYMENT must be p
 grep -Fxq 'ATS_INSTANCE_NAME=ats-preprod' "$env_file" || fail 'ATS_INSTANCE_NAME must be ats-preprod'
 grep -Fxq 'ATS_DATABASE_URL=postgresql+psycopg://ats-beta@/ats_beta?host=/var/run/postgresql' "$env_file" \
   || fail 'preprod must use the dedicated ats_beta database'
-grep -Fxq 'ATS_PUBLIC_ORIGIN=http://127.0.0.1:9130' "$env_file" \
-  || fail 'preprod API must stay on loopback port 9130'
+public_origin=$(grep -E '^ATS_PUBLIC_ORIGIN=' "$env_file" | head -n 1 | cut -d= -f2- || true)
+if [[ "$public_origin" == 'http://127.0.0.1:9130' ]]; then
+  pass 'preprod API uses its loopback origin'
+elif [[ "$public_origin" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+  pass "preprod API uses an HTTPS reverse-proxy origin: $public_origin"
+else
+  fail 'ATS_PUBLIC_ORIGIN must be loopback HTTP or a host-only HTTPS origin'
+fi
 grep -Fxq 'ATS_RECORDINGS_DIR=/var/lib/ats-beta/recordings' "$env_file" \
   || fail 'recordings must stay under the writable preprod state directory'
 encryption_key=$(grep -E '^ATS_CONNECTION_ENCRYPTION_KEY=' "$env_file" | cut -d= -f2- || true)

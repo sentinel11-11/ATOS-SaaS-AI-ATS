@@ -55,6 +55,58 @@ bash /opt/ats-beta/deploy/ubuntu/update-preprod.sh
 
 Он проверяет чистую рабочую копию, подтягивает `main` fast-forward-only, создаёт backup `ats_beta`, запускает миграции/сборку и перезапускает только `ats-beta-*`. При ошибке units беты остаются остановленными, путь backup печатается. Legacy ATS и Asterisk не трогаются.
 
+Для отдельного снимка перед изменением используйте:
+
+```bash
+bash /opt/ats-beta/deploy/ubuntu/backup-preprod.sh
+```
+
+Снимок содержит custom-format dump `ats_beta`, закрытый `ats.env`, commit кода,
+архив исходников и checksums. Записи добавляются только при явном флаге
+`ATS_BACKUP_RECORDINGS=true`. Проверить snapshot без изменений можно так:
+
+```bash
+bash /opt/ats-beta/deploy/ubuntu/restore-preprod.sh \
+  /var/lib/ats-beta/backups/TIMESTAMP
+```
+
+Фактическое восстановление требует явного `--apply`, останавливает только beta
+units и после восстановления проверяет `/health/ready`:
+
+```bash
+bash /opt/ats-beta/deploy/ubuntu/restore-preprod.sh \
+  /var/lib/ats-beta/backups/TIMESTAMP --apply
+```
+
+Каждое обновление также архивирует предыдущий commit кода в
+`/var/lib/ats-beta/backups/pre-update-<UTC timestamp>`. Это позволяет сохранить
+старую версию отдельно от legacy ATS и базы.
+
+Откатить только код к такому commit можно в dry-run режиме, а затем явно
+применить его. База при этом не изменяется:
+
+```bash
+bash /opt/ats-beta/deploy/ubuntu/rollback-preprod.sh \
+  /var/lib/ats-beta/backups/pre-update-TIMESTAMP
+bash /opt/ats-beta/deploy/ubuntu/rollback-preprod.sh \
+  /var/lib/ats-beta/backups/pre-update-TIMESTAMP --apply
+```
+
+Операционный статус и аварийная остановка новых отправок:
+
+```bash
+bash /opt/ats-beta/deploy/ubuntu/status-preprod.sh
+bash /opt/ats-beta/deploy/ubuntu/emergency-stop-preprod.sh
+```
+
+Аварийная команда ставит все running-кампании на паузу и останавливает только
+beta telephony worker. Уже начатый канал она не завершает; его завершение
+выполняется через Asterisk/PBX. После проверки worker запускается вручную:
+
+```bash
+systemctl start ats-beta-worker@telephony
+```
+
 ## Граница телефонии
 
 Preprod сейчас является безопасным simulator-контуром. Общий Asterisk не становится владельцем новых звонков: нет новой SIP-регистрации, AMI inbound и live originate. Старый ATS продолжает владеть действующим транком Multicom.

@@ -62,6 +62,14 @@ if [[ -n "$(runuser -u ats-beta -- git -C /opt/ats-beta status --porcelain)" ]];
   echo 'Preprod checkout has local changes; preserve them before pulling.' >&2
   exit 1
 fi
+previous_revision=$(runuser -u ats-beta -- git -C /opt/ats-beta rev-parse HEAD)
+revision_backup="/var/lib/ats-beta/backups/pre-update-$(date -u +%Y%m%dT%H%M%SZ)"
+install -d -o ats-beta -g ats-beta -m 0700 "$revision_backup"
+runuser -u ats-beta -- git -C /opt/ats-beta archive --format=tar "$previous_revision" \
+  | gzip >"$revision_backup/code-$previous_revision.tar.gz"
+printf '%s\n' "$previous_revision" >"$revision_backup/code-revision.txt"
+chown ats-beta:ats-beta "$revision_backup/code-revision.txt" "$revision_backup/code-$previous_revision.tar.gz"
 runuser -u ats-beta -- git -C /opt/ats-beta pull --ff-only origin main
 bash deploy/ubuntu/update-beta.sh
 bash deploy/ubuntu/preprod-audit.sh
+printf 'Previous code snapshot: %s\n' "$revision_backup"
