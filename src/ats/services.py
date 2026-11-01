@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -351,6 +352,25 @@ def drain_inbox(db):
         .where(Attempt.route == row.route, Attempt.external_id == row.external_id)
         .with_for_update()
     )
+    if not attempt and row.route == "megafon_vats":
+        # MegaFon history callbacks may carry a leg callid different from the
+        # id returned by makecall. Match only one recent active attempt for the
+        # same tenant and normalized customer number; ambiguity stays orphaned.
+        from ats.inbound import normalize_phone
+
+        phone = normalize_phone((row.payload or {}).get("phone", ""))
+        query = repo.query(Attempt).where(
+            Attempt.route == row.route,
+            Attempt.status.in_(ACTIVE),
+            Attempt.created_at >= row.received_at - timedelta(minutes=10),
+        )
+        if phone:
+            query = query.where(Attempt.phone == phone)
+        candidates = list(db.scalars(query.order_by(Attempt.created_at.desc()).limit(2)).all())
+        if len(candidates) == 1:
+            attempt = db.scalar(
+                repo.query(Attempt).where(Attempt.id == candidates[0].id).with_for_update()
+            )
     if not attempt:
         # Do not starve newer events; bounded retry window handled by received_at ordering.
         from datetime import timedelta

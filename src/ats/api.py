@@ -454,7 +454,15 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     if not external_id or len(external_id) > 120:
         raise Problem(422, "invalid_callid")
     event_key = hashlib.sha256(f"{external_id}:{cmd}:{event}".encode()).hexdigest()
-    ingest(db, tenant_id, "megafon_vats", event_key, external_id, event)
+    # MegaFon can use a different callid for the history leg than the id
+    # returned by makecall. Keep only non-secret correlation fields so the
+    # inbox worker can safely match that callback to the active attempt.
+    callback_payload = {
+        key: str(form.get(key, ""))[:120]
+        for key in ("phone", "user", "telnum", "type", "status", "direction")
+        if form.get(key) is not None
+    }
+    ingest(db, tenant_id, "megafon_vats", event_key, external_id, event, callback_payload)
     db.commit()  # Acknowledge only after durable storage.
     return {"result": "success"}
 
