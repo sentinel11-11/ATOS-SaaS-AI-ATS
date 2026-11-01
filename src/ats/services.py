@@ -225,7 +225,7 @@ def schedule_one(db, tenant_id):
             )
             if not operator:
                 return False
-        if campaign.route != "sim" and contact.phone not in config.destinations:
+        if campaign.route != "sim" and not config.destination_allowed(contact.phone):
             item.status = "blocked"
             repo.add(Audit, actor_id=None, entity_id=item.id, action="call.destination_blocked")
             return True

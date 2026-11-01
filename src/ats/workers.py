@@ -311,7 +311,7 @@ class Worker:
                         number and (not number.enabled or not number.verified or number.quarantined)
                     ) or (not number and caller_number != runtime_config.ami_caller_id):
                         raise Problem(409, "caller_number_unavailable")
-                if route != "sim" and phone not in runtime_config.destinations:
+                if route != "sim" and not runtime_config.destination_allowed(phone):
                     raise Problem(409, "destination_not_allowed")
             except Problem as e:
                 finish_attempt(db, attempt, "failed")

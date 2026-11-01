@@ -63,8 +63,10 @@ class Settings(BaseSettings):
     def validate_live(self):
         if self.inbound_enabled and not self.telephony_tenant_id:
             raise ValueError("Inbound calls require a tenant binding")
-        if self.live_calls_enabled and (not self.telephony_tenant_id or not self.destinations):
-            raise ValueError("Live calls require tenant binding and explicit test destinations")
+        if self.live_calls_enabled and not self.telephony_tenant_id:
+            raise ValueError("Live calls require a tenant binding")
+        if self.live_calls_enabled and self.deployment != "production" and not self.destinations:
+            raise ValueError("Preprod live calls require explicit test destinations")
         if not self.ami_tls and self.ami_host not in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("Remote AMI requires TLS; use a local secured tunnel otherwise")
         if self.crm_enabled and (
@@ -76,6 +78,10 @@ class Settings(BaseSettings):
     @property
     def destinations(self) -> set[str]:
         return {p.strip() for p in self.test_destinations.split(",") if p.strip()}
+
+    def destination_allowed(self, phone: str) -> bool:
+        """Production uses consent/blocklist checks; preprod keeps an allowlist."""
+        return self.deployment == "production" or phone in self.destinations
 
 
 @lru_cache
