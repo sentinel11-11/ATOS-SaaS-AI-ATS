@@ -28,7 +28,6 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [settingsRefreshKey, setSettingsRefreshKey] = useState(0);
   const [restoring, setRestoring] = useState(true);
-  const refreshTimer = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -82,14 +81,10 @@ export default function App() {
   // SSE Realtime Event Handler. Track call IDs instead of incrementing for
   // every phase event, otherwise dialing → ringing → talk is counted 3 times.
   const handleSSEEvent = useCallback((evType, data) => {
-    // Burst updates are coalesced so a multi-channel campaign cannot refetch
-    // the visible screen once for every telephony phase event.
-    if (!refreshTimer.current) {
-      refreshTimer.current = setTimeout(() => {
-        refreshTimer.current = null;
-        setRefreshKey((previous) => previous + 1);
-      }, 1000);
-    }
+    // Keep the SSE channel for active-call state, but do not refetch every
+    // page on each provider event. Pages refresh after their own mutations or
+    // when the user reopens them, so background workers cannot replace the
+    // current view while it is being edited.
     if (evType !== 'call') return;
     const callId = data?.id ?? data?.call_id;
     if (callId === undefined || callId === null) return;
@@ -108,8 +103,6 @@ export default function App() {
   }, []);
 
   useSSE(handleSSEEvent, !!token);
-
-  useEffect(() => () => clearTimeout(refreshTimer.current), []);
 
   // Seed the counter from the database so calls already in progress are not
   // invisible until their next SSE event arrives.
