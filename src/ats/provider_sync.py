@@ -4,7 +4,17 @@ import httpx
 from sqlalchemy import select
 
 from ats.adapters import Rejected, Retryable, https_origin
-from ats.models import DirectoryEntry, now
+from ats.models import CallerNumber, DirectoryEntry, now
+
+
+def _caller_phone(value):
+    """Normalize a provider number to the ten-digit Russian caller-id form."""
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(digits) == 10:
+        return digits
+    if len(digits) == 11 and digits[0] in {"7", "8"}:
+        return digits[1:]
+    return ""
 
 
 def fetch_directory(config, provider, kind):
@@ -51,11 +61,12 @@ def fetch_directory(config, provider, kind):
                         or ""
                     )[:120]
                     if ident:
+                        phone_value = item.get("telnum") or item.get("number") or item.get("ext") or ""
                         output.append(
                             {
                                 "external_id": ident,
                                 "name": str(item.get("name") or ident)[:120],
-                                "phone": str(item.get("telnum") or item.get("ext") or "")[:32],
+                                "phone": str(phone_value)[:32],
                             }
                         )
             except (ValueError, TypeError, AttributeError) as exc:
@@ -83,4 +94,31 @@ def store_directory(db, tenant_id, provider, kind, values):
             row.name, row.phone, row.updated_at = value["name"], value["phone"], now()
         else:
             db.add(DirectoryEntry(tenant_id=tenant_id, provider=provider, kind=kind, **value))
+        if provider == "megafon" and kind == "numbers":
+            phone = _caller_phone(value.get("phone"))
+            if not phone:
+                continue
+            number = db.scalar(
+                select(CallerNumber)
+                .where(CallerNumber.tenant_id == tenant_id, CallerNumber.phone == phone)
+                .with_for_update()
+            )
+            if number is None:
+                db.add(
+                    CallerNumber(
+                        tenant_id=tenant_id,
+                        phone=phone,
+                        label=value["name"],
+                        provider="megafon_vats",
+                        provider_ref=value["external_id"],
+                        verified=True,
+                        enabled=True,
+                        enabled_outgoing=True,
+                    )
+                )
+            elif number.provider == "sim":
+                # Adopt legacy/imported rows without overwriting administrator settings.
+                number.provider = "megafon_vats"
+                number.provider_ref = value["external_id"]
+                number.verified = True
     # Entries absent from a bounded snapshot are retained; transient failures cannot erase mappings.
