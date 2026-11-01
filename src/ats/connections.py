@@ -160,6 +160,15 @@ def _validate(provider, field, value):
         suffixes = {"megafon_vats": ("megapbx.ru", "megafon.ru"),
                     "multicom": ("multicom.ru", "mcm.ru"),
                     "uis": ("uiscom.ru", "comagic.ru")}.get(provider)
+        # The settings screen historically showed MegaFon’s full REST prefix
+        # (`/crmapi/v1`) in its example.  Runtime adapters append that prefix
+        # themselves, so accept the copied value but persist an origin.  This
+        # prevents checks/syncs from failing with `https_origin_required` and
+        # avoids a double `/crmapi/v1` on makecall.
+        if provider == "megafon_vats" and field == "base_url":
+            parsed = urlsplit(value)
+            if parsed.path.rstrip("/") == "/crmapi/v1" and not parsed.query:
+                value = f"{parsed.scheme}://{parsed.netloc}"
         value = _public_url(value, suffixes)
     if field == "subdomain" and value and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", value):
         raise Problem(422, "invalid_amocrm_subdomain")

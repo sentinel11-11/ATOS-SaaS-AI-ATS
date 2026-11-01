@@ -45,11 +45,16 @@ def fetch_directory(config, provider, kind):
                 raise Rejected(f"directory_http_{response.status_code}")
             try:
                 raw = response.json()
-                items = (
-                    raw.get("_embedded", {}).get("users", [])
-                    if provider == "amocrm"
-                    else raw.get("items", [])
-                )
+                if provider == "amocrm":
+                    items = raw.get("_embedded", {}).get("users", [])
+                elif isinstance(raw, list):
+                    # Some VATS accounts return the collection directly.
+                    items = raw
+                else:
+                    # The documented response uses `items`; older cabinets
+                    # expose a resource-named collection instead.
+                    resource_key = {"users": "users", "groups": "groups", "numbers": "telnums"}[kind]
+                    items = raw.get("items", raw.get(resource_key, raw.get("numbers", [])))
                 if not isinstance(items, list):
                     raise ValueError("directory shape")
                 for item in items:

@@ -181,4 +181,9 @@ def test_megafon_webhook_auth_durability_and_no_secret_storage(
         assert len(rows) == 1 and rows[0].event == "completed"
     form.update(cmd="event", type="ACCEPTED")
     assert client.post(path, data=form).json()["result"] == "accepted_without_state_change"
+    form.update(cmd="history", callid="call-2", status="Cancelled")
+    assert client.post(path, data=form).status_code == 200
+    with factory() as db:
+        row = db.scalar(select(Inbox).where(Inbox.external_id == "call-2"))
+        assert row is not None and row.event == "failed"
     settings.cache_clear()

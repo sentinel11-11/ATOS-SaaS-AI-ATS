@@ -33,6 +33,37 @@ from ats.workspace_api import router as workspace_router
 log = logging.getLogger("ats.api")
 app = FastAPI(title="ATS Beta", version="0.3.0")
 
+# MegaFon has used several spellings for the same terminal history outcome
+# across VATS accounts.  Keep the strict rejection of genuinely unknown
+# values, but accept harmless aliases so a hangup cannot leave a call active
+# forever merely because the callback used British spelling or an underscore.
+MEGAFON_HISTORY_FAILED = {
+    "missed",
+    "cancel",
+    "canceled",
+    "cancelled",
+    "busy",
+    "noanswer",
+    "no_answer",
+    "notavailable",
+    "not_available",
+    "notallowed",
+    "not_allowed",
+    "notfound",
+    "not_found",
+    "failed",
+    "abandoned",
+}
+
+
+def _megafon_history_event(value):
+    status = str(value or "").strip().lower().replace(" ", "_")
+    if status == "success":
+        return "completed"
+    if status in MEGAFON_HISTORY_FAILED:
+        return "failed"
+    return None
+
 
 @app.middleware("http")
 async def request_guard(request: Request, call_next):
@@ -393,23 +424,13 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     if direction == "in" and config.inbound_enabled:
         from ats.inbound import ingest_inbound
 
-        if cmd == "history" and str(form.get("status", "")).lower() not in {
-            "success",
-            "missed",
-            "cancel",
-            "busy",
-            "notavailable",
-            "notallowed",
-            "notfound",
-        }:
+        if cmd == "history" and _megafon_history_event(form.get("status")) is None:
             raise Problem(422, "unsupported_history_status")
 
         state = (
             {"INCOMING": "ringing", "ACCEPTED": "answered"}.get(str(form.get("type", "")).upper())
             if cmd == "event"
-            else "completed"
-            if str(form.get("status", "")).lower() == "success"
-            else "failed"
+            else _megafon_history_event(form.get("status"))
             if cmd == "history"
             else None
         )
@@ -434,17 +455,9 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     if cmd == "event":
         event = {"RINGING": "accepted"}.get(str(form.get("type", "")).upper())
     elif cmd == "history":
-        if str(form.get("status", "")).lower() not in {
-            "success",
-            "missed",
-            "cancel",
-            "busy",
-            "notavailable",
-            "notallowed",
-            "notfound",
-        }:
+        if _megafon_history_event(form.get("status")) is None:
             raise Problem(422, "unsupported_history_status")
-        event = "completed" if str(form.get("status", "")).lower() == "success" else "failed"
+        event = _megafon_history_event(form.get("status"))
     else:
         raise Problem(422, "unsupported_webhook_command")
     if event is None:
