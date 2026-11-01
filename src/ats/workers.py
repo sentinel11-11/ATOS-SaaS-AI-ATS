@@ -719,8 +719,11 @@ def main():
                     worker.crm_job()
                 else:
                     worker.inbox()
-            except Exception as e:
-                log.error("worker_iteration_failed role=%s type=%s", args.role, type(e).__name__)
+            except Exception:
+                # Keep the worker alive, but retain the traceback.  A short
+                # error-only message made production failures such as a
+                # callback parser crash impossible to diagnose from journald.
+                log.exception("worker_iteration_failed role=%s", args.role)
             stop.wait(settings().worker_poll_seconds)
     finally:
         worker.close()

@@ -350,6 +350,31 @@ def test_inbox_duplicate_and_out_of_order(factory, tenants, prepared):
         assert db.scalar(select(func.count()).select_from(Inbox)) == 2
 
 
+def test_megafon_history_leg_fallback_does_not_crash_inbox(factory, tenants, prepared):
+    """A VATS history leg may use a callid different from makecall's id."""
+    Worker(factory).schedule()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        attempt.route = "megafon_vats"
+        attempt.external_id = "makecall-leg"
+        attempt.status = "accepted"
+        ingest(
+            db,
+            tenants[0],
+            "megafon_vats",
+            "history:other-leg",
+            "history-leg",
+            "failed",
+            {"phone": attempt.phone, "status": "Cancelled"},
+        )
+    Worker(factory).inbox()
+    with factory() as db:
+        attempt = db.scalar(select(Attempt))
+        inbox = db.scalar(select(Inbox).where(Inbox.external_id == "history-leg"))
+        assert attempt.status == "failed"
+        assert inbox.status == "processed"
+
+
 def test_orphan_is_bounded(factory, tenants):
     with factory.begin() as db:
         ingest(db, tenants[0], "sim", "orphan", "missing", "completed")

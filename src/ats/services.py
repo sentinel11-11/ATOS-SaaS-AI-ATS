@@ -373,8 +373,6 @@ def drain_inbox(db):
             )
     if not attempt:
         # Do not starve newer events; bounded retry window handled by received_at ordering.
-        from datetime import timedelta
-
         row.status = "unmatched" if now() - row.received_at > timedelta(minutes=5) else "orphan"
         row.available_at = now() + timedelta(seconds=5)
         return False
