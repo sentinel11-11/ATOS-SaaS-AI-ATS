@@ -9,12 +9,13 @@ export default function Journal({ addToast, refreshKey }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [timelineCallId, setTimelineCallId] = useState(null);
   const [onlyCampaignsFilter, setOnlyCampaignsFilter] = useState(false);
+  const [scope, setScope] = useState('all');
 
   const loadCalls = async () => {
     setLoading(true);
     const res = await api('/calls', {
       method: 'POST',
-      body: { limit: 500, only_campaigns: onlyCampaignsFilter }
+      body: { limit: 500, only_campaigns: onlyCampaignsFilter, scope }
     });
     if (res && res.calls) {
       setCalls(Array.isArray(res.calls) ? res.calls : []);
@@ -24,7 +25,7 @@ export default function Journal({ addToast, refreshKey }) {
 
   useEffect(() => {
     loadCalls();
-  }, [refreshKey, onlyCampaignsFilter]);
+  }, [refreshKey, onlyCampaignsFilter, scope]);
 
   const handleExportCSV = () => {
     openWithTicket('/api/v2/export/calls.csv');
@@ -81,6 +82,13 @@ export default function Journal({ addToast, refreshKey }) {
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-4 bg-[#081221] p-2 rounded-2xl border border-line">
+        <div className="flex items-center gap-1.5 bg-[#0d1a2e] p-1 rounded-xl border border-line/60 text-xs">
+          {[['all', 'Все звонки'], ['external', 'Внешние'], ['internal', 'Внутренние'], ['mine', 'Мои звонки']].map(([key, label]) => (
+            <button key={key} onClick={() => setScope(key)} className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${scope === key ? 'bg-acc text-white shadow-md' : 'text-muted hover:text-white'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-1.5 bg-[#0d1a2e] p-1 rounded-xl border border-line/60 text-xs">
           <button
             onClick={() => setOnlyCampaignsFilter(false)}

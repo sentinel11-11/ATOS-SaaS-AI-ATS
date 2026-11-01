@@ -15,7 +15,20 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Body, Depends, Query, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
-from sqlalchemy import String, case, cast, extract, func, literal, or_, select, union_all, update
+from sqlalchemy import (
+    Date,
+    Integer,
+    String,
+    case,
+    cast,
+    extract,
+    func,
+    literal,
+    or_,
+    select,
+    union_all,
+    update,
+)
 
 from ats import api_calls
 from ats.db import session
@@ -46,6 +59,7 @@ from ats.workspace_service import audit, csv_document
 
 router = APIRouter(prefix="/api/v2", tags=["legacy interface: journal and reports"])
 _SUCCESS = {"completed", "done_ok", "operator_ok", "done_agent", "answered"}
+_MISSED = {"missed", "failed", "busy", "no_answer", "not_available", "canceled", "cancelled"}
 _LIVE_INBOUND = {"ringing", "answered", "accepted", "connected"}
 
 
@@ -152,7 +166,8 @@ def call_row(row):
 
 
 def legacy_calls(
-    db, p, *, phone=None, limit=500, offset=0, only_campaigns=False, status="", campaign_id=None
+    db, p, *, phone=None, limit=500, offset=0, only_campaigns=False, status="", campaign_id=None,
+    scope="all",
 ):
     rows = legacy_calls_query(p)
     query = select(rows)
@@ -164,6 +179,18 @@ def legacy_calls(
         query = query.where(or_(rows.c.status == status, rows.c.result == status))
     if campaign_id:
         query = query.where(rows.c.campaign_id == str(campaign_id))
+    if scope == "external":
+        query = query.where(rows.c.direction != "internal")
+    elif scope == "internal":
+        query = query.where(rows.c.direction == "internal")
+    elif scope == "mine":
+        mine = (
+            select(Attempt.id)
+            .join(QueueEntry, (QueueEntry.attempt_id == Attempt.id) & (QueueEntry.tenant_id == Attempt.tenant_id))
+            .join(Operator, (Operator.id == QueueEntry.operator_id) & (Operator.tenant_id == Attempt.tenant_id))
+            .where(Attempt.tenant_id == p.tenant_id, Operator.user_id == p.user_id)
+        )
+        query = query.where(rows.c.source == "attempt", rows.c.id.in_(mine))
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     return {
         "ok": True,
@@ -185,6 +212,7 @@ class CallsFilter(BaseModel):
     only_campaigns: bool = False
     status: str = Field("", max_length=120)
     campaign_id: UUID | None = None
+    scope: str = Field("all", pattern=r"^(all|external|internal|mine)$")
 
 
 @router.post("/calls")
@@ -199,12 +227,13 @@ def calls_get(
     only_campaigns: bool = False,
     status: str = Query("", max_length=120),
     campaign_id: UUID | None = None,
+    scope: str = Query("all", pattern="^(all|external|internal|mine)$"),
     p=Depends(principal),
     db=Depends(session),
 ):
     return legacy_calls(
         db, p, limit=limit, offset=offset, only_campaigns=only_campaigns,
-        status=status, campaign_id=campaign_id,
+        status=status, campaign_id=campaign_id, scope=scope,
     )
 
 
@@ -443,6 +472,133 @@ def reports(
         "by_result": [dict(r._mapping) for r in result_rows],
         "by_campaign": [dict(r._mapping) for r in by_campaign],
         "by_number": [dict(r._mapping) for r in by_number], "trend": trend,
+    })
+
+
+@router.get("/analytics")
+def analytics(
+    from_date: str | None = Query(None, alias="from"),
+    to_date: str | None = Query(None, alias="to"),
+    p=Depends(principal), db=Depends(session),
+):
+    """Tenant-scoped call analytics used by the workspace statistics tabs.
+
+    The provider UI exposes several views over the same call history.  Keep
+    one normalized query here so totals, direction, employee, caller-number
+    and hourly reports cannot drift apart or expose another tenant's rows.
+    """
+    start_d, end_d, timezone, start, end = _period(db, p, from_date, to_date)
+    rows = legacy_calls_query(p)
+    period = select(rows).where(rows.c.started_at >= start, rows.c.started_at < end).subquery()
+    success = period.c.result.in_(_SUCCESS)
+    local_started = func.timezone(str(timezone), period.c.started_at)
+
+    total, successful, missed, duration, unique_numbers = db.execute(
+        select(
+            func.count(),
+            func.count().filter(success),
+            func.count().filter(period.c.result.in_(_MISSED)),
+            func.coalesce(func.sum(period.c.duration_sec), 0),
+            func.count(func.distinct(func.nullif(period.c.contact_phone, ""))),
+        ).select_from(period)
+    ).one()
+    direction_rows = db.execute(
+        select(
+            period.c.direction,
+            func.count().label("calls"),
+            func.count().filter(success).label("successful"),
+            func.count().filter(period.c.result.in_(_MISSED)).label("missed"),
+            func.coalesce(func.sum(period.c.duration_sec), 0).label("duration_seconds"),
+        )
+        .select_from(period)
+        .group_by(period.c.direction)
+        .order_by(func.count().desc())
+    ).all()
+    result_rows = db.execute(
+        select(period.c.result, func.count().label("calls"))
+        .select_from(period)
+        .group_by(period.c.result)
+        .order_by(func.count().desc())
+    ).all()
+    number_rows = db.execute(
+        select(
+            func.coalesce(func.nullif(period.c.contact_phone, ""), "—").label("number"),
+            func.count().label("calls"),
+            func.count().filter(success).label("successful"),
+            func.coalesce(func.sum(period.c.duration_sec), 0).label("duration_seconds"),
+        )
+        .select_from(period)
+        .group_by(func.coalesce(func.nullif(period.c.contact_phone, ""), "—"))
+        .order_by(func.count().desc())
+        .limit(200)
+    ).all()
+    day_rows = db.execute(
+        select(
+            cast(local_started, Date).label("day"),
+            func.count().label("calls"),
+            func.count().filter(success).label("successful"),
+            func.coalesce(func.sum(period.c.duration_sec), 0).label("duration_seconds"),
+        )
+        .select_from(period)
+        .group_by(cast(local_started, Date))
+        .order_by(cast(local_started, Date))
+    ).all()
+    hour_rows = db.execute(
+        select(
+            cast(extract("dow", local_started), Integer).label("weekday"),
+            cast(extract("hour", local_started), Integer).label("hour"),
+            func.count().label("calls"),
+        )
+        .select_from(period)
+        .group_by(
+            cast(extract("dow", local_started), Integer),
+            cast(extract("hour", local_started), Integer),
+        )
+        .order_by("weekday", "hour")
+    ).all()
+    employee_rows = db.execute(
+        select(
+            Operator.id.label("id"),
+            Operator.name,
+            Operator.extension,
+            func.count(Attempt.id).label("calls"),
+            func.count(Attempt.id).filter(
+                func.coalesce(func.nullif(Attempt.result, ""), Attempt.status).in_(_SUCCESS)
+            ).label("successful"),
+            func.coalesce(func.sum(
+                case(
+                    (Attempt.answered_at.is_not(None) & Attempt.ended_at.is_not(None),
+                     func.greatest(0, extract("epoch", Attempt.ended_at - Attempt.answered_at))),
+                    else_=0,
+                )
+            ), 0).label("duration_seconds"),
+        )
+        .select_from(Attempt)
+        .join(QueueEntry, (QueueEntry.attempt_id == Attempt.id) & (QueueEntry.tenant_id == Attempt.tenant_id))
+        .join(Operator, (Operator.id == QueueEntry.operator_id) & (Operator.tenant_id == Attempt.tenant_id))
+        .where(Attempt.tenant_id == p.tenant_id, Attempt.created_at >= start, Attempt.created_at < end)
+        .group_by(Operator.id, Operator.name, Operator.extension)
+        .order_by(func.count(Attempt.id).desc())
+        .limit(200)
+    ).all()
+
+    return jsonable_encoder({
+        "ok": True,
+        "period": {"from": start_d, "to": end_d, "timezone": str(timezone)},
+        "summary": {
+            "total": total,
+            "successful": successful,
+            "missed": missed,
+            "duration_seconds": duration,
+            "average_duration_seconds": round(float(duration) / total, 1) if total else 0,
+            "unique_numbers": unique_numbers,
+        },
+        "by_direction": [dict(r._mapping) for r in direction_rows],
+        "by_result": [dict(r._mapping) for r in result_rows],
+        "by_number": [dict(r._mapping) for r in number_rows],
+        "by_day": [dict(r._mapping) for r in day_rows],
+        "by_hour": [dict(r._mapping) for r in hour_rows],
+        "by_employee": [dict(r._mapping) for r in employee_rows],
     })
 
 
