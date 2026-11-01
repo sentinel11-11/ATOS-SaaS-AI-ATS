@@ -233,6 +233,11 @@ def test_calls_reports_timeline_and_csv(logged, prepared, factory):
     detail = logged.get(BASE + f"/calls/{aid}").json()
     assert [e["event"] for e in detail["events"]] == ["prepared", "dispatching", "completed"]
     assert logged.get(BASE + "/reports").json()["completion_percent"] == 100
+    analytics = logged.get("/api/v2/analytics").json()
+    assert analytics["summary"]["total"] == 1
+    assert len(analytics["by_hour"]) == 7 * 24
+    assert {row["direction"] for row in analytics["by_direction"]} == {"in", "out", "internal"}
+    assert logged.get("/api/v2/export/analytics.csv").status_code == 200
     assert logged.get(BASE + "/calls", params={"status": "failed"}).json()["total"] == 0
     contact(logged, name="=SUM(1,2)")
     csv = logged.get(BASE + "/export/contacts.csv")

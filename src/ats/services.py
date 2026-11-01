@@ -16,6 +16,7 @@ from ats.models import (
     Campaign,
     CampaignItem,
     Contact,
+    HistoricalCall,
     Inbox,
     Operator,
     Outbox,
@@ -375,6 +376,37 @@ def drain_inbox(db):
         # Do not starve newer events; bounded retry window handled by received_at ordering.
         row.status = "unmatched" if now() - row.received_at > timedelta(minutes=5) else "orphan"
         row.available_at = now() + timedelta(seconds=5)
+        if row.route == "megafon_vats" and row.event in {"completed", "failed"} and row.status == "unmatched":
+            # A VATS account can receive history callbacks for calls that were
+            # placed outside ATS. Preserve those terminal calls in the same
+            # immutable journal used by the analytics views.
+            source_id = hashlib.sha256(f"megafon:{row.external_id}".encode()).hexdigest()
+            exists = db.scalar(
+                repo.query(HistoricalCall).where(HistoricalCall.source_id == source_id)
+            )
+            if not exists:
+                payload = row.payload or {}
+                try:
+                    duration = max(0, min(int(payload.get("duration", 0)), 86400))
+                except (TypeError, ValueError):
+                    duration = 0
+                db.add(
+                    HistoricalCall(
+                        tenant_id=row.tenant_id,
+                        contact_name="",
+                        phone=normalize_phone(payload.get("phone", "")) or str(payload.get("phone", ""))[:32],
+                        campaign_name="",
+                        route=row.route,
+                        direction="in" if str(payload.get("direction", "")).lower() == "in" else "out",
+                        status=row.event,
+                        result=row.event,
+                        duration_seconds=duration,
+                        legacy_id=int(source_id[:8], 16) % 2_000_000_000,
+                        source_id=source_id,
+                        created_at=row.received_at,
+                    )
+                )
+            row.status = "processed"
         return False
     if "agent_result" in row.payload:
         attempt.agent_result = row.payload["agent_result"]

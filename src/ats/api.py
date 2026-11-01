@@ -192,7 +192,7 @@ def live():
 def ready(db=Depends(session)):
     # Verify required schema, not merely TCP/Postgres availability.
     version = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if version != "0005":
+    if version != "0006":
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
     config = settings()
@@ -472,7 +472,7 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     # inbox worker can safely match that callback to the active attempt.
     callback_payload = {
         key: str(form.get(key, ""))[:120]
-        for key in ("phone", "user", "telnum", "type", "status", "direction")
+        for key in ("phone", "user", "telnum", "type", "status", "direction", "duration")
         if form.get(key) is not None
     }
     ingest(db, tenant_id, "megafon_vats", event_key, external_id, event, callback_payload)

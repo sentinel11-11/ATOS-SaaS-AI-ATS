@@ -14,6 +14,7 @@ from ats.models import (
     Campaign,
     CampaignItem,
     Contact,
+    HistoricalCall,
     Inbox,
     Outbox,
     Session,
@@ -373,6 +374,27 @@ def test_megafon_history_leg_fallback_does_not_crash_inbox(factory, tenants, pre
         inbox = db.scalar(select(Inbox).where(Inbox.external_id == "history-leg"))
         assert attempt.status == "failed"
         assert inbox.status == "processed"
+
+
+def test_unmatched_megafon_history_is_kept_for_analytics(factory, tenants):
+    with factory.begin() as db:
+        ingest(
+            db,
+            tenants[0],
+            "megafon_vats",
+            "history:external-call",
+            "external-call",
+            "failed",
+            {"phone": "+79990000999", "direction": "out", "duration": "12"},
+        )
+        row = db.scalar(select(Inbox))
+        row.received_at = now() - timedelta(minutes=6)
+        row.available_at = now() - timedelta(seconds=1)
+    with factory.begin() as db:
+        assert not drain_inbox(db)
+        history = db.scalar(select(HistoricalCall))
+        assert history and history.phone == "+79990000999" and history.duration_seconds == 12
+        assert db.scalar(select(Inbox)).status == "processed"
 
 
 def test_orphan_is_bounded(factory, tenants):

@@ -182,6 +182,7 @@ class Attempt(Owned, Base):
         ),
         Index("ix_attempts_active", "tenant_id", "status", "created_at"),
         Index("ix_attempts_caller_day", "tenant_id", "caller_number", "created_at"),
+        Index("ix_attempts_analytics_period", "tenant_id", "created_at", "route"),
     )
 
 
@@ -337,6 +338,7 @@ class QueueEntry(Owned, Base):
         ),
         ForeignKeyConstraint(["tenant_id", "operator_id"], ["operators.tenant_id", "operators.id"]),
         CheckConstraint("status IN ('waiting','accepted','completed','cancelled')"),
+        Index("ix_acd_analytics_operator", "tenant_id", "operator_id", "attempt_id"),
     )
 
 
@@ -401,6 +403,7 @@ class InboundCall(Owned, Base):
         UniqueConstraint("tenant_id", "route", "external_id"),
         ForeignKeyConstraint(["tenant_id", "contact_id"], ["contacts.tenant_id", "contacts.id"]),
         Index("ix_inbound_tenant_created", "tenant_id", "created_at"),
+        Index("ix_inbound_analytics_period", "tenant_id", "created_at", "route"),
     )
 
 
@@ -421,6 +424,7 @@ class HistoricalCall(Owned, Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "source_id", "legacy_id"),
         Index("ix_history_tenant_created", "tenant_id", "created_at"),
+        Index("ix_history_analytics_period", "tenant_id", "created_at", "route", "direction"),
     )
 
 
