@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { api, getToken, getUser, setSession } from './api';
 import { useSSE } from './useSSE';
 import Sidebar from './components/Sidebar';
