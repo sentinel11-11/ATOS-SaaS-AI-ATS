@@ -237,7 +237,7 @@ class Worker:
             job = claim(db, "telephony")
         if not job:
             return False
-        job_id, token, tenant_id, payload, _ = job
+        job_id, token, tenant_id, payload, attempts = job
         attempt_id = UUID(payload["attempt_id"])
         with self.factory.begin() as db:
             # Serialize with pause/allocation. No network request holds this lock.
@@ -385,7 +385,7 @@ class Worker:
             job = claim(db, "control")
         if not job:
             return False
-        job_id, token, tenant_id, payload, _ = job
+        job_id, token, tenant_id, payload, attempts = job
         try:
             with self.factory() as db:
                 call = TenantRepository(db, tenant_id).get(Attempt, UUID(payload["attempt_id"]))
@@ -574,7 +574,7 @@ class Worker:
             return False
         if job[3].get("sync"):
             return self.sync_directory(job)
-        job_id, token, tenant_id, payload, _ = job
+        job_id, token, tenant_id, payload, attempts = job
         provider, code, status = payload["provider"], "connection_ok", "done"
         try:
             from ats.connections import settings_for_tenant
@@ -618,14 +618,26 @@ class Worker:
                     raise Rejected(f"provider_http_{response.status_code}")
         except Problem as exc:
             status, code = "dead", exc.code
-        except (Rejected, Retryable, DeliveryUnknown, httpx.HTTPError) as exc:
+        except Retryable as exc:
+            # A temporary provider/network failure should remain visible and
+            # retry with bounded backoff; a single click must not silently
+            # consume a sync request forever.
+            status, code = "pending", exc.code
+        except (Rejected, DeliveryUnknown, httpx.HTTPError) as exc:
             status, code = "dead", getattr(exc, "code", "provider_unreachable")
         with self.factory.begin() as db:
-            complete_job(db, job_id, token, status, "" if status == "done" else code)
+            complete_job(
+                db,
+                job_id,
+                token,
+                status,
+                "" if status == "done" else code,
+                backoff(attempts) if status == "pending" else 0,
+            )
             db.add(
                 RuntimeLog(
                     tenant_id=tenant_id,
-                    level="INFO" if status == "done" else "ERROR",
+                    level="INFO" if status == "done" else "WARNING" if status == "pending" else "ERROR",
                     component=provider,
                     code=code,
                     entity_id=job_id,
@@ -636,7 +648,7 @@ class Worker:
     def sync_directory(self, job):
         from ats.provider_sync import fetch_directory, store_directory
 
-        job_id, token, tenant_id, payload, _ = job
+        job_id, token, tenant_id, payload, attempts = job
         provider = payload["provider"]
         try:
             from ats.connections import settings_for_tenant
@@ -650,7 +662,10 @@ class Worker:
         except Problem as exc:
             with self.factory.begin() as db:
                 complete_job(db, job_id, token, "dead", exc.code)
-        except (Rejected, Retryable) as exc:
+        except Retryable as exc:
+            with self.factory.begin() as db:
+                complete_job(db, job_id, token, "pending", exc.code, backoff(attempts, exc.retry_after))
+        except Rejected as exc:
             with self.factory.begin() as db:
                 complete_job(db, job_id, token, "dead", exc.code)
         else:
