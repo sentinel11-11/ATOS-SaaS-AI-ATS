@@ -9,8 +9,7 @@ export default function AuthGate({ onLoginSuccess }) {
   const [loading, setLoading] = useState(false);
   const initialWorkspace = new URLSearchParams(window.location.search).get('workspace') || '';
   const [tenantId, setTenantId] = useState(initialWorkspace);
-  const [needsWorkspace, setNeedsWorkspace] = useState(Boolean(initialWorkspace));
-  const [showWorkspace, setShowWorkspace] = useState(Boolean(initialWorkspace));
+  const [needsWorkspace, setNeedsWorkspace] = useState(false);
   const workspaceRef = useRef(null);
 
   const handleSubmit = async (e) => {
@@ -33,7 +32,6 @@ export default function AuthGate({ onLoginSuccess }) {
     } else {
       if (res?.error === 'tenant_required' || res?.error === 'workspace_required') {
         setNeedsWorkspace(true);
-        setShowWorkspace(true);
         setError('Для этого аккаунта укажите ID рабочего пространства');
         workspaceRef.current?.focus();
         return;
@@ -52,8 +50,8 @@ export default function AuthGate({ onLoginSuccess }) {
         <h1 className="text-xl font-bold text-white mb-6">Добро пожаловать</h1>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          {showWorkspace && <div>
-            <label className="sr-only" htmlFor="workspace-id">ID пространства</label>
+          <div>
+            <label className="text-xs font-semibold text-muted block mb-1.5" htmlFor="workspace-id">ID пространства</label>
             <input
               ref={workspaceRef}
               id="workspace-id"
@@ -64,12 +62,12 @@ export default function AuthGate({ onLoginSuccess }) {
                 setTenantId(event.target.value);
                 setNeedsWorkspace(false);
               }}
-              placeholder="ID пространства"
+              placeholder="Например, 7f4c..."
               className={`w-full bg-[#0a1628] border rounded-xl px-4 py-2.5 text-sm outline-none focus:border-acc focus:ring-2 focus:ring-acc/20 text-white transition-all ${needsWorkspace ? 'border-bad' : 'border-line2'}`}
             />
-          </div>}
+          </div>
           <div>
-            <label htmlFor="login" className="sr-only">Логин</label>
+            <label htmlFor="login" className="text-xs font-semibold text-muted block mb-1.5">Логин</label>
             <div className="relative">
               <User className="w-4 h-4 text-dim absolute left-3.5 top-3" />
               <input
@@ -78,14 +76,14 @@ export default function AuthGate({ onLoginSuccess }) {
                 type="text"
                 value={login}
                 onChange={(e) => setLogin(e.target.value)}
-                placeholder="Логин"
+                placeholder="admin"
                 className="w-full bg-[#0a1628] border border-line2 rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:border-acc focus:ring-2 focus:ring-acc/20 text-white transition-all"
               />
             </div>
           </div>
 
           <div>
-            <label htmlFor="password" className="sr-only">Пароль</label>
+            <label htmlFor="password" className="text-xs font-semibold text-muted block mb-1.5">Пароль</label>
             <div className="relative">
               <Lock className="w-4 h-4 text-dim absolute left-3.5 top-3" />
               <input
@@ -94,7 +92,7 @@ export default function AuthGate({ onLoginSuccess }) {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Пароль"
+                placeholder="••••••••"
                 className="w-full bg-[#0a1628] border border-line2 rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:border-acc focus:ring-2 focus:ring-acc/20 text-white transition-all"
               />
             </div>
@@ -107,7 +105,7 @@ export default function AuthGate({ onLoginSuccess }) {
             disabled={loading}
             className="w-full mt-2 py-3 rounded-xl bg-gradient-to-r from-[#5b8cff] to-[#3d6bff] hover:brightness-110 font-bold text-sm text-white shadow-lg shadow-acc/30 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
           >
-            <span className="sr-only">{loading ? 'Проверка...' : 'Войти в систему'}</span>
+            {loading ? 'Проверка...' : 'Войти в систему'}
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
