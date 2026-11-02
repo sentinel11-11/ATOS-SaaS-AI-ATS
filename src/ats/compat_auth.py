@@ -27,13 +27,19 @@ class Credentials(BaseModel):
 def login(data: Credentials, request: Request, response: Response, db=Depends(session)):
     tenant_id = data.tenant_id
     if tenant_id is None:
-        # Never discover tenants from a supplied login. A dedicated single-tenant
-        # installation retains the original two-field login without tenant leaks.
-        tenants = db.scalars(select(Tenant.id).limit(2)).all()
-        if len(tenants) != 1:
-            rate_login(db, None, data.login, request.client.host)
-            raise Problem(422, "tenant_required")
-        tenant_id = tenants[0]
+        # A deployment may explicitly bind authentication to its active tenant.
+        # This avoids exposing a tenant picker while keeping tenant selection out
+        # of the credentials lookup. The single-tenant fallback remains for local
+        # and development installations.
+        configured_tenant = settings().telephony_tenant_id
+        if configured_tenant and db.scalar(select(Tenant.id).where(Tenant.id == configured_tenant)):
+            tenant_id = configured_tenant
+        else:
+            tenants = db.scalars(select(Tenant.id).limit(2)).all()
+            if len(tenants) != 1:
+                rate_login(db, None, data.login, request.client.host)
+                raise Problem(422, "tenant_required")
+            tenant_id = tenants[0]
     token, csrf = authenticate(
         db, Login(tenant_id=tenant_id, login=data.login, password=data.password), request.client.host
     )

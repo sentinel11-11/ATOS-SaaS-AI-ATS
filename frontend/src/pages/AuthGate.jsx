@@ -7,8 +7,10 @@ export default function AuthGate({ onLoginSuccess }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [tenantId, setTenantId] = useState(() => new URLSearchParams(window.location.search).get('workspace') || '');
-  const [needsWorkspace, setNeedsWorkspace] = useState(false);
+  const initialWorkspace = new URLSearchParams(window.location.search).get('workspace') || '';
+  const [tenantId, setTenantId] = useState(initialWorkspace);
+  const [needsWorkspace, setNeedsWorkspace] = useState(Boolean(initialWorkspace));
+  const [showWorkspace, setShowWorkspace] = useState(Boolean(initialWorkspace));
   const workspaceRef = useRef(null);
 
   const handleSubmit = async (e) => {
@@ -31,6 +33,7 @@ export default function AuthGate({ onLoginSuccess }) {
     } else {
       if (res?.error === 'tenant_required' || res?.error === 'workspace_required') {
         setNeedsWorkspace(true);
+        setShowWorkspace(true);
         setError('Для этого аккаунта укажите ID рабочего пространства');
         workspaceRef.current?.focus();
         return;
@@ -61,11 +64,11 @@ export default function AuthGate({ onLoginSuccess }) {
 
         <div className="mb-6">
           <h2 className="text-lg font-bold text-white">Добро пожаловать</h2>
-          <p className="text-sm text-muted mt-1">Введите данные один раз — пространство уже указывается на этом экране.</p>
+          <p className="text-sm text-muted mt-1">Введите логин и пароль для входа в рабочую панель.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div>
+          {showWorkspace && <div>
             <label className="text-xs font-semibold text-muted uppercase tracking-wider block mb-1.5" htmlFor="workspace-id">ID пространства</label>
             <input
               ref={workspaceRef}
@@ -82,7 +85,7 @@ export default function AuthGate({ onLoginSuccess }) {
               aria-describedby="workspace-help"
             />
             <p id="workspace-help" className="text-[11px] text-muted mt-1.5">Оставьте пустым, если в системе только одно пространство.</p>
-          </div>
+          </div>}
           <div>
             <label htmlFor="login" className="text-xs font-semibold text-muted uppercase tracking-wider block mb-1.5">
               Логин
@@ -129,6 +132,15 @@ export default function AuthGate({ onLoginSuccess }) {
             {loading ? 'Проверка...' : 'Войти в систему'}
             <ArrowRight className="w-4 h-4" />
           </button>
+          {!showWorkspace && (
+            <button
+              type="button"
+              onClick={() => setShowWorkspace(true)}
+              className="text-[11px] text-muted hover:text-white transition-colors"
+            >
+              Войти в другое пространство
+            </button>
+          )}
         </form>
       </div>
     </div>

@@ -35,6 +35,17 @@ def test_health_and_auth_required(client):
     assert client.get("/api/v1/contacts").status_code == 401
 
 
+def test_login_uses_explicit_deployment_tenant_without_workspace_id(client, tenants, monkeypatch):
+    monkeypatch.setenv("ATS_TELEPHONY_TENANT_ID", str(tenants[0]))
+    settings.cache_clear()
+    response = client.post(
+        "/api/v2/auth/login",
+        json={"login": "admin", "password": "FixturePasswordOnly.123"},
+    )
+    assert response.status_code == 200
+    assert response.json()["tenant_id"] == str(tenants[0])
+
+
 def test_http_only_cookie_and_logout(logged):
     cookies = {c.name: c for c in logged.cookies.jar}
     assert cookies["ats_session"]._rest.get("HttpOnly") is None
