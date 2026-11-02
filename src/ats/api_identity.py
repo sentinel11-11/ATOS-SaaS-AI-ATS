@@ -38,6 +38,7 @@ def users(p=Depends(admin), db=Depends(session)):
             "active": u.active,
             "name": op.name if op else "",
             "extension": op.extension if op else "",
+            "megafon_user": op.megafon_user if op else "",
         }
         for u, op in db.execute(
             select(User, Operator)
@@ -90,7 +91,9 @@ def write_user(db, p, data, user_id=None):
     if data.role == "operator":
         if not operator:
             operator = repo.add(Operator, user_id=user.id)
-        operator.name, operator.extension = data.name, data.extension
+        operator.name, operator.extension, operator.megafon_user = (
+            data.name, data.extension, data.megafon_user.strip()
+        )
         if not data.active:
             operator.status = "offline"
     elif operator:

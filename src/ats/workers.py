@@ -27,6 +27,7 @@ from ats.models import (
     RuntimeLog,
     Template,
     Tenant,
+    User,
     WorkspaceSettings,
     now,
 )
@@ -283,11 +284,13 @@ class Worker:
                 (attempt, campaign, template, contact) if route == "multicom_ami" else None
             )
             queue = db.scalar(repo.query(QueueEntry).where(QueueEntry.attempt_id == attempt.id))
-            operator_ext = (
-                repo.get(Operator, queue.operator_id).extension
-                if queue and queue.operator_id
-                else ""
-            )
+            operator_ext, megafon_operator_user = "", ""
+            if queue and queue.operator_id:
+                operator = repo.get(Operator, queue.operator_id)
+                operator_ext = operator.extension
+                if route == "megafon_vats":
+                    operator_user = repo.get(User, operator.user_id)
+                    megafon_operator_user = operator.megafon_user.strip() or operator_user.login
             if route == "sim" and template and campaign.mode == "agent":
                 from ats.workspace_service import run_scenario
 
@@ -302,7 +305,14 @@ class Worker:
                     from ats.connections import settings_for_tenant
 
                     runtime_config = settings_for_tenant(db, tenant_id)
-                validate_route(tenant_id, route, db)
+                if route == "megafon_vats" and campaign.mode == "operator" and not megafon_operator_user:
+                    raise Problem(409, "megafon_operator_not_assigned")
+                validate_route(
+                    tenant_id,
+                    route,
+                    db,
+                    require_megafon_user=not bool(megafon_operator_user),
+                )
                 if route == "multicom_ami":
                     number = db.scalar(
                         repo.query(CallerNumber).where(CallerNumber.phone == caller_number)
@@ -340,8 +350,6 @@ class Worker:
                 external_id = str(attempt_id)
             else:
                 driver = self.driver(route, tenant_id, runtime_config)
-                if isinstance(driver, Megafon) and not runtime_config.megafon_user and megafon_user:
-                    driver.user = megafon_user
                 external_id = (
                     driver.originate(
                         attempt_id,
@@ -351,7 +359,9 @@ class Worker:
                         operator_ext=operator_ext,
                     )
                     if route == "multicom_ami"
-                    else driver.originate(attempt_id, phone)
+                    else driver.originate(
+                        attempt_id, phone, user=megafon_operator_user or megafon_user
+                    )
                 )
         except Problem as e:
             with self.factory.begin() as db:

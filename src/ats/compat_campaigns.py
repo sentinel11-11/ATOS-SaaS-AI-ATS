@@ -231,7 +231,12 @@ def campaign_start(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
     row = lock_campaign(db, p, campaign_id)
     if row.archived:
         raise Problem(409, "campaign_archived")
-    validate_route(p.tenant_id, row.route, db)
+    validate_route(
+        p.tenant_id,
+        row.route,
+        db,
+        require_megafon_user=not (row.route == "megafon_vats" and row.mode == "operator"),
+    )
     for item in db.scalars(TenantRepository(db, p.tenant_id).query(CampaignItem).where(CampaignItem.campaign_id == row.id, CampaignItem.status == "cancelled").with_for_update()):
         item.status, item.available_at = "queued", now()
     row.status = "running"
@@ -264,7 +269,12 @@ def campaign_stop(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
 def campaign_retry(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
     row = lock_campaign(db, p, campaign_id)
     count = retry_failed(db, p, row)
-    validate_route(p.tenant_id, row.route, db)
+    validate_route(
+        p.tenant_id,
+        row.route,
+        db,
+        require_megafon_user=not (row.route == "megafon_vats" and row.mode == "operator"),
+    )
     row.status = "running"
     db.commit()
     return {"ok": True, "requeued": count}

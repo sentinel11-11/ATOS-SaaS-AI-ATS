@@ -63,12 +63,12 @@ class Megafon:
         )
         self.key = config.megafon_api_key.get_secret_value()
 
-    def originate(self, attempt_id, phone):
+    def originate(self, attempt_id, phone, user=None):
         response = write_request(
             self.client,
             self.url + "/crmapi/v1/makecall",
             headers={"X-API-KEY": self.key},
-            json={"phone": phone.lstrip("+"), "user": self.user},
+            json={"phone": phone.lstrip("+"), "user": user or self.user},
         )
         try:
             result = str(response.json()["callid"])

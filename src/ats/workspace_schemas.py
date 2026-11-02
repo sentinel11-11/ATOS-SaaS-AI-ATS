@@ -132,6 +132,7 @@ class UserSave(Input):
     active: bool = True
     name: str = Field(default="", max_length=120)
     extension: str = Field(default="", pattern=r"^[0-9]{0,20}$")
+    megafon_user: str = Field(default="", max_length=120)
 
     @field_validator("password")
     @classmethod

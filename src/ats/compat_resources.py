@@ -333,7 +333,7 @@ def blacklist_delete(data: EntityCommand, p=Depends(admin), db=Depends(session))
 
 def operator_projection(op, user):
     return {"id": op.id, "user_id": op.user_id, "name": op.name, "ext": op.extension,
-            "status": op.status, "login": user.login}
+            "status": op.status, "login": user.login, "megafon_user": op.megafon_user}
 
 
 def acd_state(p, db):

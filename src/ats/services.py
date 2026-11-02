@@ -77,7 +77,7 @@ def create_campaign(db, principal, data, key):
     return campaign, True
 
 
-def validate_route(tenant_id, route, db=None):
+def validate_route(tenant_id, route, db=None, *, require_megafon_user=True):
     if db is not None:
         from ats.connections import settings_for_tenant
 
@@ -108,7 +108,7 @@ def validate_route(tenant_id, route, db=None):
     if route == "megafon_vats" and not all(
         (
             config.megafon_url,
-            config.megafon_user,
+            config.megafon_user or not require_megafon_user,
             config.megafon_api_key.get_secret_value(),
             config.megafon_crm_token.get_secret_value(),
         )
@@ -200,7 +200,14 @@ def schedule_one(db, tenant_id):
         if not contact.consent or contact.blocked or contact.archived or blacklisted:
             item.status = "blocked"
             return True
-        validate_route(tenant_id, campaign.route, db)
+        validate_route(
+            tenant_id,
+            campaign.route,
+            db,
+            require_megafon_user=not (
+                campaign.route == "megafon_vats" and campaign.mode == "operator"
+            ),
+        )
         if (
             campaign.route == "multicom_ami"
             and (campaign.mode != "message" or campaign.template_id)
@@ -208,22 +215,16 @@ def schedule_one(db, tenant_id):
         ):
             raise Problem(409, "media_not_configured")
         operator = None
-        if campaign.route == "multicom_ami" and (
+        if campaign.route in {"multicom_ami", "megafon_vats"} and (
             campaign.mode == "operator"
             or (campaign.mode == "agent" and campaign.connect_on_qualify)
         ):
-            operator = db.scalar(
-                repo.query(Operator)
-                .join(User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id))
-                .where(
-                    Operator.status == "free",
-                    Operator.extension != "",
-                    User.active,
-                    User.role == "operator",
-                )
-                .with_for_update(skip_locked=True)
-                .limit(1)
-            )
+            operator_query = repo.query(Operator).join(
+                User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id)
+            ).where(Operator.status == "free", User.active, User.role == "operator")
+            if campaign.route == "multicom_ami":
+                operator_query = operator_query.where(Operator.extension != "")
+            operator = db.scalar(operator_query.with_for_update(skip_locked=True).limit(1))
             if not operator:
                 return False
         if campaign.route != "sim" and not config.destination_allowed(contact.phone):

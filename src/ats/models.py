@@ -301,6 +301,7 @@ class Operator(Owned, Base):
     user_id: Mapped[UUID]
     name: Mapped[str] = mapped_column(String(120), default="")
     extension: Mapped[str] = mapped_column(String(20), default="")
+    megafon_user: Mapped[str] = mapped_column(String(120), default="", server_default="")
     status: Mapped[str] = mapped_column(String(20), default="break")
     __table_args__ = (
         UniqueConstraint("tenant_id", "id"),

@@ -213,6 +213,7 @@ export default function Settings({ addToast, refreshKey }) {
       op_name: '',
       role: 'operator',
       ext: '',
+      megafon_user: '',
       password: '',
       active: true,
     };
@@ -231,6 +232,7 @@ export default function Settings({ addToast, refreshKey }) {
         login: editingUser.login,
         name: editingUser.op_name || editingUser.name,
         ext: editingUser.ext,
+        megafon_user: editingUser.megafon_user || '',
         role: editingUser.role,
         password: editingUser.password,
         active: editingUser.active,
@@ -613,13 +615,14 @@ export default function Settings({ addToast, refreshKey }) {
             />
           </div>
           <div>
-            <label className="text-muted block mb-1 font-semibold">Оператор по умолчанию (default_user)</label>
+            <label className="text-muted block mb-1 font-semibold">Резервный оператор (default_user)</label>
             <input
               className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
               value={megafon.default_user || ''}
               onChange={(e) => updateProvider('megafon_vats', 'default_user', e.target.value)}
               placeholder="admin"
             />
+            <p className="text-[11px] text-muted mt-1">Используется для кампаний без режима «Оператор». Для операторских кампаний логин задаётся у каждого сотрудника.</p>
           </div>
           <div>
             <label className="text-muted block mb-1 font-semibold">API Key (Авторизация в АТС)</label>
@@ -1387,6 +1390,17 @@ export default function Settings({ addToast, refreshKey }) {
                   placeholder="101"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="font-semibold text-muted block mb-1">Логин оператора в MegaFon ВАТС</label>
+              <input
+                className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
+                value={editingUser.megafon_user || ''}
+                onChange={(e) => setEditingUser({ ...editingUser, megafon_user: e.target.value.trim() })}
+                placeholder="например, operator1"
+              />
+              <p className="text-[11px] text-muted mt-1">Если поле пустое, для makecall используется логин пользователя ATS.</p>
             </div>
 
             <div>

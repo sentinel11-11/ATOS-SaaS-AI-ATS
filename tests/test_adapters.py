@@ -24,16 +24,22 @@ def config(**changes):
 
 
 def test_megafon_contract():
+    users = []
+
     def handler(request):
         import json
 
         assert request.url.path == "/crmapi/v1/makecall"
         assert request.headers["x-api-key"] == "fixture-key"
-        assert json.loads(request.content) == {"phone": "79990000101", "user": "beta-manager"}
+        payload = json.loads(request.content)
+        users.append(payload["user"])
+        assert payload["phone"] == "79990000101"
         return httpx.Response(200, json={"callid": "ext-1"})
 
     driver = Megafon(config(), httpx.Client(transport=httpx.MockTransport(handler)))
     assert driver.originate(uuid4(), "+79990000101") == "ext-1"
+    assert driver.originate(uuid4(), "+79990000101", user="operator-1") == "ext-1"
+    assert users == ["beta-manager", "operator-1"]
 
 
 @pytest.mark.parametrize(
