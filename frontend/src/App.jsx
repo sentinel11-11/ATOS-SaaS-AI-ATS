@@ -18,6 +18,8 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import AdminLogs from './pages/AdminLogs';
 
+const ADMIN_TABS = new Set(['templates', 'reports', 'settings', 'admin-logs']);
+
 export default function App() {
   const [user, setUser] = useState(() => getUser());
   const [token, setToken] = useState(() => getToken());
@@ -28,6 +30,15 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [settingsRefreshKey, setSettingsRefreshKey] = useState(0);
   const [restoring, setRestoring] = useState(true);
+
+  // Never carry an administrator-only page into an operator session. This can
+  // happen when an admin logs out while Settings is open and another user logs
+  // in without a full page reload.
+  useEffect(() => {
+    if (user?.role !== 'admin' && ADMIN_TABS.has(activeTab)) {
+      setActiveTab('dashboard');
+    }
+  }, [user, activeTab]);
 
   useEffect(() => {
     let active = true;
@@ -158,11 +169,13 @@ export default function App() {
     setSession('', null);
     setUser(null);
     setToken('');
+    setActiveTab('dashboard');
   };
 
   const handleLoginSuccess = (usr) => {
     setUser(usr);
     setToken(getToken());
+    setActiveTab('dashboard');
   };
 
   if (restoring) {
