@@ -20,6 +20,7 @@ from ats.models import (
     Campaign,
     CampaignItem,
     Contact,
+    AmoSyncJob,
     InboundCall,
     Operator,
     Outbox,
@@ -219,6 +220,23 @@ class Worker:
             try:
                 with self.factory.begin() as db:
                     schedule_one(db, tenant_id)
+                    options = db.scalar(
+                        TenantRepository(db, tenant_id).query(WorkspaceSettings)
+                    )
+                    values = options.values if options else {}
+                    if values.get("amo_sync_enabled"):
+                        latest = db.scalar(
+                            select(AmoSyncJob)
+                            .where(AmoSyncJob.tenant_id == tenant_id)
+                            .order_by(AmoSyncJob.created_at.desc())
+                            .limit(1)
+                        )
+                        interval = int(values.get("amo_sync_interval_minutes", 15))
+                        if latest is None or latest.created_at < now() - timedelta(minutes=interval):
+                            job = AmoSyncJob(tenant_id=tenant_id, mode="scheduled", status="queued", counts={})
+                            db.add(job)
+                            db.flush()
+                            db.add(Outbox(tenant_id=tenant_id, kind="crm_sync", dedupe_key=f"amo-sync:{job.id}", payload={"job_id": str(job.id)}))
             except Problem as e:
                 log.warning("allocation_blocked tenant=%s code=%s", tenant_id, e.code)
 
@@ -525,6 +543,93 @@ class Worker:
                 complete_job(db, job_id, token)
         return True
 
+    def crm_sync_job(self):
+        """Apply queued amoCRM webhook/scheduled contact changes idempotently."""
+        with self.factory.begin() as db:
+            job = claim(db, "crm_sync")
+        if not job:
+            return False
+        job_id, token, tenant_id, payload, attempts = job
+        try:
+            from ats.schemas import phone_from_import
+            from ats.connections import settings_for_tenant
+
+            with self.factory() as config_db:
+                runtime_config = settings_for_tenant(config_db, tenant_id)
+            if not runtime_config.crm_enabled or runtime_config.amo_tenant_id != tenant_id:
+                raise Rejected("crm_tenant_not_bound")
+            crm = self.crm_drivers.get(str(tenant_id))
+            if crm is None:
+                crm = self.crm_drivers[str(tenant_id)] = AmoCRM(runtime_config)
+            raw_contacts = []
+            for page in range(1, 21):
+                batch = crm.contacts(page=page, limit=250)
+                raw_contacts.extend(batch)
+                if len(batch) < 250:
+                    break
+            with self.factory.begin() as db:
+                repo = TenantRepository(db, tenant_id)
+                row_job = repo.get(AmoSyncJob, UUID(payload["job_id"]), lock=True)
+                row_job.status = "running"
+                counts = {"created": 0, "updated": 0, "archived": 0, "skipped": 0}
+                event_payload = payload.get("payload") or {}
+                deleted = event_payload.get("contacts", {}).get("delete", []) if isinstance(event_payload, dict) else []
+                for entry in deleted if isinstance(deleted, list) else []:
+                    try:
+                        deleted_id = int(entry.get("id") if isinstance(entry, dict) else entry)
+                    except (TypeError, ValueError):
+                        continue
+                    deleted_row = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == deleted_id).with_for_update())
+                    if deleted_row:
+                        deleted_row.archived, deleted_row.blocked, deleted_row.consent = True, True, False
+                        counts["archived"] += 1
+                seen = set()
+                for raw in raw_contacts:
+                    crm_id = int(raw["crm_contact_id"])
+                    existing = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == crm_id).with_for_update())
+                    if raw.get("archived"):
+                        if existing:
+                            existing.archived, existing.blocked, existing.consent = True, True, False
+                            counts["archived"] += 1
+                        continue
+                    try:
+                        phone = phone_from_import(raw.get("phone", ""))
+                    except ValueError:
+                        counts["skipped"] += 1
+                        continue
+                    if phone in seen:
+                        counts["skipped"] += 1
+                        continue
+                    seen.add(phone)
+                    if existing is None:
+                        existing = db.scalar(repo.query(Contact).where(Contact.phone == phone).with_for_update())
+                    phone_owner = db.scalar(repo.query(Contact).where(Contact.phone == phone).with_for_update())
+                    if phone_owner is not None and (existing is None or phone_owner.id != existing.id):
+                        counts["skipped"] += 1
+                        continue
+                    if existing is None:
+                        existing = repo.add(Contact, name=raw["name"], phone=phone, email=raw["email"], group=raw["group"], source="amoCRM", consent=bool(raw.get("consent")), consent_source="amoCRM", crm_contact_id=crm_id)
+                        counts["created"] += 1
+                    else:
+                        existing.name, existing.phone, existing.email, existing.group = raw["name"], phone, raw["email"], raw["group"]
+                        existing.crm_contact_id, existing.source, existing.archived = crm_id, "amoCRM", False
+                        if raw.get("consent"):
+                            existing.consent, existing.consent_source = True, "amoCRM"
+                        counts["updated"] += 1
+                row_job.counts, row_job.status, row_job.updated_at = counts, "completed", now()
+                if payload.get("event_key"):
+                    event_row = db.scalar(repo.query(Inbox).where(Inbox.event_key == payload["event_key"]).with_for_update())
+                    if event_row:
+                        event_row.status = "processed"
+                complete_job(db, job_id, token)
+        except (Retryable, Rejected) as exc:
+            with self.factory.begin() as db:
+                complete_job(db, job_id, token, "pending" if attempts < 8 else "dead", exc.code, backoff(attempts, getattr(exc, "retry_after", 0)))
+        except Exception:
+            with self.factory.begin() as db:
+                complete_job(db, job_id, token, "pending" if attempts < 8 else "dead", "crm_sync_failed", backoff(attempts))
+        return True
+
     def resolve_crm_contact(self, tenant_id, contact_id, name, phone, responsible, crm=None):
         """Fence creation per contact; a lost write is reconciled rather than posted again."""
         token = uuid4()
@@ -727,6 +832,7 @@ def main():
                     worker.telephony()
                 elif args.role == "crm":
                     worker.crm_job()
+                    worker.crm_sync_job()
                 else:
                     worker.inbox()
             except Exception:

@@ -172,7 +172,34 @@ class ProviderSettings(Input):
     task_due_hours: int = Field(default=24, ge=1, le=168)
     default_mode: Literal["message", "agent", "operator"] = "message"
     auto_quarantine_on_complaints: int = Field(default=3, ge=1, le=100)
+    amo_sync_enabled: bool = False
+    amo_sync_interval_minutes: int = Field(default=15, ge=5, le=10080)
 
 
 class RetryJob(Input):
     evidence: str = Field(min_length=10, max_length=80)
+
+
+class AmoSyncPreview(Input):
+    contact_ids: list[int] | None = Field(default=None, max_length=250)
+    limit: int = Field(default=250, ge=1, le=250)
+    mode: Literal["manual", "scheduled"] = "manual"
+
+    @field_validator("contact_ids")
+    @classmethod
+    def positive_ids(cls, value):
+        if value is not None and (len(set(value)) != len(value) or any(i <= 0 for i in value)):
+            raise ValueError("Contact ids must be unique positive integers")
+        return value
+
+
+class AmoSyncConfirm(Input):
+    item_ids: list[UUID] = Field(min_length=1, max_length=250)
+    consent_source: str = Field(min_length=1, max_length=256)
+
+    @field_validator("item_ids")
+    @classmethod
+    def unique_items(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("Duplicate sync items")
+        return value

@@ -110,6 +110,8 @@ def provider_save(body: dict = Body(...), p=Depends(admin), db=Depends(session))
         "amo_responsible_user_id": amo.get("responsible_user_id"),
         "amo_auto_create_contacts": amo.get("auto_create_contacts", False),
         "amo_auto_create_tasks": amo.get("auto_create_tasks", False),
+        "amo_sync_enabled": amo.get("sync_enabled", False),
+        "amo_sync_interval_minutes": amo.get("sync_interval_minutes", 15),
         "amo_operator_user_map": amo.get("operator_user_map", {}),
         "task_due_hours": amo.get("task_due_hours", 24),
     })

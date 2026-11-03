@@ -85,6 +85,7 @@ class Contact(Owned, Base):
     group: Mapped[str] = mapped_column(String(120), default="", server_default="")
     email: Mapped[str] = mapped_column(String(254), default="", server_default="")
     notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    source: Mapped[str] = mapped_column(String(64), default="manual", server_default="manual")
     tags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     archived: Mapped[bool] = mapped_column(default=False, server_default="false")
     crm_sync_state: Mapped[str] = mapped_column(String(20), default="idle", server_default="idle")
@@ -357,6 +358,48 @@ class ConnectionProfile(Owned, Base):
     encrypted_secrets: Mapped[str] = mapped_column(Text, default="", server_default="")
     revision: Mapped[int] = mapped_column(default=1, server_default="1")
     __table_args__ = (UniqueConstraint("tenant_id", "provider"),)
+
+
+class AmoSyncJob(Owned, Base):
+    """A preview/commit unit for an amoCRM contact synchronization."""
+
+    __tablename__ = "amo_sync_jobs"
+    status: Mapped[str] = mapped_column(String(20), default="preview", server_default="preview")
+    mode: Mapped[str] = mapped_column(String(20), default="manual", server_default="manual")
+    cursor: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    counts: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    error: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id"),
+        CheckConstraint("status IN ('preview','queued','running','completed','failed','cancelled')"),
+        CheckConstraint("mode IN ('manual','scheduled','webhook')"),
+        Index("ix_amo_sync_jobs_tenant_created", "tenant_id", "created_at"),
+    )
+
+
+class AmoSyncItem(Owned, Base):
+    __tablename__ = "amo_sync_items"
+    job_id: Mapped[UUID]
+    crm_contact_id: Mapped[int]
+    name: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    phone: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    email: Mapped[str] = mapped_column(String(254), default="", server_default="")
+    group: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    source: Mapped[str] = mapped_column(String(64), default="amoCRM", server_default="amoCRM")
+    action: Mapped[str] = mapped_column(String(24), default="create", server_default="create")
+    selected: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    consent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    contact_id: Mapped[UUID | None]
+    error: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "job_id", "crm_contact_id"),
+        ForeignKeyConstraint(["tenant_id", "job_id"], ["amo_sync_jobs.tenant_id", "amo_sync_jobs.id"]),
+        ForeignKeyConstraint(["tenant_id", "contact_id"], ["contacts.tenant_id", "contacts.id"]),
+        Index("ix_amo_sync_items_job", "tenant_id", "job_id"),
+    )
 
 
 class RuntimeLog(Owned, Base):

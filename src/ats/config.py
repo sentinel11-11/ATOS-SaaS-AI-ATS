@@ -47,6 +47,10 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         validation_alias=AliasChoices("ATS_AMOCRM_TOKEN", "ATS_AMO_ACCESS_TOKEN"),
     )
+    amo_webhook_token: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("ATS_AMOCRM_WEBHOOK_TOKEN", "ATS_AMO_WEBHOOK_TOKEN"),
+    )
     amo_tenant_id: UUID | None = None
     crm_enabled: bool = False
     worker_poll_seconds: float = Field(default=1, ge=0.05, le=60)

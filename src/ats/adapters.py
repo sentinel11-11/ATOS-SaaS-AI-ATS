@@ -152,6 +152,60 @@ class AmoCRM:
         except ValueError as exc:
             raise Retryable("crm_invalid_read_response") from exc
 
+    @staticmethod
+    def normalize_contact(raw):
+        """Keep only fields that ATS can safely import from amoCRM."""
+        if not isinstance(raw, dict) or not raw.get("id"):
+            raise Rejected("crm_contact_shape_invalid")
+        values = {"name": str(raw.get("name") or "")[:120], "phone": "", "email": "", "group": "", "consent": False}
+        for field in raw.get("custom_fields_values") or []:
+            code = str(field.get("field_code") or "").upper()
+            for item in field.get("values") or []:
+                value = str(item.get("value") or "").strip()
+                if code == "PHONE" and not values["phone"]:
+                    values["phone"] = value[:32]
+                elif code == "EMAIL" and not values["email"]:
+                    values["email"] = value[:254]
+                elif code in {"CONSENT", "PD_CONSENT", "PERSONAL_DATA_CONSENT"}:
+                    values["consent"] = value.lower() in {"1", "true", "yes", "да"}
+        values["crm_contact_id"] = int(raw["id"])
+        tags = raw.get("_embedded", {}).get("tags", []) or raw.get("tags", []) or []
+        if tags:
+            values["group"] = str(tags[0].get("name") or "")[:120]
+        values["updated_at"] = raw.get("updated_at")
+        values["archived"] = bool(raw.get("is_deleted") or raw.get("deleted_at"))
+        return values
+
+    def contacts(self, page=1, limit=250, ids=None):
+        params = {"page": page, "limit": min(250, max(1, limit)), "with": "leads"}
+        if ids:
+            params["filter[id][]"] = [int(i) for i in ids]
+        data = self.read("/api/v4/contacts", params)
+        return [self.normalize_contact(item) for item in data.get("_embedded", {}).get("contacts", [])]
+
+    def update_contact(self, crm_contact_id, phone=None, name=None):
+        payload = {}
+        if name is not None:
+            payload["name"] = str(name)[:120]
+        if phone is not None:
+            payload["custom_fields_values"] = [
+                {"field_code": "PHONE", "values": [{"value": str(phone), "enum_code": "WORK"}]}
+            ]
+        if not payload:
+            return
+        try:
+            response = self.client.patch(
+                self.url + f"/api/v4/contacts/{int(crm_contact_id)}",
+                headers={"Authorization": f"Bearer {self.token}"},
+                json=payload,
+            )
+        except httpx.TransportError as exc:
+            raise Retryable("crm_write_failed") from exc
+        if response.status_code == 429 or response.status_code >= 500:
+            raise Retryable("crm_write_unavailable")
+        if not 200 <= response.status_code < 300:
+            raise Rejected(f"crm_write_http_{response.status_code}")
+
     def ensure_contact(self, name, phone, responsible=None):
         digits = phone.lstrip("+")
         for page in range(1, 21):

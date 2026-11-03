@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Plus, Trash2, Users, FileSpreadsheet, ShieldAlert, Search, Filter, AlertTriangle, CheckCircle, Info, Download, Check, X } from 'lucide-react';
+import { Upload, Plus, Trash2, Users, FileSpreadsheet, ShieldAlert, Search, Filter, AlertTriangle, CheckCircle, Info, Download, Check, X, RefreshCw } from 'lucide-react';
 import { api, openWithTicket } from '../api';
 import Modal from '../components/Modal';
 
@@ -21,6 +21,9 @@ export default function Contacts({ addToast, refreshKey }) {
   const [showNewModal, setShowNewModal] = useState(false);
   const [cardContactData, setCardContactData] = useState(null); // Contact Details Modal
   const [cardLoading, setCardLoading] = useState(false);
+  const [amoJob, setAmoJob] = useState(null);
+  const [amoLoading, setAmoLoading] = useState(false);
+  const [amoConsentSource, setAmoConsentSource] = useState('amoCRM: подтверждение администратора');
 
   // Import Options State
   const [importConsentDefault, setImportConsentDefault] = useState(true);
@@ -62,6 +65,28 @@ export default function Contacts({ addToast, refreshKey }) {
 
   const handleExportCSV = () => {
     openWithTicket('/api/v2/export/contacts.csv');
+  };
+
+  const previewAmoContacts = async () => {
+    setAmoLoading(true);
+    const result = await api('/api/v1/workspace/amo/sync/preview', { method: 'POST', body: { limit: 250 } });
+    setAmoLoading(false);
+    if (result?.job_id) setAmoJob(result);
+    else addToast(result?.error || 'Не удалось получить контакты amoCRM', 'err');
+  };
+
+  const confirmAmoContacts = async () => {
+    if (!amoJob?.job_id || !amoConsentSource.trim()) return;
+    setAmoLoading(true);
+    const result = await api(`/api/v1/workspace/amo/sync/${amoJob.job_id}/confirm`, {
+      method: 'POST', body: { item_ids: (amoJob.items || []).filter((item) => item.selected).map((item) => item.id), consent_source: amoConsentSource },
+    });
+    setAmoLoading(false);
+    if (result?.status === 'completed') {
+      addToast(`Импорт amoCRM завершён: ${result.applied} контактов`, 'ok');
+      setAmoJob(null);
+      loadContacts();
+    } else addToast(result?.error || 'Импорт amoCRM не выполнен', 'err');
   };
 
   // Toggle consent for a single contact
@@ -277,8 +302,29 @@ export default function Contacts({ addToast, refreshKey }) {
           >
             <Upload className="w-4 h-4" /> Импорт из CSV / Excel
           </button>
+          <button
+            onClick={previewAmoContacts}
+            disabled={amoLoading}
+            className="px-4 py-2 rounded-xl bg-emerald-600/80 hover:bg-emerald-600 font-semibold text-xs text-white flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${amoLoading ? 'animate-spin' : ''}`} /> Синхронизировать amoCRM
+          </button>
         </div>
       </div>
+
+      <Modal isOpen={!!amoJob} onClose={() => !amoLoading && setAmoJob(null)} title="Предварительный просмотр amoCRM" wide>
+        <div className="flex flex-col gap-4 text-xs">
+          <p className="text-muted">Проверьте изменения и подтвердите согласие перед добавлением контактов в кампании.</p>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+            {Object.entries(amoJob?.counts || {}).map(([key, value]) => <div key={key} className="rounded-lg bg-[#081221] border border-line p-2"><span className="text-dim block">{key}</span><b className="text-white">{value}</b></div>)}
+          </div>
+          <div className="max-h-72 overflow-auto border border-line rounded-xl">
+            {(amoJob?.items || []).map((item) => <div key={item.id} className="flex items-center gap-3 px-3 py-2 border-b border-line/40"><input type="checkbox" checked={item.selected} disabled={item.action === 'invalid_phone' || item.action === 'duplicate_phone'} onChange={(event) => setAmoJob({ ...amoJob, items: amoJob.items.map((row) => row.id === item.id ? { ...row, selected: event.target.checked } : row) })} /><span className="text-white flex-1">{item.name || 'Без имени'} · {item.phone || 'нет телефона'}</span><span className="text-muted">{item.action}</span></div>)}
+          </div>
+          <input value={amoConsentSource} onChange={(event) => setAmoConsentSource(event.target.value)} maxLength={256} className="w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white" placeholder="Источник согласия" />
+          <div className="flex justify-end gap-2"><button onClick={() => setAmoJob(null)} className="px-4 py-2 rounded-xl bg-line text-white">Отмена</button><button onClick={confirmAmoContacts} disabled={amoLoading || !amoConsentSource.trim()} className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#5b8cff] to-[#3d6bff] text-white font-bold disabled:opacity-50">Подтвердить импорт</button></div>
+        </div>
+      </Modal>
 
       {/* Filter and Search Bar */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

@@ -40,7 +40,7 @@ FIELDS = {
     "amocrm": {"subdomain", "access_token", "access_token_env", "refresh_token", "client_id",
                "client_secret", "webhook_token", "responsible_user_id", "auto_create_contacts",
                "auto_create_tasks", "unsorted_on_new", "timeout_sec", "operator_user_map",
-               "disabled", "task_due_hours"},
+               "disabled", "task_due_hours", "sync_enabled", "sync_interval_minutes"},
     "uis": {"api_url", "api_key", "number_pool_api"},
     "llm": {"enabled", "base_url", "api_key", "api_key_env", "model"},
     "bitrix24": {"webhook_url"},
@@ -48,7 +48,7 @@ FIELDS = {
     "crm": {"driver"},
 }
 BOOLEAN_FIELDS = {"tls", "record_calls", "play_message", "inbound_enabled", "record",
-                  "auto_create_contacts", "auto_create_tasks", "unsorted_on_new", "disabled",
+                  "auto_create_contacts", "auto_create_tasks", "unsorted_on_new", "disabled", "sync_enabled",
                   "enabled"}
 ENV_FIELDS = {
     ("megafon_vats", "api_key_env"): "ATS_MEGAFON_API_KEY",
@@ -137,14 +137,14 @@ def _validate(provider, field, value):
         if any(not re.fullmatch(r"[a-zA-Z0-9_.@-]{1,120}", k) or v <= 0 for k, v in result.items()):
             raise Problem(422, "invalid_operator_user_map")
         return result
-    if field in {"port", "timeout_sec", "responsible_user_id", "link_ttl_hours", "task_due_hours"}:
+    if field in {"port", "timeout_sec", "responsible_user_id", "link_ttl_hours", "task_due_hours", "sync_interval_minutes"}:
         try:
             number = int(value)
         except (TypeError, ValueError) as exc:
             raise Problem(422, "invalid_provider_number") from exc
         low, high = {"port": (1, 65535), "timeout_sec": (1, 120),
                      "responsible_user_id": (1, 2147483647), "link_ttl_hours": (0, 8760),
-                     "task_due_hours": (1, 168)}[field]
+                     "task_due_hours": (1, 168), "sync_interval_minutes": (5, 10080)}[field]
         if not low <= number <= high:
             raise Problem(422, "invalid_provider_number")
         return number
@@ -209,8 +209,10 @@ def _defaults(config, tenant_id):
                          "default_user": config.megafon_user if phone_bound else "", "default_group": "", "timeout_sec": 15},
         "amocrm": {"subdomain": urlsplit(config.amo_url).hostname.split(".")[0] if crm_bound and urlsplit(config.amo_url).hostname else "",
                    "access_token": MASK if crm_bound and config.amo_access_token.get_secret_value() else "",
+                   "webhook_token": MASK if crm_bound and config.amo_webhook_token.get_secret_value() else "",
                    "access_token_env": "ATS_AMOCRM_TOKEN", "responsible_user_id": 1,
                    "auto_create_contacts": False, "auto_create_tasks": False,
+                   "sync_enabled": False, "sync_interval_minutes": 15,
                    "unsorted_on_new": False, "timeout_sec": 15, "operator_user_map": {}},
         "multicom": {"api_url": "https://api.multicom.ru/v1", "api_key": "", "api_key_env": "ATS_MULTICOM_API_KEY",
                      "account_id": "", "sip_host": "sip.multicom.ru", "sip_user": "", "sip_secret": "", "timeout_sec": 15},
@@ -288,7 +290,7 @@ def settings_for_tenant(db, tenant_id):
                 "dial_prefix": "ami_dial_prefix", "play_message": "ami_play_message", "record_calls": "ami_record_calls",
                 "inbound_contexts": "inbound_contexts", "inbound_enabled": "inbound_enabled"},
         "megafon_vats": {"base_url": "megafon_url", "api_key": "megafon_api_key", "crm_token": "megafon_crm_token", "default_user": "megafon_user"},
-        "amocrm": {"access_token": "amo_access_token"},
+        "amocrm": {"access_token": "amo_access_token", "webhook_token": "amo_webhook_token"},
     }
     for provider, row in profiles.items():
         values = {**(row.public_values or {}), **decrypt_profile(row)}

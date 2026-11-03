@@ -1181,6 +1181,23 @@ export default function Settings({ addToast, refreshKey }) {
                     placeholder="1"
                   />
                 </div>
+                <div>
+                  <label className="text-muted block mb-1 font-semibold">Токен webhook amoCRM</label>
+                  <input
+                    type="password"
+                    className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
+                    value={amocrm.webhook_token || ''}
+                    onFocus={(e) => { if (isMaskedValue(e.target.value)) updateProvider('amocrm', 'webhook_token', ''); }}
+                    onChange={(e) => updateProvider('amocrm', 'webhook_token', e.target.value)}
+                    placeholder={isMaskedValue(amocrm.webhook_token) ? 'Сохранён (нажмите, чтобы изменить)' : 'Секрет для входящих событий'}
+                  />
+                </div>
+                <div className="flex items-center gap-3 pt-2">
+                  <input type="checkbox" checked={amocrm.sync_enabled === true} onChange={(e) => updateProvider('amocrm', 'sync_enabled', e.target.checked)} className="accent-acc w-4 h-4" />
+                  <span className="text-muted text-xs">Автоматически синхронизировать новые и изменённые контакты</span>
+                  <input type="number" min="5" max="10080" value={amocrm.sync_interval_minutes || 15} onChange={(e) => updateProvider('amocrm', 'sync_interval_minutes', parseInt(e.target.value, 10) || 15)} className="w-24 bg-[#0a1628] border border-line2 rounded-xl px-2 py-2 text-white" />
+                  <span className="text-dim text-xs">мин.</span>
+                </div>
                 <div className="flex flex-col gap-2 pt-2 border-t border-line2/40">
                   <label className="text-muted font-semibold">Соответствие операторов ATS → пользователей amoCRM</label>
                   {amoUsers.length === 0 ? (
