@@ -56,9 +56,14 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_index("ix_amo_sync_items_job", table_name="amo_sync_items")
-    op.drop_table("amo_sync_items")
-    op.drop_index("ix_amo_sync_jobs_tenant_created", table_name="amo_sync_jobs")
-    op.drop_table("amo_sync_jobs")
-    op.drop_column("contacts", "source")
+    inspector = sa.inspect(op.get_bind())
+    tables = set(inspector.get_table_names())
+    if "amo_sync_items" in tables:
+        op.drop_index("ix_amo_sync_items_job", table_name="amo_sync_items")
+        op.drop_table("amo_sync_items")
+    if "amo_sync_jobs" in tables:
+        op.drop_index("ix_amo_sync_jobs_tenant_created", table_name="amo_sync_jobs")
+        op.drop_table("amo_sync_jobs")
+    if "source" in {column["name"] for column in inspector.get_columns("contacts")}:
+        op.drop_column("contacts", "source")
     op.drop_column("operators", "megafon_user")
