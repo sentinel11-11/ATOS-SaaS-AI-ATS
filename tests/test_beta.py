@@ -328,25 +328,6 @@ def test_concurrent_schedulers_respect_tenant_channels(factory, tenants, prepare
         assert db.scalar(select(func.count()).select_from(Outbox)) == 2
 
 
-def test_simulated_workflow_and_crm(factory, tenants, prepared):
-    class CRM:
-        calls = []
-
-        def send(self, *args):
-            self.calls.append(args)
-
-    crm = CRM()
-    worker = Worker(factory, crm=crm)
-    worker.schedule()
-    assert worker.telephony()
-    assert worker.crm_job()
-    assert len(crm.calls) == 1 and crm.calls[0][1:] == (123, "completed")
-    worker.schedule()
-    with factory() as db:
-        assert db.scalar(select(Campaign)).status == "completed"
-        assert all(r.status == "done" for r in db.scalars(select(Outbox)))
-
-
 def test_inbox_duplicate_and_out_of_order(factory, tenants, prepared):
     Worker(factory).schedule()
     with factory.begin() as db:
@@ -354,7 +335,7 @@ def test_inbox_duplicate_and_out_of_order(factory, tenants, prepared):
         a.external_id = "external-test"
         a.status = "accepted"
         for event in ("completed", "completed", "answered"):
-            ingest(db, tenants[0], "sim", f"ext:{event}", "external-test", event)
+            ingest(db, tenants[0], "megafon_vats", f"ext:{event}", "external-test", event)
     Worker(factory).inbox()
     with factory() as db:
         assert db.scalar(select(Attempt)).status == "completed"
@@ -410,7 +391,7 @@ def test_unmatched_megafon_history_is_kept_for_analytics(factory, tenants):
 
 def test_orphan_is_bounded(factory, tenants):
     with factory.begin() as db:
-        ingest(db, tenants[0], "sim", "orphan", "missing", "completed")
+        ingest(db, tenants[0], "megafon_vats", "orphan", "missing", "completed")
     with factory.begin() as db:
         assert not drain_inbox(db)
         row = db.scalar(select(Inbox))

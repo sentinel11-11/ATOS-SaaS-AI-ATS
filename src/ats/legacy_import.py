@@ -192,7 +192,7 @@ def migrate_workspace(
                     row["id"],
                     {
                         "name": str(row.get("name") or "Кампания")[:120],
-                        "route": "sim",
+                        "route": "megafon_vats",
                         "status": "paused",
                         "mode": row.get("flow")
                         if row.get("flow") in {"message", "agent", "operator"}

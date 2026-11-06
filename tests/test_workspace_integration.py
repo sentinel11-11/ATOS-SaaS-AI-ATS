@@ -200,7 +200,7 @@ def test_workspace_snapshot_dry_run_and_repeat(factory, tenants, tmp_path):
     assert repeat["skipped"]["call"] == 1
     with factory() as db:
         assert db.scalar(select(Campaign)).status == "paused"
-        assert db.scalar(select(Campaign)).route == "sim"
+        assert db.scalar(select(Campaign)).route == "megafon_vats"
         assert len(db.scalars(select(HistoricalCall)).all()) == 1
     assert before == path.read_bytes()
 

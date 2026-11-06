@@ -150,7 +150,6 @@ def operators(p=Depends(principal), db=Depends(session)):
                 "can_hangup": call.status in ACTIVE
                 and (
                     call.status == "prepared"
-                    or call.route == "sim"
                     or (call.route == "multicom_ami" and bool(call.channel))
                 ),
             }
@@ -217,7 +216,7 @@ def queue_complete(
     if op.user_id != p.user_id and p.role != "admin":
         raise Problem(403, "task_owner_required")
     attempt = repo.get(Attempt, row.attempt_id)
-    if attempt.route != "sim" and attempt.status in ACTIVE:
+    if attempt.status in ACTIVE:
         raise Problem(409, "finish_live_call_first")
     row.outcome, row.status, op.status = data.outcome, "completed", "free"
     audit(db, p, "acd.completed", row.id)

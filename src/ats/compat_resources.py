@@ -70,7 +70,7 @@ class NumberCommand(LegacyInput):
     number: str | None = Field(default=None, max_length=32)
     phone: str | None = Field(default=None, max_length=32)
     label: str | None = Field(default=None, max_length=120)
-    provider: Literal["sim", "ami", "megafon_vats", "multicom", "uis", "multicom_ami"] | None = None
+    provider: Literal["ami", "megafon_vats", "multicom", "uis", "multicom_ami"] | None = None
     kind: str | None = Field(default=None, min_length=1, max_length=50)
     active: bool | None = None
     enabled_outgoing: bool | None = None

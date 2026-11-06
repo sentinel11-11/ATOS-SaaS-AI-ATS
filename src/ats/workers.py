@@ -309,20 +309,10 @@ class Worker:
                 if route == "megafon_vats":
                     operator_user = repo.get(User, operator.user_id)
                     megafon_operator_user = operator.megafon_user.strip() or operator_user.login
-            if route == "sim" and template and campaign.mode == "agent":
-                from ats.workspace_service import run_scenario
-
-                attempt.agent_result = run_scenario(
-                    template.scenario,
-                    {q["id"]: "1" for q in template.scenario.get("questions", [])},
-                    contact.name,
-                )
             try:
-                runtime_config = settings()
-                if route != "sim":
-                    from ats.connections import settings_for_tenant
+                from ats.connections import settings_for_tenant
 
-                    runtime_config = settings_for_tenant(db, tenant_id)
+                runtime_config = settings_for_tenant(db, tenant_id)
                 if route == "megafon_vats" and campaign.mode == "operator" and not megafon_operator_user:
                     raise Problem(409, "megafon_operator_not_assigned")
                 validate_route(
@@ -339,7 +329,7 @@ class Worker:
                         number and (not number.enabled or not number.verified or number.quarantined)
                     ) or (not number and caller_number != runtime_config.ami_caller_id):
                         raise Problem(409, "caller_number_unavailable")
-                if route != "sim" and not runtime_config.destination_allowed(phone):
+                if not runtime_config.destination_allowed(phone):
                     raise Problem(409, "destination_not_allowed")
             except Problem as e:
                 finish_attempt(db, attempt, "failed")
@@ -350,36 +340,32 @@ class Worker:
             from ats.workspace_service import event
 
             event(db, attempt, "dispatching")
-            if route in {"sim", "multicom_ami"}:
+            if route == "multicom_ami":
                 attempt.external_id = str(attempt_id)
         # Crash from here until persisted response is ambiguous. No automatic redial.
         try:
-            if route != "sim" or media_inputs:
-                from ats.connections import settings_for_tenant
+            from ats.connections import settings_for_tenant
 
-                with self.factory() as config_db:
-                    runtime_config = settings_for_tenant(config_db, tenant_id)
+            with self.factory() as config_db:
+                runtime_config = settings_for_tenant(config_db, tenant_id)
             media = False
             if media_inputs:
                 from ats.media import prepare_media
 
                 media = prepare_media(*media_inputs, config=runtime_config)
-            if route == "sim":
-                external_id = str(attempt_id)
-            else:
-                driver = self.driver(route, tenant_id, runtime_config)
-                external_id = (
-                    driver.originate(
-                        attempt_id,
-                        phone,
-                        caller_id=caller_number,
-                        media=media,
-                        operator_ext=operator_ext,
-                    )
-                    if route == "multicom_ami"
-                    else driver.originate(
-                        attempt_id, phone, user=megafon_operator_user or megafon_user
-                    )
+            driver = self.driver(route, tenant_id, runtime_config)
+            external_id = (
+                driver.originate(
+                    attempt_id,
+                    phone,
+                    caller_id=caller_number,
+                    media=media,
+                    operator_ext=operator_ext,
+                )
+                if route == "multicom_ami"
+                else driver.originate(
+                    attempt_id, phone, user=megafon_operator_user or megafon_user
+                )
                 )
         except Problem as e:
             with self.factory.begin() as db:
@@ -403,8 +389,6 @@ class Worker:
             row = TenantRepository(db, tenant_id).get(Attempt, attempt_id, lock=True)
             row.external_id = external_id
             row.status, row.updated_at = next_state(row.status, "accepted"), now()
-            if route == "sim":
-                finish_attempt(db, row, "completed")
             complete_job(db, job_id, token)
         return True
 

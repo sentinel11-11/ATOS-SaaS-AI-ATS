@@ -116,7 +116,7 @@ def call_hangup(attempt_id: UUID, p=Depends(principal), db=Depends(session)):
             raise Problem(403, "call_owner_required")
     if row.status not in ACTIVE:
         raise Problem(409, "call_already_ended")
-    if row.route == "sim" or row.status == "prepared":
+    if row.status == "prepared":
         from ats.services import finish_attempt
 
         finish_attempt(db, row, "failed", "cancelled_by_user")

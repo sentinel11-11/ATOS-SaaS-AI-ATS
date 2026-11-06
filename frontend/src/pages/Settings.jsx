@@ -427,7 +427,6 @@ export default function Settings({ addToast, refreshKey }) {
               <option value="multicom">Мультиком (MultiCom API / SIP)</option>
               <option value="uis">UIS / Comagic API</option>
               <option value="ami">Asterisk AMI Manager</option>
-              <option value="sim">Симуляция (Стенд)</option>
             </select>
           </div>
           <div>

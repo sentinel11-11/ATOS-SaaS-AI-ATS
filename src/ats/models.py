@@ -130,7 +130,7 @@ class Campaign(Owned, Base):
             name="fk_campaign_template",
         ),
         CheckConstraint("status IN ('draft','running','paused','completed')"),
-        CheckConstraint("route IN ('sim','multicom_ami','megafon_vats')"),
+        CheckConstraint("route IN ('multicom_ami','megafon_vats')"),
         CheckConstraint("max_channels BETWEEN 1 AND 100"),
         CheckConstraint("window_start >= 0 AND window_start < window_end AND window_end <= 24"),
     )
@@ -171,6 +171,7 @@ class Attempt(Owned, Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[str] = mapped_column(String(120), default="", server_default="")
     agent_result: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    hidden_from_journal: Mapped[bool] = mapped_column(default=False, server_default="false")
     __table_args__ = (
         UniqueConstraint("tenant_id", "id"),
         UniqueConstraint("item_id", "ordinal", name="uq_attempt_item_ordinal"),
@@ -279,7 +280,7 @@ class CallerNumber(Owned, Base):
     daily_limit: Mapped[int] = mapped_column(default=30)
     cooldown_seconds: Mapped[int] = mapped_column(default=60)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    provider: Mapped[str] = mapped_column(String(24), default="sim", server_default="sim")
+    provider: Mapped[str] = mapped_column(String(24), default="megafon_vats", server_default="megafon_vats")
     kind: Mapped[str] = mapped_column(String(50), default="mobile", server_default="mobile")
     enabled_outgoing: Mapped[bool] = mapped_column(default=True, server_default="true")
     weight: Mapped[int] = mapped_column(default=1, server_default="1")

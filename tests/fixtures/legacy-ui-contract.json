@@ -38,7 +38,7 @@
       "sha256": "f39e4e9e3a630c538a95581dd36c7b4c07bb9dbb9e53f92209d8dacfaa1cdca1",
       "api_paths": [
         "/calls",
-        "/calls/clear-non-campaign"
+        "/calls/clear-journal"
       ]
     },
     {
@@ -158,7 +158,6 @@
     "edit_template",
     "create_campaign",
     "add_selected_contacts_to_campaign",
-    "start_simulator_campaign",
     "view_call_timeline",
     "import_csv_file",
     "export_contacts_csv",

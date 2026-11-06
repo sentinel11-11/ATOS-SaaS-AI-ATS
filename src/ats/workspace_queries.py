@@ -39,7 +39,7 @@ def calls_query(p, q="", status="", campaign_id=None, since=None, until=None):
             Campaign,
             (Campaign.id == CampaignItem.campaign_id) & (Campaign.tenant_id == Attempt.tenant_id),
         )
-        .where(Attempt.tenant_id == p.tenant_id)
+        .where(Attempt.tenant_id == p.tenant_id, ~Attempt.hidden_from_journal)
     )
     if q:
         query = query.where(

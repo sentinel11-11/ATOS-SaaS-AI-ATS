@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/v2", tags=["legacy workspace settings"])
 
 class BasicSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    provider: Literal["", "sim", "ami", "multicom", "megafon_vats", "uis"] = "sim"
+    provider: Literal["", "ami", "multicom", "megafon_vats", "uis"] = "megafon_vats"
     max_channels: int = Field(default=3, ge=1, le=100)
     retry_max: int = Field(default=2, ge=0, le=5)
     retry_delay_min: int = Field(default=15, ge=1, le=1440)

@@ -87,7 +87,7 @@ export default function Campaigns({ addToast, refreshKey }) {
       work_time: '08:00-20:00',
       retry_delay_min: 15,
       retry_max: 2,
-      route: 'sim',
+      route: 'megafon_vats',
     });
   };
 
@@ -105,7 +105,7 @@ export default function Campaigns({ addToast, refreshKey }) {
       work_time: wt,
       retry_delay_min: c.retry_delay_min || 15,
       retry_max: c.retry_max || 2,
-      route: c.route || 'sim',
+      route: c.route || 'megafon_vats',
       scenario: c.scenario || {},
     });
   };
@@ -127,7 +127,7 @@ export default function Campaigns({ addToast, refreshKey }) {
       name: editingCamp.name,
       template_id: editingCamp.template_id || null,
       flow: editingCamp.flow || 'operator',
-      route: editingCamp.route || 'sim',
+      route: editingCamp.route || 'megafon_vats',
       retry_delay_min: parseInt(editingCamp.retry_delay_min) || 15,
       retry_max: parseInt(editingCamp.retry_max) || 2,
       schedule: {
@@ -582,10 +582,9 @@ export default function Campaigns({ addToast, refreshKey }) {
                 <label className="font-semibold text-muted block mb-1">Провайдер телефонии</label>
                 <select
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc font-semibold"
-                  value={editingCamp.route || 'sim'}
+                  value={editingCamp.route || 'megafon_vats'}
                   onChange={(e) => setEditingCamp({ ...editingCamp, route: e.target.value })}
                 >
-                  <option value="sim">Симуляция (стенд)</option>
                   <option value="megafon_vats">МегаФон ВАТС</option>
                   <option value="multicom_ami">Asterisk / Multicom AMI</option>
                 </select>

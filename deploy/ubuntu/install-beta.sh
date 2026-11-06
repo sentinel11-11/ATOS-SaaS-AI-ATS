@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Initial simulator installation on Ubuntu 24.04 x86_64; not an updater for a live beta.
+# Initial ATS installation on Ubuntu 24.04 x86_64; not an updater for a live deployment.
 set -euo pipefail
 umask 0022
 if [[ "$(id -u)" != 0 ]]; then
@@ -53,7 +53,7 @@ if ss -ltnH | awk '{print $4}' | grep -E '(^|:)9130$' >/dev/null; then
   exit 1
 fi
 if [[ -e /etc/ats-beta/ats.env ]]; then
-  # Allow resuming our unchanged simulator config; preserve any user-edited/live config.
+  # Allow resuming an unchanged installation; preserve any user-edited/live config.
   if ! cmp -s /etc/ats-beta/ats.env <(expected_env); then
     printf 'Existing custom /etc/ats-beta/ats.env found; preserve it and use a reviewed update procedure.\n' >&2
     exit 1

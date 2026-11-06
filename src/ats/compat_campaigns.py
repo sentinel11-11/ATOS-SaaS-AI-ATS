@@ -170,8 +170,8 @@ def campaign_save(data: CampaignSave, p=Depends(admin), db=Depends(session)):
         template = db.scalar(repo.query(Template).where(~Template.archived).order_by(Template.created_at).limit(1))
         template_id = template.id if template else None
     schedule, start, end = _schedule(data.schedule, defaults)
-    provider = defaults.get("provider", "sim")
-    route = data.route or (row.route if row else {"ami": "multicom_ami", "multicom": "multicom_ami", "megafon_vats": "megafon_vats", "sim": "sim"}.get(provider, "sim"))
+    provider = defaults.get("provider") or "megafon_vats"
+    route = data.route or (row.route if row else {"ami": "multicom_ami", "multicom": "multicom_ami", "megafon_vats": "megafon_vats"}.get(provider, "megafon_vats"))
     command = CampaignEdit(name=data.name, route=route, template_id=template_id, mode=data.flow,
         max_channels=data.max_channels or int(defaults.get("max_channels", 1)),
         window_start=start, window_end=end, weekdays=schedule["days"],

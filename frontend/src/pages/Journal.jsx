@@ -36,14 +36,16 @@ export default function Journal({ addToast, refreshKey }) {
     openWithTicket('/api/v2/export/calls.csv');
   };
 
-  const handleClearNonCampaign = async () => {
-    if (!window.confirm('Удалить из журнала все фоновые звонки ВАТС без кампании (#0)?')) return;
-    const res = await api('/calls/clear-non-campaign', { method: 'POST', body: {} });
+  const handleClearJournal = async () => {
+    if (!window.confirm('Очистить журнал завершённых звонков? Активные вызовы должны быть завершены отдельно. История и записи разговоров сохранятся в системе.')) return;
+    const res = await api('/calls/clear-journal', { method: 'POST', body: {} });
     if (res && res.ok) {
-      addToast('Фоновые звонки ВАТС убраны из журнала', 'ok');
+      addToast(`Журнал очищен: скрыто ${res.cleared || 0} записей`, 'ok');
       loadCalls();
+    } else if (res?.error === 'active_calls_must_be_reconciled') {
+      addToast('Сначала завершите активные вызовы', 'warn');
     } else {
-      addToast('Ошибка очистки фоновых звонков', 'err');
+      addToast('Ошибка очистки журнала', 'err');
     }
   };
 
@@ -71,11 +73,11 @@ export default function Journal({ addToast, refreshKey }) {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={handleClearNonCampaign}
+            onClick={handleClearJournal}
             className="px-3.5 py-2 rounded-xl bg-line/60 hover:bg-rose-500/20 hover:text-rose-400 font-semibold text-xs text-muted border border-line flex items-center gap-1.5 transition-all"
-            title="Очистить тестовые и фоновые звонки ВАТС без кампаний (#0)"
+            title="Скрыть завершённые звонки из журнала"
           >
-            <Trash2 className="w-4 h-4" /> Очистить фоновые (#0)
+            <Trash2 className="w-4 h-4" /> Очистить журнал
           </button>
           <button
             onClick={handleExportCSV}

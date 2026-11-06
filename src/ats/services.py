@@ -78,14 +78,14 @@ def create_campaign(db, principal, data, key):
 
 
 def validate_route(tenant_id, route, db=None, *, require_megafon_user=True):
+    if route not in {"multicom_ami", "megafon_vats"}:
+        raise Problem(422, "unsupported_route")
     if db is not None:
         from ats.connections import settings_for_tenant
 
         config = settings_for_tenant(db, tenant_id)
     else:
         config = settings()
-    if route == "sim":
-        return
     if not config.live_calls_enabled or tenant_id != config.telephony_tenant_id:
         raise Problem(409, "live_calls_disabled_for_tenant")
     if route == "multicom_ami":
@@ -227,7 +227,7 @@ def schedule_one(db, tenant_id):
             operator = db.scalar(operator_query.with_for_update(skip_locked=True).limit(1))
             if not operator:
                 return False
-        if campaign.route != "sim" and not config.destination_allowed(contact.phone):
+        if not config.destination_allowed(contact.phone):
             item.status = "blocked"
             repo.add(Audit, actor_id=None, entity_id=item.id, action="call.destination_blocked")
             return True

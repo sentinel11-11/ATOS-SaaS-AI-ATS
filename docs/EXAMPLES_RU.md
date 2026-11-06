@@ -9,7 +9,7 @@
 ```python
 class CampaignCreate(Input):
     name: str = Field(min_length=1, max_length=120)
-    route: Literal["sim", "multicom_ami", "megafon_vats"] = "sim"
+    route: Literal["multicom_ami", "megafon_vats"] = "megafon_vats"
     contact_ids: list[UUID] = Field(min_length=1, max_length=1000)
     max_channels: int = Field(default=1, ge=1, le=100)
     window_start: int = Field(default=9, ge=0, le=23)

@@ -320,7 +320,6 @@ export default function NumberPool({ addToast, refreshKey }) {
                 <option value="uis">UIS / Comagic</option>
                 <option value="ami">Asterisk AMI</option>
                 <option value="multicom">Мультиком (MultiCom API / SIP)</option>
-                <option value="sim">Симуляция</option>
               </select>
               <p className="text-[11px] text-muted mt-1 leading-relaxed">
                 Движок берёт номер строго из пула своего провайдера (поле provider). Для обзвона
@@ -409,7 +408,6 @@ export default function NumberPool({ addToast, refreshKey }) {
                   <option value="uis">UIS / Comagic</option>
                   <option value="ami">Asterisk AMI</option>
                   <option value="multicom">Мультиком (MultiCom API / SIP)</option>
-                <option value="sim">Симуляция</option>
                 </select>
               </div>
 

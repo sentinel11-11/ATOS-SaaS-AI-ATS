@@ -121,9 +121,4 @@ def store_directory(db, tenant_id, provider, kind, values):
                         enabled_outgoing=True,
                     )
                 )
-            elif number.provider == "sim":
-                # Adopt legacy/imported rows without overwriting administrator settings.
-                number.provider = "megafon_vats"
-                number.provider_ref = value["external_id"]
-                number.verified = True
     # Entries absent from a bounded snapshot are retained; transient failures cannot erase mappings.

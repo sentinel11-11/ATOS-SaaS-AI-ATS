@@ -104,7 +104,7 @@ def legacy_calls_query(p):
             Campaign,
             (Campaign.id == CampaignItem.campaign_id) & (Campaign.tenant_id == Attempt.tenant_id),
         )
-        .where(Attempt.tenant_id == p.tenant_id)
+        .where(Attempt.tenant_id == p.tenant_id, ~Attempt.hidden_from_journal)
     )
     incoming = (
         select(
@@ -260,6 +260,46 @@ def clear_background(p=Depends(admin), db=Depends(session)):
     audit(db, p, "call.background_cleared")
     db.commit()
     return {"ok": True, "cleared": incoming + historical}
+
+
+@router.post("/calls/clear-journal")
+def clear_journal(p=Depends(admin), db=Depends(session)):
+    """Hide all terminal calls from the journal while retaining audit data."""
+    active_attempts = db.scalar(
+        select(func.count())
+        .select_from(Attempt)
+        .where(Attempt.tenant_id == p.tenant_id, Attempt.status.in_(ACTIVE))
+    )
+    active_inbound = db.scalar(
+        select(func.count())
+        .select_from(InboundCall)
+        .where(InboundCall.tenant_id == p.tenant_id, InboundCall.status.in_(_LIVE_INBOUND))
+    )
+    if active_attempts or active_inbound:
+        raise Problem(409, "active_calls_must_be_reconciled")
+    attempts = db.execute(
+        update(Attempt)
+        .where(
+            Attempt.tenant_id == p.tenant_id,
+            ~Attempt.hidden_from_journal,
+            Attempt.status.not_in(ACTIVE),
+        )
+        .values(hidden_from_journal=True)
+    ).rowcount
+    incoming = db.execute(
+        update(InboundCall)
+        .where(InboundCall.tenant_id == p.tenant_id, ~InboundCall.hidden_from_journal)
+        .values(hidden_from_journal=True)
+    ).rowcount
+    historical = db.execute(
+        update(HistoricalCall)
+        .where(HistoricalCall.tenant_id == p.tenant_id, ~HistoricalCall.hidden_from_journal)
+        .values(hidden_from_journal=True)
+    ).rowcount
+    audit(db, p, "call.journal_cleared")
+    db.commit()
+    return {"ok": True, "cleared": attempts + incoming + historical,
+            "attempts": attempts, "inbound": incoming, "historical": historical}
 
 
 @router.get("/calls/{call_id}/timeline")
