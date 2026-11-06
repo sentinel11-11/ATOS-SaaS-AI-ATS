@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, getToken, getUser, openWithTicket, setSession, waitForJob } from './api';
+import { api, getToken, getUser, invalidateApiCache, openWithTicket, setSession, waitForJob } from './api';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -27,7 +27,7 @@ describe('legacy API contract with core sessions', () => {
     expect(options.body).toContain('Тест');
   });
 
-  it('coalesces concurrent reads, then refetches after completion', async () => {
+  it('coalesces concurrent reads and reuses a recent response until invalidated', async () => {
     let resolve;
     const fetcher = vi.fn().mockImplementationOnce(() => new Promise((done) => { resolve = done; }))
       .mockResolvedValue(json({ ok: true, contacts: [] }));
@@ -38,7 +38,22 @@ describe('legacy API contract with core sessions', () => {
     resolve(json({ ok: true, contacts: [{ id: 'opaque-uuid' }] }));
     expect(await first).toEqual(await second);
     await api('/contacts');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    invalidateApiCache();
+    await api('/contacts');
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches legacy read-only POST queries without caching mutations', async () => {
+    const fetcher = vi.fn().mockResolvedValue(json({ ok: true, calls: [] }));
+    vi.stubGlobal('fetch', fetcher);
+    const query = { limit: 500, only_campaigns: false, scope: 'all' };
+    await api('/calls', { method: 'POST', readOnly: true, body: query });
+    await api('/calls', { method: 'POST', readOnly: true, body: query });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await api('/contacts/save', { body: { name: 'Тест', phone: '+79991234567' } });
+    await api('/calls', { method: 'POST', readOnly: true, body: query });
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   it('revokes local identity on expired sessions but keeps login failures local', async () => {

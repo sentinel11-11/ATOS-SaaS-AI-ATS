@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { api, getToken, getUser, setSession } from './api';
+import { api, getToken, getUser, invalidateApiCache, setSession } from './api';
 import { useSSE } from './useSSE';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
@@ -155,6 +155,7 @@ export default function App() {
   }, [addToast]);
 
   const handleRefresh = () => {
+    invalidateApiCache();
     setRefreshKey((previous) => previous + 1);
     setSettingsRefreshKey((previous) => previous + 1);
     addToast('Данные обновлены', 'ok');

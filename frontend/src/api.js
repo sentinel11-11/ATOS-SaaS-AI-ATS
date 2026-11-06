@@ -2,6 +2,21 @@
 // Session credentials stay in HttpOnly cookies, never browser storage or URLs.
 let currentUser = null;
 const pendingReads = new Map();
+const readCache = new Map();
+const READ_CACHE_TTL_MS = 8000;
+
+// Page components are mounted again when the user changes tabs. Keep recent
+// successful GET responses in memory so a tab switch is instant while still
+// refreshing after mutations or the short freshness window.
+export function invalidateApiCache(prefix = '') {
+  if (!prefix) {
+    readCache.clear();
+    return;
+  }
+  for (const key of readCache.keys()) {
+    if (key.startsWith(prefix)) readCache.delete(key);
+  }
+}
 
 export function getToken() {
   return currentUser ? 'cookie-session' : '';
@@ -50,7 +65,16 @@ export function openWithTicket(path) {
 export function api(path, options = {}) {
   const method = options.method || (options.body ? 'POST' : 'GET');
   const url = path.startsWith('/api/') ? path : `/api/v2${path.startsWith('/') ? path : '/' + path}`;
-  const key = method === 'GET' && !options.signal ? url : null;
+  const readOnlyPost = method === 'POST' && options.readOnly === true;
+  const key = (method === 'GET' || readOnlyPost) && !options.signal
+    ? `${method}:${url}:${readOnlyPost ? JSON.stringify(options.body || {}) : ''}`
+    : null;
+  const useCache = key && options.cache !== false && !url.includes('/auth/') && !url.includes('/jobs/');
+  if (useCache) {
+    const cached = readCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value);
+    if (cached) readCache.delete(key);
+  }
   if (key && pendingReads.has(key)) return pendingReads.get(key);
 
   const request = (async () => {
@@ -72,11 +96,20 @@ export function api(path, options = {}) {
         setSession('', null);
         window.dispatchEvent(new CustomEvent('ats_unauthorized'));
       }
-      return { ...result, ok: result.ok ?? response.ok };
+      const normalized = { ...result, ok: result.ok ?? response.ok };
+      if (useCache && normalized.ok !== false) {
+        readCache.set(key, { value: normalized, expiresAt: Date.now() + READ_CACHE_TTL_MS });
+      }
+      return normalized;
     } catch (error) {
       return { ok: false, error: error.name === 'AbortError' ? 'cancelled' : 'network_unavailable' };
     }
   })();
+
+  // Any successful mutation can change one or more page datasets. Clearing
+  // all read caches keeps post-save navigation correct without requiring
+  // every page to know which other endpoint was affected.
+  if (method !== 'GET' && !readOnlyPost) invalidateApiCache();
 
   if (key) {
     pendingReads.set(key, request);

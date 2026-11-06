@@ -7,6 +7,7 @@ export default function Contacts({ addToast, refreshKey }) {
   const [contacts, setContacts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,7 +40,7 @@ export default function Contacts({ addToast, refreshKey }) {
   });
 
   const loadContacts = async () => {
-    setLoading(true);
+    if (!loaded) setLoading(true);
     const [cRes, campRes] = await Promise.all([
       api('/contacts'),
       api('/campaigns')
@@ -47,6 +48,7 @@ export default function Contacts({ addToast, refreshKey }) {
 
     if (cRes && cRes.contacts) setContacts(cRes.contacts);
     if (campRes && campRes.campaigns) setCampaigns(campRes.campaigns);
+    setLoaded(true);
     setLoading(false);
   };
 

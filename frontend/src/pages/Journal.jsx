@@ -6,20 +6,25 @@ import TimelineModal from '../components/TimelineModal';
 export default function Journal({ addToast, refreshKey }) {
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [timelineCallId, setTimelineCallId] = useState(null);
   const [onlyCampaignsFilter, setOnlyCampaignsFilter] = useState(false);
   const [scope, setScope] = useState('all');
 
   const loadCalls = async () => {
-    setLoading(true);
+    if (!loaded) setLoading(true);
     const res = await api('/calls', {
       method: 'POST',
+      // This endpoint is a filtered read exposed as POST for the legacy API
+      // contract. Mark it read-only so tab switches can reuse its short cache.
+      readOnly: true,
       body: { limit: 500, only_campaigns: onlyCampaignsFilter, scope }
     });
     if (res && res.calls) {
       setCalls(Array.isArray(res.calls) ? res.calls : []);
     }
+    setLoaded(true);
     setLoading(false);
   };
 

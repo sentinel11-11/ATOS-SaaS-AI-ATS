@@ -17,6 +17,7 @@ export default function Campaigns({ addToast, refreshKey }) {
   const [contacts, setContacts] = useState([]);
   const [databases, setDatabases] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
 
   // Accordion Expanded State
   const [expandedCampId, setExpandedCampId] = useState(null);
@@ -35,7 +36,7 @@ export default function Campaigns({ addToast, refreshKey }) {
   const [contactSearchQuery, setContactSearchQuery] = useState('');
 
   const loadAll = async () => {
-    setLoading(true);
+    if (!loaded) setLoading(true);
     const [cRes, tRes, cntRes, dRes] = await Promise.all([
       api('/campaigns'),
       api('/templates'),
@@ -47,6 +48,7 @@ export default function Campaigns({ addToast, refreshKey }) {
     if (tRes && tRes.templates) setTemplates(tRes.templates);
     if (cntRes && cntRes.contacts) setContacts(cntRes.contacts);
     if (dRes && dRes.databases) setDatabases(dRes.databases);
+    setLoaded(true);
     setLoading(false);
   };
 
