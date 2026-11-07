@@ -188,7 +188,7 @@ def retry_failed(db, p, campaign):
 
 def select_caller(db, tenant, route, config=None):
     """Caller selection shares the tenant allocation lock; counts persisted attempts, no reset races."""
-    if route != "multicom_ami":
+    if route not in {"multicom_ami", "megafon_vats"}:
         return ""
     numbers = db.scalars(
         select(CallerNumber)

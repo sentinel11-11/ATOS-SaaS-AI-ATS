@@ -261,7 +261,7 @@ export default function Campaigns({ addToast, refreshKey }) {
   const filteredContacts = (Array.isArray(contacts) ? contacts : []).filter((c) => {
     const q = contactSearchQuery.toLowerCase().trim();
     return !q || (c.name && c.name.toLowerCase().includes(q)) || (c.phone && c.phone.includes(q));
-  });
+  }).slice(0, 300);
 
   const campaignsList = Array.isArray(campaigns) ? campaigns : [];
   const templatesList = Array.isArray(templates) ? templates : [];
