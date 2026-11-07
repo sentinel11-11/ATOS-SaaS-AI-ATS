@@ -3,7 +3,7 @@
 let currentUser = null;
 const pendingReads = new Map();
 const readCache = new Map();
-const READ_CACHE_TTL_MS = 8000;
+const READ_CACHE_TTL_MS = 60000;
 
 // Page components are mounted again when the user changes tabs. Keep recent
 // successful GET responses in memory so a tab switch is instant while still

@@ -261,6 +261,20 @@ def clear_background(p=Depends(admin), db=Depends(session)):
     db.commit()
     return {"ok": True, "cleared": incoming + historical}
 
+@router.post("/calls/reconcile-stale")
+def reconcile_stale_calls(p=Depends(admin), db=Depends(session)):
+    """Close provider calls that have had no state update for 15 minutes."""
+    cutoff = now() - timedelta(minutes=15)
+    rows = db.scalars(select(Attempt).where(Attempt.tenant_id == p.tenant_id, Attempt.status.in_(ACTIVE), Attempt.updated_at < cutoff).with_for_update()).all()
+    for row in rows:
+        row.status, row.reason, row.result, row.ended_at = "failed", "stale_call_reconciled", "failed", now()
+        item = db.get(CampaignItem, row.item_id)
+        if item and item.status == "active":
+            item.status = "exhausted"
+    audit(db, p, "call.stale_reconciled")
+    db.commit()
+    return {"ok": True, "reconciled": len(rows)}
+
 
 @router.post("/calls/clear-journal")
 def clear_journal(p=Depends(admin), db=Depends(session)):

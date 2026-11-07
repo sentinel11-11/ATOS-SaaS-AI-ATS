@@ -184,6 +184,8 @@ class AmoSyncPreview(Input):
     contact_ids: list[int] | None = Field(default=None, max_length=250)
     limit: int = Field(default=250, ge=1, le=250)
     mode: Literal["manual", "scheduled"] = "manual"
+    pipeline_id: int | None = Field(default=None, gt=0)
+    status_id: int | None = Field(default=None, gt=0)
 
     @field_validator("contact_ids")
     @classmethod

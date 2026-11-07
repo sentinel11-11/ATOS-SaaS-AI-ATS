@@ -174,6 +174,9 @@ class AmoCRM:
             values["group"] = str(tags[0].get("name") or "")[:120]
         values["updated_at"] = raw.get("updated_at")
         values["archived"] = bool(raw.get("is_deleted") or raw.get("deleted_at"))
+        leads = raw.get("_embedded", {}).get("leads", []) or []
+        values["pipeline_ids"] = [int(x["pipeline_id"]) for x in leads if x.get("pipeline_id")]
+        values["status_ids"] = [int(x["status_id"]) for x in leads if x.get("status_id")]
         return values
 
     def contacts(self, page=1, limit=250, ids=None):
@@ -182,6 +185,12 @@ class AmoCRM:
             params["filter[id][]"] = [int(i) for i in ids]
         data = self.read("/api/v4/contacts", params)
         return [self.normalize_contact(item) for item in data.get("_embedded", {}).get("contacts", [])]
+
+    def pipelines(self):
+        return self.read("/api/v4/leads/pipelines", {"limit": 250}).get("_embedded", {}).get("pipelines", [])
+
+    def pipeline_statuses(self, pipeline_id):
+        return self.read(f"/api/v4/leads/pipelines/{int(pipeline_id)}/statuses", {"limit": 250}).get("_embedded", {}).get("statuses", [])
 
     def update_contact(self, crm_contact_id, phone=None, name=None):
         payload = {}

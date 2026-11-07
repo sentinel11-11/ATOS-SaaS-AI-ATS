@@ -70,6 +70,8 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
     crm = _crm(db, p.tenant_id)
     try:
         raw_contacts = crm.contacts(ids=data.contact_ids, limit=data.limit) if data.contact_ids else crm.contacts(limit=data.limit)
+        if data.pipeline_id is not None:
+            raw_contacts = [item for item in raw_contacts if data.pipeline_id in item.get("pipeline_ids", []) and (data.status_id is None or data.status_id in item.get("status_ids", []))]
     except (Rejected, Retryable) as exc:
         raise Problem(502, getattr(exc, "code", "crm_read_failed")) from exc
     job = AmoSyncJob(tenant_id=p.tenant_id, mode=data.mode, status="preview", counts={})
@@ -123,6 +125,20 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
     db.add(Audit(tenant_id=p.tenant_id, actor_id=p.user_id, action="amo.sync.preview", entity_id=job.id))
     db.commit()
     return {"job_id": str(job.id), "status": job.status, "counts": counts, "items": [_item_json(i) for i in db.scalars(select(AmoSyncItem).where(AmoSyncItem.job_id == job.id)).all()]}
+
+@router.get("/pipelines")
+def pipelines(p=Depends(admin), db=Depends(session)):
+    try:
+        return {"pipelines": _crm(db, p.tenant_id).pipelines()}
+    except (Rejected, Retryable) as exc:
+        raise Problem(502, getattr(exc, "code", "crm_read_failed")) from exc
+
+@router.get("/pipelines/{pipeline_id}/statuses")
+def pipeline_statuses(pipeline_id: int, p=Depends(admin), db=Depends(session)):
+    try:
+        return {"statuses": _crm(db, p.tenant_id).pipeline_statuses(pipeline_id)}
+    except (Rejected, Retryable) as exc:
+        raise Problem(502, getattr(exc, "code", "crm_read_failed")) from exc
 
 
 @router.post("/sync/run")

@@ -24,6 +24,8 @@ export default function Settings({ addToast, refreshKey }) {
   const [amiReport, setAmiReport] = useState(null);
   const [newOpKey, setNewOpKey] = useState('');
   const [newAmoId, setNewAmoId] = useState('');
+  const [amoPipelines, setAmoPipelines] = useState([]);
+  const [amoStatuses, setAmoStatuses] = useState([]);
 
   const isMaskedValue = (val) => {
     if (!val) return false;
@@ -39,6 +41,8 @@ export default function Settings({ addToast, refreshKey }) {
       api('/users'),
       api('/amocrm/users')
     ]);
+    const pipelineRes = await api('/api/v1/workspace/amo/pipelines');
+    if (pipelineRes && Array.isArray(pipelineRes.pipelines)) setAmoPipelines(pipelineRes.pipelines);
 
     if (rawRes && rawRes.provider_config) {
       setProviderConfig(rawRes.provider_config);
@@ -61,6 +65,12 @@ export default function Settings({ addToast, refreshKey }) {
   useEffect(() => {
     loadAll();
   }, [refreshKey]);
+
+  useEffect(() => {
+    const id = providerConfig.amocrm?.pipeline_id;
+    if (!id) { setAmoStatuses([]); return; }
+    api(`/api/v1/workspace/amo/pipelines/${id}/statuses`).then((res) => setAmoStatuses(res?.statuses || []));
+  }, [providerConfig.amocrm?.pipeline_id]);
 
   const handleSaveSettings = async () => {
     setActionLoading(true);
@@ -1196,6 +1206,20 @@ export default function Settings({ addToast, refreshKey }) {
                   <span className="text-muted text-xs">Автоматически синхронизировать новые и изменённые контакты</span>
                   <input type="number" min="5" max="10080" value={amocrm.sync_interval_minutes || 15} onChange={(e) => updateProvider('amocrm', 'sync_interval_minutes', parseInt(e.target.value, 10) || 15)} className="w-24 bg-[#0a1628] border border-line2 rounded-xl px-2 py-2 text-white" />
                   <span className="text-dim text-xs">мин.</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                  <label className="text-muted text-xs">Воронка синхронизации
+                    <select className="mt-1 w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white" value={amocrm.pipeline_id || ''} onChange={(e) => updateProvider('amocrm', 'pipeline_id', e.target.value ? Number(e.target.value) : null)}>
+                      <option value="">Все воронки</option>
+                      {amoPipelines.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-muted text-xs">Этап (необязательно)
+                    <select className="mt-1 w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white" value={amocrm.status_id || ''} onChange={(e) => updateProvider('amocrm', 'status_id', e.target.value ? Number(e.target.value) : null)} disabled={!amocrm.pipeline_id}>
+                      <option value="">Все этапы воронки</option>
+                      {amoStatuses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
+                  </label>
                 </div>
                 <div className="flex flex-col gap-2 pt-2 border-t border-line2/40">
                   <label className="text-muted font-semibold">Соответствие операторов ATS → пользователей amoCRM</label>
