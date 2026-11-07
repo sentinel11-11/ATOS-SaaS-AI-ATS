@@ -200,7 +200,7 @@ export default function App() {
       case 'numbers':
         return <NumberPool addToast={addToast} refreshKey={refreshKey} />;
       case 'acd':
-        return <Operators addToast={addToast} refreshKey={refreshKey} />;
+        return <Operators addToast={addToast} refreshKey={refreshKey} isAdmin={user?.role === 'admin'} />;
       case 'templates':
         return <Templates addToast={addToast} refreshKey={refreshKey} />;
       case 'blacklist':

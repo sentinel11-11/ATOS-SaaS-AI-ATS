@@ -376,6 +376,18 @@ def operator_status(data: OperatorStatus, p=Depends(principal), db=Depends(sessi
     api_identity.operator_status(data=data, p=p, db=db)
     return {"ok": True}
 
+@router.post("/operators/{operator_id}/status")
+def admin_operator_status(operator_id: UUID, data: OperatorStatus, p=Depends(admin), db=Depends(session)):
+    row = TenantRepository(db, p.tenant_id).get(Operator, operator_id, lock=True)
+    if row.status == "busy" and data.status != "busy":
+        active = db.scalar(select(func.count()).select_from(QueueEntry).where(QueueEntry.operator_id == row.id, QueueEntry.status == "accepted"))
+        if active:
+            raise Problem(409, "complete_current_task_first")
+    row.status = data.status
+    audit(db, p, "operator.status_changed_by_admin", row.id)
+    db.commit()
+    return {"ok": True, "status": row.status}
+
 
 @router.post("/acd/accept")
 def accept(data: AcceptCommand, p=Depends(principal), db=Depends(session)):

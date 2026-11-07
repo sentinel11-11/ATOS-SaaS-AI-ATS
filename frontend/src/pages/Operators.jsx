@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Users, PhoneIncoming, Clock } from 'lucide-react';
 import { api } from '../api';
 
-export default function Operators({ addToast, refreshKey }) {
+export default function Operators({ addToast, refreshKey, isAdmin }) {
   const [operators, setOperators] = useState([]);
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +28,11 @@ export default function Operators({ addToast, refreshKey }) {
 
   const operatorsList = Array.isArray(operators) ? operators : [];
   const queueList = Array.isArray(queue) ? queue : [];
+  const setOperatorStatus = async (id, status) => {
+    const res = await api(`/operators/${id}/status`, { method: 'POST', body: { status } });
+    if (res?.ok) { addToast('Статус оператора изменён', 'ok'); loadAcdData(); }
+    else addToast(res?.error || 'Не удалось изменить статус', 'err');
+  };
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-200">
@@ -64,11 +69,14 @@ export default function Operators({ addToast, refreshKey }) {
                       <td className="py-2.5 px-3 font-semibold text-white">@{op.login} ({op.name || 'Оператор'})</td>
                       <td className="py-2.5 px-3 font-mono text-muted">{op.ext || '—'}</td>
                       <td className="py-2.5 px-3">
+                        {isAdmin ? <select value={op.status} onChange={(e) => setOperatorStatus(op.id, e.target.value)} className="bg-[#0a1628] border border-line2 rounded-lg px-2 py-1 text-xs text-white">
+                          <option value="free">Свободен</option><option value="break">Перерыв</option><option value="offline">Оффлайн</option><option value="busy">В разговоре</option>
+                        </select> :
                         <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
                           op.status === 'free' ? 'bg-ok/20 text-ok' : op.status === 'busy' ? 'bg-acc/20 text-acc2' : 'bg-warn/20 text-warn'
                         }`}>
                           {op.status === 'free' ? 'Свободен' : op.status === 'busy' ? 'В разговоре' : 'Перерыв'}
-                        </span>
+                        </span>}
                       </td>
                     </tr>
                   ))
