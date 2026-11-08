@@ -7,8 +7,31 @@ define(['jquery'], function ($) {
 
     this.callbacks = {
       init: function () { return true; },
-      render: function () { return true; },
-      bind_actions: function () { return true; },
+      render: function () {
+        if (self.$el && self.$el.find) {
+          self.$el.html('<button type="button" class="atos-ats-call-widget">Позвонить через ATOS-ATS</button>');
+        }
+        return true;
+      },
+      bind_actions: function () {
+        if (self.$el && self.$el.on) {
+          self.$el.on('click', '.atos-ats-call-widget', function () {
+            var button = $(this);
+            var entityId = self.system && self.system().entity_id;
+            var phoneNode = $('[data-field-code="PHONE"] a, [data-field-code="PHONE"]');
+            var phone = phoneNode.first().text().replace(/[^+0-9]/g, '');
+            if (!entityId || !phone) {
+              button.text('Не найден телефон').prop('disabled', true);
+              return;
+            }
+            button.prop('disabled', true).text('Запуск звонка…');
+            self.callThroughAts(entityId, phone, self.system && self.system().user_id)
+              .done(function () { button.text('Звонок поставлен в очередь'); })
+              .fail(function (xhr) { button.prop('disabled', false).text((xhr.responseJSON && xhr.responseJSON.error) || 'Ошибка запуска'); });
+          });
+        }
+        return true;
+      },
       settings: function () { return true; },
       onSave: function () { return true; },
       destroy: function () { return true; }

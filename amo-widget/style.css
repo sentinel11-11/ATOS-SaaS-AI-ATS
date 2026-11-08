@@ -1,1 +1,3 @@
 .atos-ats-call { cursor: pointer; }
+.atos-ats-call-widget { margin: 8px 0; padding: 8px 14px; border: 0; border-radius: 6px; background: #2f76ff; color: #fff; cursor: pointer; font: inherit; }
+.atos-ats-call-widget[disabled] { opacity: .6; cursor: wait; }
