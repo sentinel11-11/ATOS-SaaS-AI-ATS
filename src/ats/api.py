@@ -62,6 +62,13 @@ MEGAFON_HISTORY_FAILED = {
     "not_found",
     "failed",
     "abandoned",
+    "hangup",
+    "hang_up",
+    "disconnected",
+    "terminated",
+    "rejected",
+    "error",
+    "unanswered",
 }
 
 
@@ -523,6 +530,8 @@ async def megafon_events(request: Request, db=Depends(session)):
     event = _megafon_history_event(raw_status) if cmd == "history" else None
     if event is None and cmd == "event":
         event = {"ringing": "accepted", "accepted": "accepted", "answered": "answered"}.get(raw_status)
+        if raw_status in MEGAFON_HISTORY_FAILED:
+            event = "failed"
     if event is None:
         raise Problem(422, "unsupported_history_status")
     external_id = str(payload.get("callid") or payload.get("call_id") or payload.get("id") or "")

@@ -655,13 +655,13 @@ class Worker:
                 select(Attempt)
                 .where(
                     Attempt.status.in_(["accepted", "answered"]),
-                    Attempt.updated_at < now() - timedelta(minutes=45),
+                    Attempt.updated_at < now() - timedelta(minutes=10),
                 )
                 .with_for_update(skip_locked=True)
                 .limit(100)
             ).all()
             for row in rows:
-                row.status, row.reason = "unknown", "provider_terminal_event_missing"
+                finish_attempt(db, row, "failed", "provider_terminal_event_missing")
 
     def diagnostic_job(self):
         """Read-only provider probes run outside API requests and DB transactions."""
