@@ -17,6 +17,7 @@ define(['jquery'], function ($) {
         }
         if (phoneNode.length && !$('.atos-ats-call-widget').length) {
           phoneNode.after('<button type="button" class="atos-ats-call-widget">Позвонить через ATOS-ATS</button>');
+          $('.atos-ats-call-widget').off('click.atosAts').on('click.atosAts', function (event) { event.stopPropagation(); self.startCardCall(this); });
         }
         return true;
       },
@@ -31,7 +32,7 @@ define(['jquery'], function ($) {
               var match = bodyText.match(/(?:\+7|8|7)\s*[\(]?\d{3}[\)]?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/);
               if (match) phone = match[0].replace(/[^+0-9]/g, '');
             }
-            if (!entityId || !phone) {
+            if (!phone) {
               button.text('Не найден телефон').prop('disabled', true);
               return;
             }
@@ -59,6 +60,20 @@ define(['jquery'], function ($) {
           amo_user_id: amoUserId ? Number(amoUserId) : null
         })
       });
+    };
+
+    this.startCardCall = function (button) {
+      var phoneNode = $('[data-field-code="PHONE"] a, [data-field-code="PHONE"], a[href^="tel:"]');
+      var phone = phoneNode.first().text().replace(/[^+0-9]/g, '') || String(phoneNode.first().attr('href') || '').replace(/^tel:/, '').replace(/[^+0-9]/g, '');
+      if (!phone || phone.length < 11) {
+        var match = $('body').text().match(/(?:\+7|8|7)\s*[\(]?\d{3}[\)]?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/);
+        if (match) phone = match[0].replace(/[^+0-9]/g, '');
+      }
+      if (!phone || phone.length < 11) { $(button).text('Не найден телефон'); return; }
+      $(button).prop('disabled', true).text('Запуск звонка…');
+      self.callThroughAts(null, phone, self.system && self.system().user_id)
+        .done(function () { $(button).text('Звонок поставлен в очередь'); })
+        .fail(function (xhr) { $(button).prop('disabled', false).text((xhr.responseJSON && xhr.responseJSON.error) || 'Ошибка запуска'); });
     };
   };
 });
