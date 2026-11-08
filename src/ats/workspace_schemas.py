@@ -187,17 +187,17 @@ class AmoSyncPreview(Input):
     pipeline_id: int | None = Field(default=None, gt=0)
     status_id: int | None = Field(default=None, gt=0)
 
-
-class AmoClickToCall(Input):
-    crm_contact_id: int = Field(gt=0)
-    phone: str | None = Field(default=None, max_length=32)
-
     @field_validator("contact_ids")
     @classmethod
     def positive_ids(cls, value):
         if value is not None and (len(set(value)) != len(value) or any(i <= 0 for i in value)):
             raise ValueError("Contact ids must be unique positive integers")
         return value
+
+
+class AmoClickToCall(Input):
+    crm_contact_id: int = Field(gt=0)
+    phone: str | None = Field(default=None, max_length=32)
 
 
 class AmoSyncConfirm(Input):
