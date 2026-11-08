@@ -11,6 +11,8 @@ define(['jquery'], function ($) {
         var phoneNode = $('[data-field-code="PHONE"]').first();
         if (phoneNode.length && !$('.atos-ats-call-widget').length) {
           phoneNode.after('<button type="button" class="atos-ats-call-widget">Позвонить через ATOS-ATS</button>');
+        } else if (!phoneNode.length && !$('.atos-ats-call-widget').length) {
+          $('body').append('<button type="button" class="atos-ats-call-widget" style="position:fixed;right:24px;bottom:80px;z-index:99999">Позвонить через ATOS-ATS</button>');
         }
         return true;
       },
