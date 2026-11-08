@@ -13,7 +13,7 @@
       "email": "support@axiomats.ru"
     }
   },
-  "locations": ["lcard-1", "ccard-1", "comcard-1", "settings"],
+  "locations": ["leads", "leftmenu", "settings"],
   "settings": {
     "atsUrl": {
       "name": "settings.atsUrl",

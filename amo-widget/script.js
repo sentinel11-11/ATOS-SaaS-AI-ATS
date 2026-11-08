@@ -8,8 +8,6 @@ define(['jquery'], function ($) {
     this.callbacks = {
       init: function () { return true; },
       render: function () {
-        var area = self.system && self.system().area;
-        if (area && !/card|lcard|ccard|comcard/i.test(String(area))) return true;
         var phoneNode = $('[data-field-code="PHONE"]').first();
         if (!phoneNode.length) phoneNode = $('a[href^="tel:"]').first();
         if (!phoneNode.length) {
