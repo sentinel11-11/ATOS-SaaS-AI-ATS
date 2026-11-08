@@ -25,13 +25,40 @@ from ats.models import (
     Outbox,
     now,
 )
+from ats.schemas import CampaignCreate
+from ats.services import create_campaign
 from ats.repositories import TenantRepository
 from ats.schemas import phone_from_import
 from ats.security import admin, principal
-from ats.workspace_schemas import AmoSyncConfirm, AmoSyncPreview
+from ats.workspace_schemas import AmoClickToCall, AmoSyncConfirm, AmoSyncPreview
 
 router = APIRouter(prefix="/api/v1/workspace/amo", tags=["amocrm"])
 public_router = APIRouter(tags=["amocrm"])
+
+
+@router.post("/click-to-call")
+def click_to_call(data: AmoClickToCall, p=Depends(principal), db=Depends(session)):
+    """Start a one-contact operator call; the scheduler then uses MegaFon/Multicom."""
+    repo = TenantRepository(db, p.tenant_id)
+    contact = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == data.crm_contact_id))
+    if contact is None:
+        raise Problem(404, "crm_contact_not_synced")
+    if data.phone and _phone(data.phone) != contact.phone:
+        raise Problem(409, "contact_phone_mismatch")
+    command = CampaignCreate(
+        name=f"CRM call {contact.name or contact.phone}",
+        route="megafon_vats",
+        contact_ids=[contact.id],
+        max_channels=1,
+        window_start=0,
+        window_end=24,
+        mode="operator",
+        retry_max=0,
+    )
+    campaign, _ = create_campaign(db, p, command, f"amo-click:{uuid4()}")
+    campaign.status = "running"
+    db.commit()
+    return {"ok": True, "campaign_id": str(campaign.id), "contact_id": str(contact.id), "status": "queued"}
 
 
 def _crm(db, tenant_id):

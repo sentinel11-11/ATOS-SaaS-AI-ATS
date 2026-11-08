@@ -1,0 +1,9 @@
+{
+  "name": "ATOS-ATS",
+  "version": "1.0.0",
+  "description": "Одиночный звонок через ATOS-ATS и MegaFon VATS",
+  "locale": ["ru"],
+  "interface_version": 2,
+  "locations": ["lcard-1", "c карточка"],
+  "settings": {"ats_url": "https://axiomats.ru"}
+}

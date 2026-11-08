@@ -187,6 +187,11 @@ class AmoSyncPreview(Input):
     pipeline_id: int | None = Field(default=None, gt=0)
     status_id: int | None = Field(default=None, gt=0)
 
+
+class AmoClickToCall(Input):
+    crm_contact_id: int = Field(gt=0)
+    phone: str | None = Field(default=None, max_length=32)
+
     @field_validator("contact_ids")
     @classmethod
     def positive_ids(cls, value):
