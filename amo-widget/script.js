@@ -8,14 +8,14 @@ define(['jquery'], function ($) {
     this.callbacks = {
       init: function () { return true; },
       render: function () {
-        if (self.$el && self.$el.find) {
-          self.$el.html('<button type="button" class="atos-ats-call-widget">Позвонить через ATOS-ATS</button>');
+        var phoneNode = $('[data-field-code="PHONE"]').first();
+        if (phoneNode.length && !$('.atos-ats-call-widget').length) {
+          phoneNode.after('<button type="button" class="atos-ats-call-widget">Позвонить через ATOS-ATS</button>');
         }
         return true;
       },
       bind_actions: function () {
-        if (self.$el && self.$el.on) {
-          self.$el.on('click', '.atos-ats-call-widget', function () {
+        $(document).off('click.atosAts', '.atos-ats-call-widget').on('click.atosAts', '.atos-ats-call-widget', function () {
             var button = $(this);
             var entityId = self.system && self.system().entity_id;
             var phoneNode = $('[data-field-code="PHONE"] a, [data-field-code="PHONE"]');
@@ -28,8 +28,7 @@ define(['jquery'], function ($) {
             self.callThroughAts(entityId, phone, self.system && self.system().user_id)
               .done(function () { button.text('Звонок поставлен в очередь'); })
               .fail(function (xhr) { button.prop('disabled', false).text((xhr.responseJSON && xhr.responseJSON.error) || 'Ошибка запуска'); });
-          });
-        }
+        });
         return true;
       },
       settings: function () { return true; },
