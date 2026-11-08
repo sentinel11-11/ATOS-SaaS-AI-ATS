@@ -24,6 +24,7 @@
 }
 
 .atos-ats-launcher:hover { background: #1f63df; }
+.atos-ats-launcher:disabled { opacity: .55; cursor: not-allowed; }
 .atos-ats-launcher-icon { font-size: 16px; line-height: 1; }
 
 .atos-ats-panel {

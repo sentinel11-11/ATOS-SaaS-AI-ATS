@@ -141,6 +141,7 @@ define(['jquery'], function ($) {
       var phone = context.open ? getCurrentPhone() : '';
       var input = root.querySelector('.atos-ats-phone');
       var submit = root.querySelector('.atos-ats-submit');
+      var launcher = root.querySelector('.atos-ats-launcher');
       var key = context.open ? String(window.location.href) + '|' + phone : 'no-card';
       var changed = root.getAttribute('data-context-key') !== key;
       root.setAttribute('data-context-key', key);
@@ -149,6 +150,10 @@ define(['jquery'], function ($) {
       if (input) {
         input.value = phone;
         input.placeholder = context.open ? text.phonePlaceholder : text.noCard;
+      }
+      if (launcher) {
+        launcher.disabled = !context.open || !phone || root.getAttribute('data-call-state') === 'busy';
+        launcher.title = context.open && phone ? text.call : text.noCard;
       }
       if (submit) submit.disabled = !context.open || !phone || root.getAttribute('data-call-state') === 'busy';
 
