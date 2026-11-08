@@ -202,7 +202,7 @@ class AmoClickToCall(Input):
 
 class AmoWidgetClickToCall(Input):
     amo_user_id: int | None = Field(default=None, gt=0)
-    crm_contact_id: int = Field(gt=0)
+    crm_contact_id: int | None = Field(default=None, gt=0)
     phone: str | None = Field(default=None, max_length=32)
 
 

@@ -57,7 +57,9 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
         except (Rejected, Retryable) as exc:
             raise Problem(401, "amo_user_not_verified") from exc
     repo = TenantRepository(db, tenant_id)
-    contact = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == data.crm_contact_id))
+    contact = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == data.crm_contact_id)) if data.crm_contact_id else None
+    if contact is None and data.phone:
+        contact = db.scalar(repo.query(Contact).where(Contact.phone == _phone(data.phone), ~Contact.archived))
     if contact is None:
         raise Problem(404, "crm_contact_not_synced")
     if data.phone and _phone(data.phone) != contact.phone:
