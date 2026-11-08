@@ -1,5 +1,9 @@
 {
-  "widget_name": "ATOS-ATS Solo",
+  "widget": {
+    "name": "ATOS-ATS Solo",
+    "short_description": "Одиночные звонки через ATS и MegaFon VATS",
+    "description": "Запуск одиночного звонка из карточки amoCRM через ATOS-ATS."
+  },
   "call_button": "Позвонить через ATOS-ATS",
   "call_starting": "Запуск звонка через ATS…",
   "call_queued": "Звонок поставлен в очередь",
