@@ -6,6 +6,7 @@
     "version": "1.0.0",
     "interface_version": 2,
     "locale": ["ru"],
+    "installation": true,
     "init_once": false,
     "locations": ["lcard-1", "ccard-1", "settings"]
   }
