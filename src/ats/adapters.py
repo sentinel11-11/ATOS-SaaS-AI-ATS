@@ -305,12 +305,13 @@ class AmoCRM:
         responsible=None,
         direction="outbound",
         link=None,
+        source="ATS",
     ):
         data = {
             "phone": phone.lstrip("+"),
             "direction": direction,
             "duration": duration,
-            "source": "ATS",
+            "source": str(source or "ATS")[:80],
             "call_status": 4 if status == "completed" else 6,
             "call_result": status,
             "created_at": int(created_at.timestamp()),

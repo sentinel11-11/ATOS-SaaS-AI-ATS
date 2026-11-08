@@ -14,14 +14,15 @@ from ats.config import settings
 from ats.db import session_factory
 from ats.domain import Problem, next_state
 from ats.models import (
+    AmoSyncJob,
     Attempt,
     BlacklistEntry,
     CallerNumber,
     Campaign,
     CampaignItem,
     Contact,
-    AmoSyncJob,
     InboundCall,
+    Inbox,
     Operator,
     Outbox,
     QueueEntry,
@@ -497,6 +498,7 @@ class Worker:
                     responsible,
                     direction,
                     payload.get("recording_url"),
+                    source=getattr(attempt, "route", "ATS"),
                 )
                 if options.get("amo_auto_create_tasks"):
                     crm.create_task(
@@ -537,8 +539,8 @@ class Worker:
             return False
         job_id, token, tenant_id, payload, attempts = job
         try:
-            from ats.schemas import phone_from_import
             from ats.connections import settings_for_tenant
+            from ats.schemas import phone_from_import
 
             with self.factory() as config_db:
                 runtime_config = settings_for_tenant(config_db, tenant_id)

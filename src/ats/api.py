@@ -6,16 +6,17 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
 from ats import schemas
+from ats.api_amo import public_router as amo_public_router
+from ats.api_amo import router as amo_router
 from ats.api_recording_links import router as recording_links_router
-from ats.api_amo import public_router as amo_public_router, router as amo_router
 from ats.compat_auth import router as compat_auth_router
 from ats.compat_campaigns import router as compat_campaigns_router
 from ats.compat_contacts import router as compat_contacts_router
@@ -26,7 +27,18 @@ from ats.config import settings
 from ats.db import session
 from ats.domain import Problem
 from ats.events import router as events_router
-from ats.models import Attempt, Audit, Campaign, Contact, Inbox, Outbox, Session, Tenant, WorkspaceSettings
+from ats.models import (
+    Attempt,
+    Audit,
+    Campaign,
+    ConnectionProfile,
+    Contact,
+    Inbox,
+    Outbox,
+    Session,
+    Tenant,
+    WorkspaceSettings,
+)
 from ats.repositories import TenantRepository
 from ats.security import admin, authenticate, digest, principal
 from ats.services import create_campaign, finish_attempt, ingest, validate_route
@@ -74,11 +86,76 @@ MEGAFON_HISTORY_FAILED = {
 
 def _megafon_history_event(value):
     status = str(value or "").strip().lower().replace(" ", "_")
-    if status == "success":
+    if status in {"success", "completed", "complete", "connected", "answered", "answer", "ok", "4"}:
         return "completed"
-    if status in MEGAFON_HISTORY_FAILED:
+    if status in MEGAFON_HISTORY_FAILED or status == "6":
         return "failed"
     return None
+
+
+def _megafon_operator_key(payload):
+    for key in ("user", "extension", "operator", "internal_number", "internal", "agent"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _megafon_operator_mapping(db, tenant_id):
+    settings_row = db.scalar(select(WorkspaceSettings).where(WorkspaceSettings.tenant_id == tenant_id))
+    mapping = dict((settings_row.values if settings_row else {}).get("operator_user_map", {}) or {})
+    profile = db.scalar(
+        select(ConnectionProfile).where(
+            ConnectionProfile.tenant_id == tenant_id,
+            ConnectionProfile.provider == "amocrm",
+        )
+    )
+    if profile:
+        mapping.update((profile.public_values or {}).get("operator_user_map", {}) or {})
+    return {str(key): str(value) for key, value in mapping.items() if str(value).isdigit()}
+
+
+def _mapped_amo_user_id(mapping, operator_key):
+    if not operator_key:
+        return ""
+    direct = mapping.get(str(operator_key))
+    if direct:
+        return direct
+    digits = "".join(ch for ch in str(operator_key) if ch.isdigit())
+    if digits:
+        for key, value in mapping.items():
+            if "".join(ch for ch in str(key) if ch.isdigit()) == digits:
+                return value
+    return ""
+
+
+def _megafon_callback_payload(payload, mapping=None):
+    keys = (
+        "phone", "user", "extension", "operator", "internal_number", "internal", "agent",
+        "telnum", "type", "status", "direction", "duration", "result", "cmd", "command",
+        "callid", "call_id", "id", "link", "recording", "record_url", "recording_url",
+        "recording_link", "url",
+    )
+    callback = {
+        key: str(payload.get(key))[:500]
+        for key in keys
+        if payload.get(key) is not None and str(payload.get(key)) != ""
+    }
+    raw_direction = str(payload.get("direction") or payload.get("type") or "").strip().lower()
+    if raw_direction in {"in", "inbound", "incoming", "receive", "received"}:
+        callback["direction"] = "in"
+    elif raw_direction in {"out", "outbound", "outgoing", "originate", "originated"}:
+        callback["direction"] = "out"
+    recording = next(
+        (str(payload.get(key)).strip() for key in ("recording_url", "recording_link", "record_url", "recording", "link", "url") if payload.get(key)),
+        "",
+    )
+    if recording:
+        callback["recording_url"] = recording[:500]
+    mapped = _mapped_amo_user_id(mapping or {}, _megafon_operator_key(payload))
+    if mapped:
+        callback["amo_responsible_user_id"] = mapped
+    return callback
 
 
 @app.middleware("http")
@@ -418,14 +495,20 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     config = settings_for_tenant(db, tenant_id)
     form = dict(await request.form())
     expected = config.megafon_crm_token.get_secret_value()
+    supplied = (
+        request.headers.get("X-CRM-Token")
+        or request.headers.get("X-Megafon-Token")
+        or request.headers.get("Authorization", "").removeprefix("Bearer ")
+        or str(form.get("crm_token", ""))
+    )
     if (
         not expected
         or tenant_id != config.telephony_tenant_id
-        or not secrets.compare_digest(str(form.get("crm_token", "")), expected)
+        or not secrets.compare_digest(supplied, expected)
     ):
         raise Problem(403, "webhook_rejected")
     # Never store crm_token or the raw form. History is authoritative for callback outcome.
-    cmd = str(form.get("cmd", ""))
+    cmd = str(form.get("cmd") or form.get("command") or "").lower()
     if cmd == "contact":
         from ats.inbound import normalize_phone
 
@@ -437,11 +520,8 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
             )
         )
         return {"contact_name": contact.name if contact else ""}
-    direction = (
-        str(form.get("direction", "")).lower()
-        if cmd == "event"
-        else str(form.get("type", "")).lower()
-    )
+    raw_direction = str(form.get("direction") or form.get("type") or "").strip().lower()
+    direction = "in" if raw_direction in {"in", "inbound", "incoming", "receive", "received", "incoming_call"} else "out"
     if direction == "in" and config.inbound_enabled:
         from ats.inbound import ingest_inbound
 
@@ -461,11 +541,14 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
             duration = int(form.get("duration", "0"))
         except (ValueError, TypeError):
             raise Problem(422, "invalid_duration") from None
+        inbound_id = str(form.get("callid") or form.get("call_id") or form.get("id") or "")
+        if not inbound_id or len(inbound_id) > 120:
+            raise Problem(422, "invalid_callid")
         ingest_inbound(
             db,
             tenant_id,
             "megafon_vats",
-            str(form.get("callid", "")),
+            inbound_id,
             form.get("phone", ""),
             form.get("telnum", ""),
             state,
@@ -484,18 +567,17 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     if event is None:
         # ACCEPTED can refer to the operator leg. Do not claim client answered.
         return {"result": "accepted_without_state_change"}
-    external_id = str(form.get("callid", ""))
+    external_id = str(form.get("callid") or form.get("call_id") or form.get("id") or "")
     if not external_id or len(external_id) > 120:
         raise Problem(422, "invalid_callid")
     event_key = hashlib.sha256(f"{external_id}:{cmd}:{event}".encode()).hexdigest()
     # MegaFon can use a different callid for the history leg than the id
     # returned by makecall. Keep only non-secret correlation fields so the
     # inbox worker can safely match that callback to the active attempt.
-    callback_payload = {
-        key: str(form.get(key, ""))[:120]
-        for key in ("phone", "user", "telnum", "type", "status", "direction", "duration")
-        if form.get(key) is not None
-    }
+    callback_payload = _megafon_callback_payload(
+        form,
+        _megafon_operator_mapping(db, tenant_id),
+    )
     ingest(db, tenant_id, "megafon_vats", event_key, external_id, event, callback_payload)
     db.commit()  # Acknowledge only after durable storage.
     return {"result": "success"}
@@ -537,12 +619,10 @@ async def megafon_events(request: Request, db=Depends(session)):
     external_id = str(payload.get("callid") or payload.get("call_id") or payload.get("id") or "")
     if not external_id or len(external_id) > 120:
         raise Problem(422, "invalid_callid")
-    provider = db.scalar(select(WorkspaceSettings).where(WorkspaceSettings.tenant_id == tenant_id))
-    mapping = (provider.values if provider else {}).get("operator_user_map", {})
-    operator_key = str(payload.get("user") or payload.get("extension") or payload.get("operator") or payload.get("internal_number") or "")
-    callback = {str(k): str(v)[:500] for k, v in payload.items() if k != "crm_token"}
-    if operator_key and operator_key in mapping:
-        callback["amo_responsible_user_id"] = str(mapping[operator_key])
+    callback = _megafon_callback_payload(
+        {key: value for key, value in payload.items() if key != "crm_token"},
+        _megafon_operator_mapping(db, tenant_id),
+    )
     event_key = hashlib.sha256(f"{external_id}:{cmd}:{event}".encode()).hexdigest()
     ingest(db, tenant_id, "megafon_vats", event_key, external_id, event, callback)
     db.commit()
