@@ -182,6 +182,8 @@ define(['jquery'], function ($) {
     }
 
     self.mountWidget = function () {
+      // Remove controls left by an older cached widget version.
+      $('.atos-ats-call-widget').remove();
       mountLauncher();
       mountCardButton();
       setPhoneFromCard(false);
