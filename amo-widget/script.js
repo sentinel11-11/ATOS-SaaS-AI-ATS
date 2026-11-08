@@ -8,7 +8,7 @@ define(['jquery'], function ($) {
     var mountTimer = null;
     var observer = null;
     var boundDocument = null;
-    var version = '2.0.3';
+    var version = '2.0.4';
 
     var text = {
       call: 'Позвонить через ATOS-ATS',
