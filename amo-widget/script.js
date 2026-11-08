@@ -8,13 +8,14 @@ define(['jquery'], function ($) {
     var mountTimer = null;
     var observer = null;
     var boundDocument = null;
-    var version = '2.0.2';
+    var version = '2.0.3';
 
     var text = {
       call: 'Позвонить через ATOS-ATS',
       launcher: 'АТС',
       panelTitle: 'Звонок через ATOS-ATS',
-      phonePlaceholder: 'Телефон из открытой карточки',
+      phonePlaceholder: 'Номер из открытой карточки',
+      phoneFromServer: 'Номер будет взят из синхронизации amoCRM',
       callButton: 'Позвонить',
       refreshButton: 'Обновить из карточки',
       loading: 'Запуск звонка…',
@@ -168,19 +169,21 @@ define(['jquery'], function ($) {
       root.setAttribute('data-context-key', key);
       root.setAttribute('data-card-open', context.open ? 'true' : 'false');
 
+      var cardReady = context.open && (!!phone || !!context.contactId);
       if (input) {
         input.value = phone;
-        input.placeholder = context.open ? text.phonePlaceholder : text.noCard;
+        input.placeholder = !context.open ? text.noCard : phone ? text.phonePlaceholder : text.phoneFromServer;
       }
       if (launcher) {
-        launcher.disabled = !context.open || !phone || root.getAttribute('data-call-state') === 'busy';
-        launcher.title = context.open && phone ? text.call : text.noCard;
+        launcher.disabled = !cardReady || root.getAttribute('data-call-state') === 'busy';
+        launcher.title = cardReady ? text.call : text.noCard;
       }
-      if (submit) submit.disabled = !context.open || !phone || root.getAttribute('data-call-state') === 'busy';
+      if (submit) submit.disabled = !cardReady || root.getAttribute('data-call-state') === 'busy';
 
       if (changed && root.getAttribute('data-call-state') !== 'busy') {
         if (!context.open) setStatus(text.noCard, true);
-        else if (!phone) setStatus(text.noPhone, true);
+        else if (!cardReady) setStatus(text.noPhone, true);
+        else if (!phone && context.contactId) setStatus(text.phoneFromServer, false);
         else setStatus('', false);
       }
       return phone;
@@ -201,7 +204,7 @@ define(['jquery'], function ($) {
         if (button) button.disabled = false;
         return;
       }
-      if (!phone) {
+      if (!phone && !context.contactId) {
         setStatus(text.noPhone, true);
         if (button) button.disabled = false;
         return;
