@@ -485,6 +485,7 @@ class Worker:
                 )
             if not crm_id:
                 raise Rejected("crm_contact_mapping_missing")
+            responsible = payload.get("amo_responsible_user_id") or options.get("amo_responsible_user_id")
             crm.send(attempt_id, crm_id, status)
             if not self.injected_crm:
                 crm.register_call(
@@ -493,7 +494,7 @@ class Worker:
                     status,
                     created_at,
                     duration,
-                    options.get("amo_responsible_user_id"),
+                    responsible,
                     direction,
                 )
                 if options.get("amo_auto_create_tasks"):
@@ -501,7 +502,7 @@ class Worker:
                         attempt_id,
                         crm_id,
                         options.get("task_due_hours", 24),
-                        options.get("amo_responsible_user_id"),
+                        responsible,
                     )
         except Retryable as e:
             with self.factory.begin() as db:

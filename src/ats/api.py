@@ -26,7 +26,7 @@ from ats.config import settings
 from ats.db import session
 from ats.domain import Problem
 from ats.events import router as events_router
-from ats.models import Attempt, Audit, Campaign, Contact, Inbox, Outbox, Session, Tenant
+from ats.models import Attempt, Audit, Campaign, Contact, Inbox, Outbox, Session, Tenant, WorkspaceSettings
 from ats.repositories import TenantRepository
 from ats.security import admin, authenticate, digest, principal
 from ats.services import create_campaign, finish_attempt, ingest, validate_route
@@ -78,7 +78,7 @@ def _megafon_history_event(value):
 async def request_guard(request: Request, call_next):
     request.state.request_id = str(uuid4())
     unsafe = request.method not in {"GET", "HEAD", "OPTIONS"}
-    if unsafe and not request.url.path.startswith("/webhooks/") and not request.url.path.startswith("/api/v1/amo/widget/"):
+    if unsafe and not request.url.path.startswith("/webhooks/") and not request.url.path.startswith("/api/v1/amo/widget/") and request.url.path != "/api/megafon/events":
         if request.headers.get("origin") != settings().public_origin:
             return JSONResponse({"error": "origin_rejected"}, status_code=403)
     # Enforce the limit for both chunked and Content-Length requests before parsing.
@@ -492,6 +492,52 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     ingest(db, tenant_id, "megafon_vats", event_key, external_id, event, callback_payload)
     db.commit()  # Acknowledge only after durable storage.
     return {"result": "success"}
+
+
+@app.post("/api/megafon/events")
+async def megafon_events(request: Request, db=Depends(session)):
+    """JSON CRM webhook for MegaFon VATS -> ATS -> amoCRM history delivery."""
+    from ats.connections import settings_for_tenant
+
+    tenant_id = settings().telephony_tenant_id
+    if not tenant_id:
+        raise Problem(503, "telephony_tenant_not_bound")
+    config = settings_for_tenant(db, tenant_id)
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise Problem(400, "invalid_json") from None
+    if not isinstance(payload, dict):
+        raise Problem(400, "invalid_payload")
+    supplied = (
+        request.headers.get("X-CRM-Token")
+        or request.headers.get("X-Megafon-Token")
+        or request.headers.get("Authorization", "").removeprefix("Bearer ")
+        or str(payload.get("crm_token", ""))
+    )
+    expected = config.megafon_crm_token.get_secret_value()
+    if not expected or not secrets.compare_digest(supplied, expected):
+        raise Problem(403, "webhook_rejected")
+    cmd = str(payload.get("cmd") or payload.get("command") or "history").lower()
+    raw_status = str(payload.get("status") or payload.get("result") or "").lower()
+    event = _megafon_history_event(raw_status) if cmd == "history" else None
+    if event is None and cmd == "event":
+        event = {"ringing": "accepted", "accepted": "accepted", "answered": "answered"}.get(raw_status)
+    if event is None:
+        raise Problem(422, "unsupported_history_status")
+    external_id = str(payload.get("callid") or payload.get("call_id") or payload.get("id") or "")
+    if not external_id or len(external_id) > 120:
+        raise Problem(422, "invalid_callid")
+    provider = db.scalar(select(WorkspaceSettings).where(WorkspaceSettings.tenant_id == tenant_id))
+    mapping = (provider.values if provider else {}).get("operator_user_map", {})
+    operator_key = str(payload.get("user") or payload.get("extension") or payload.get("operator") or payload.get("internal_number") or "")
+    callback = {str(k): str(v)[:500] for k, v in payload.items() if k != "crm_token"}
+    if operator_key and operator_key in mapping:
+        callback["amo_responsible_user_id"] = str(mapping[operator_key])
+    event_key = hashlib.sha256(f"{external_id}:{cmd}:{event}".encode()).hexdigest()
+    ingest(db, tenant_id, "megafon_vats", event_key, external_id, event, callback)
+    db.commit()
+    return {"result": "success", "accepted": True, "event_key": event_key}
 
 
 app.include_router(workspace_router)

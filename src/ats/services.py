@@ -336,7 +336,10 @@ def finish_attempt(db, attempt, event, reason=""):
     ):
         repo.add(QueueEntry, attempt_id=attempt.id)
     repo.add(
-        Outbox, kind="crm", dedupe_key=f"crm:{attempt.id}", payload={"attempt_id": str(attempt.id)}
+        Outbox,
+        kind="crm",
+        dedupe_key=f"crm:{attempt.id}",
+        payload={"attempt_id": str(attempt.id), "amo_responsible_user_id": attempt.agent_result.get("amo_responsible_user_id")},
     )
     repo.add(Audit, actor_id=None, action=f"call.{attempt.status}", entity_id=attempt.id)
 
@@ -414,6 +417,11 @@ def drain_inbox(db):
         return False
     if "agent_result" in row.payload:
         attempt.agent_result = row.payload["agent_result"]
+    if row.payload.get("amo_responsible_user_id"):
+        attempt.agent_result = {
+            **(attempt.agent_result or {}),
+            "amo_responsible_user_id": int(row.payload["amo_responsible_user_id"]),
+        }
     finish_attempt(db, attempt, row.event, row.payload.get("reason", ""))
     row.status = "processed"
     return True
