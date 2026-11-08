@@ -1,0 +1,7 @@
+{
+  "widget_name": "ATOS-ATS Solo",
+  "call_button": "Позвонить через ATOS-ATS",
+  "call_starting": "Запуск звонка через ATS…",
+  "call_queued": "Звонок поставлен в очередь",
+  "call_error": "Не удалось запустить звонок"
+}
