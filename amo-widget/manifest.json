@@ -3,17 +3,23 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "interface_version": 2,
     "init_once": false,
-    "locale": ["ru"],
+    "locale": [
+      "ru"
+    ],
     "installation": true,
     "support": {
       "link": "https://axiomats.ru",
       "email": "support@axiomats.ru"
     }
   },
-  "locations": ["leads", "leftmenu", "settings"],
+  "locations": [
+    "leads",
+    "leftmenu",
+    "settings"
+  ],
   "settings": {
     "atsUrl": {
       "name": "settings.atsUrl",

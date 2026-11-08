@@ -1,3 +1,97 @@
-.atos-ats-call { cursor: pointer; }
-.atos-ats-call-widget { margin: 8px 0; padding: 8px 14px; border: 0; border-radius: 6px; background: #2f76ff; color: #fff; cursor: pointer; font: inherit; }
-.atos-ats-call-widget[disabled] { opacity: .6; cursor: wait; }
+.atos-ats-widget-root {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483000;
+  font-family: Arial, sans-serif;
+}
+
+.atos-ats-launcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #2f76ff;
+  border-radius: 20px;
+  background: #2f76ff;
+  color: #fff;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .22);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.atos-ats-launcher:hover { background: #1f63df; }
+.atos-ats-launcher-icon { font-size: 16px; line-height: 1; }
+
+.atos-ats-panel {
+  position: absolute;
+  right: 0;
+  bottom: 48px;
+  width: 286px;
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .24);
+}
+
+.atos-ats-panel-title {
+  margin-bottom: 10px;
+  color: #243142;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.atos-ats-phone {
+  width: 100%;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid #b8c4d3;
+  border-radius: 4px;
+  color: #243142;
+  font: inherit;
+}
+
+.atos-ats-panel-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.atos-ats-panel-actions button,
+.atos-ats-card-call {
+  border: 0;
+  border-radius: 4px;
+  background: #2f76ff;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.atos-ats-panel-actions button { min-height: 32px; padding: 0 9px; }
+.atos-ats-refresh { background: #edf2f7 !important; color: #34465b !important; }
+.atos-ats-submit { flex: 1; }
+.atos-ats-panel-actions button:disabled,
+.atos-ats-card-call:disabled { opacity: .6; cursor: wait; }
+
+.atos-ats-status {
+  min-height: 18px;
+  margin-top: 8px;
+  color: #2f6f44;
+  font-size: 12px;
+}
+
+.atos-ats-status-error { color: #b3261e; }
+
+.atos-ats-card-call {
+  display: inline-block;
+  margin: 6px 0 0 8px;
+  padding: 7px 10px;
+  vertical-align: middle;
+}
