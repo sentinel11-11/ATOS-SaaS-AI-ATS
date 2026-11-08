@@ -3,7 +3,7 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "1.2.0",
+    "version": "2.0.0",
     "interface_version": 2,
     "init_once": false,
     "locale": [
@@ -16,9 +16,7 @@
     }
   },
   "locations": [
-    "lcard-1",
-    "ccard-1",
-    "comcard-1",
+    "everywhere",
     "settings"
   ],
   "settings": {
