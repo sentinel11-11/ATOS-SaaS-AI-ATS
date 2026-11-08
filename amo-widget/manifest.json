@@ -1,5 +1,5 @@
 {
-  "name": "ATOS-ATS Solo",
+  "name": "ATOS-ATS-Solo",
   "short_description": "Одиночные звонки через ATS и MegaFon VATS",
   "description": "Запуск одиночного звонка из карточки amoCRM через ATOS-ATS.",
   "version": "1.0.0",
