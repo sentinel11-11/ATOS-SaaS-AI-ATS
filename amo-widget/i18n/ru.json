@@ -1,9 +1,17 @@
 {
-  "ATOS-ATS-Solo": "ATOS-ATS-Solo",
-  "Одиночные звонки через ATS и MegaFon VATS": "Одиночные звонки через ATS и MegaFon VATS",
-  "Запуск одиночного звонка из карточки amoCRM через ATOS-ATS.": "Запуск одиночного звонка из карточки amoCRM через ATOS-ATS.",
-  "call_button": "Позвонить через ATOS-ATS",
-  "call_starting": "Запуск звонка через ATS…",
-  "call_queued": "Звонок поставлен в очередь",
-  "call_error": "Не удалось запустить звонок"
+  "widget": {
+    "name": "ATOS-ATS-Solo",
+    "description": "Запуск одиночного звонка из карточки amoCRM через ATOS-ATS.",
+    "short_description": "Одиночные звонки через ATS и MegaFon VATS",
+    "support": {
+      "link": "https://axiomats.ru",
+      "email": "support@axiomats.ru"
+    }
+  },
+  "buttons": {"call": "Позвонить через ATOS-ATS"},
+  "messages": {
+    "loading": "Запуск звонка…",
+    "queued": "Звонок поставлен в очередь",
+    "error": "Не удалось запустить звонок"
+  }
 }
