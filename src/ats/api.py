@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ats import schemas
 from ats.api_recording_links import router as recording_links_router
-from ats.api_amo import public_router as amo_public_router
+from ats.api_amo import public_router as amo_public_router, router as amo_router
 from ats.compat_auth import router as compat_auth_router
 from ats.compat_campaigns import router as compat_campaigns_router
 from ats.compat_contacts import router as compat_contacts_router
@@ -496,6 +496,7 @@ app.include_router(compat_settings_router)
 app.include_router(events_router)
 app.include_router(recording_links_router)
 app.include_router(amo_public_router)
+app.include_router(amo_router)
 
 web = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if web.is_dir():
