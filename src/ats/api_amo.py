@@ -24,6 +24,7 @@ from ats.models import (
     LoginBucket,
     Outbox,
     Operator,
+    ConnectionProfile,
     WorkspaceSettings,
     now,
 )
@@ -66,6 +67,9 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
         raise Problem(409, "contact_phone_mismatch")
     provider = db.scalar(repo.query(WorkspaceSettings))
     mapping = (provider.values if provider else {}).get("operator_user_map", {})
+    profile = db.scalar(select(ConnectionProfile).where(ConnectionProfile.tenant_id == tenant_id, ConnectionProfile.provider == "amocrm"))
+    if profile:
+        mapping = {**mapping, **(profile.public_values or {}).get("operator_user_map", {})}
     mapped_extension = next((ext for ext, amo_id in mapping.items() if str(amo_id) == str(data.amo_user_id)), None) if data.amo_user_id else None
     operator_query = repo.query(Operator).where(Operator.status == "free")
     if mapped_extension:
