@@ -1,4 +1,6 @@
 {
+  "ATOS-ATS Solo": "ATOS-ATS Solo",
+  "Одиночные звонки через ATS и MegaFon VATS": "Одиночные звонки через ATS и MegaFon VATS",
   "widget": {
     "name": "ATOS-ATS Solo",
     "short_description": "Одиночные звонки через ATS и MegaFon VATS",
