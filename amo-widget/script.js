@@ -63,7 +63,9 @@ define(['jquery'], function ($) {
         data: JSON.stringify({
           crm_contact_id: crmContactId ? Number(crmContactId) : null,
           phone: String(phone || ''),
-          amo_user_id: amoUserId ? Number(amoUserId) : null
+          amo_user_id: amoUserId ? Number(amoUserId) : null,
+          request_id: 'amo-' + Date.now() + '-' + Math.random().toString(36).slice(2),
+          route: null
         })
       });
     };

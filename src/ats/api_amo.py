@@ -66,12 +66,17 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
     if data.phone and _phone(data.phone) != contact.phone:
         raise Problem(409, "contact_phone_mismatch")
     provider = db.scalar(repo.query(WorkspaceSettings))
+    values = provider.values if provider else {}
+    configured_route = values.get("provider") or values.get("route") or "megafon_vats"
+    route = data.route or {"multicom": "multicom_ami", "multicom_ami": "multicom_ami", "megafon_vats": "megafon_vats"}.get(configured_route, "megafon_vats")
     mapping = (provider.values if provider else {}).get("operator_user_map", {})
     profile = db.scalar(select(ConnectionProfile).where(ConnectionProfile.tenant_id == tenant_id, ConnectionProfile.provider == "amocrm"))
     if profile:
         mapping = {**mapping, **(profile.public_values or {}).get("operator_user_map", {})}
     mapped_extension = next((ext for ext, amo_id in mapping.items() if str(amo_id) == str(data.amo_user_id)), None) if data.amo_user_id else None
     operator_query = repo.query(Operator).where(Operator.status == "free")
+    if route == "multicom_ami":
+        operator_query = operator_query.where(Operator.extension != "")
     if mapped_extension:
         operator_query = operator_query.where(Operator.extension == str(mapped_extension))
     free_operators = db.scalars(operator_query.with_for_update()).all()
@@ -82,12 +87,13 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
     operator = free_operators[0]
     if operator is None:
         raise Problem(409, "operator_unavailable")
-    command = CampaignCreate(name=f"CRM call {contact.name or contact.phone}", route="megafon_vats", contact_ids=[contact.id], max_channels=1, window_start=0, window_end=24, mode="operator", retry_max=0)
-    campaign, _ = create_campaign(db, Principal(tenant_id, operator.user_id, "operator", "amo-widget"), command, f"amo-widget:{uuid4()}")
+    command = CampaignCreate(name=f"CRM call {contact.name or contact.phone}", route=route, contact_ids=[contact.id], max_channels=1, window_start=0, window_end=24, mode="operator", retry_max=0)
+    key = f"amo-widget:{data.request_id or uuid4()}"
+    campaign, _ = create_campaign(db, Principal(tenant_id, operator.user_id, "operator", "amo-widget"), command, key)
     campaign.schedule = {"operator_id": str(operator.id), "source": "amo_widget"}
     campaign.status = "running"
     db.commit()
-    return {"ok": True, "campaign_id": str(campaign.id), "contact_id": str(contact.id), "operator_id": str(operator.id), "status": "queued"}
+    return {"ok": True, "campaign_id": str(campaign.id), "contact_id": str(contact.id), "operator_id": str(operator.id), "route": route, "status": "queued"}
 
 
 @router.post("/click-to-call")

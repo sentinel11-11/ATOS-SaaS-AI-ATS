@@ -204,6 +204,8 @@ class AmoWidgetClickToCall(Input):
     amo_user_id: int | None = Field(default=None, gt=0)
     crm_contact_id: int | None = Field(default=None, gt=0)
     phone: str | None = Field(default=None, max_length=32)
+    request_id: str | None = Field(default=None, min_length=8, max_length=100)
+    route: Literal["megafon_vats", "multicom_ami"] | None = None
 
 
 class AmoSyncConfirm(Input):
