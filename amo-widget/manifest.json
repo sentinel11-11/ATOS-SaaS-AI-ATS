@@ -13,5 +13,12 @@
       "email": "support@axiomats.ru"
     }
   },
-  "locations": ["contacts", "companies", "leads", "settings"]
+  "locations": ["leads", "leftmenu", "settings"],
+  "settings": {
+    "atsUrl": {
+      "name": "settings.atsUrl",
+      "type": "text",
+      "required": false
+    }
+  }
 }
