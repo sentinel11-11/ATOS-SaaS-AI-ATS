@@ -1,9 +1,12 @@
 {
-  "name": "ATOS-ATS",
-  "version": "1.0.0",
-  "description": "Одиночный звонок через ATOS-ATS и MegaFon VATS",
-  "locale": ["ru"],
-  "interface_version": 2,
-  "locations": ["lcard-1", "c карточка"],
-  "settings": {"ats_url": "https://axiomats.ru"}
+  "widget": {
+    "name": "ATOS-ATS Solo",
+    "short_description": "Одиночные звонки через ATS и MegaFon VATS",
+    "description": "Запуск одиночного звонка из карточки amoCRM через ATOS-ATS.",
+    "version": "1.0.0",
+    "interface_version": 2,
+    "locale": ["ru"],
+    "init_once": false,
+    "locations": ["lcard-1", "ccard-1", "settings"]
+  }
 }
