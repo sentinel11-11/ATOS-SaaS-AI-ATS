@@ -18,6 +18,12 @@ define(['jquery'], function ($) {
         if (phoneNode.length && !$('.atos-ats-call-widget').length) {
           phoneNode.after('<button type="button" class="atos-ats-call-widget">Позвонить через ATOS-ATS</button>');
           $('.atos-ats-call-widget').off('click.atosAts').on('click.atosAts', function (event) { event.stopPropagation(); self.startCardCall(this); });
+        } else if (!phoneNode.length) {
+          [500, 1500, 3000].forEach(function (delay) {
+            setTimeout(function () {
+              if (!$('.atos-ats-call-widget').length) self.callbacks.render();
+            }, delay);
+          });
         }
         return true;
       },
