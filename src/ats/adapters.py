@@ -304,6 +304,7 @@ class AmoCRM:
         duration=0,
         responsible=None,
         direction="outbound",
+        link=None,
     ):
         data = {
             "phone": phone.lstrip("+"),
@@ -317,6 +318,8 @@ class AmoCRM:
         }
         if responsible:
             data["responsible_user_id"] = responsible
+        if link:
+            data["link"] = str(link)[:500]
         write_request(
             self.client,
             self.url + "/api/v4/calls",

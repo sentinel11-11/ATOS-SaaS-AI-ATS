@@ -496,6 +496,7 @@ class Worker:
                     duration,
                     responsible,
                     direction,
+                    payload.get("recording_url"),
                 )
                 if options.get("amo_auto_create_tasks"):
                     crm.create_task(

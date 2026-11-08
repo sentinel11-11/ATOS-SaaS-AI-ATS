@@ -339,7 +339,11 @@ def finish_attempt(db, attempt, event, reason=""):
         Outbox,
         kind="crm",
         dedupe_key=f"crm:{attempt.id}",
-        payload={"attempt_id": str(attempt.id), "amo_responsible_user_id": attempt.agent_result.get("amo_responsible_user_id")},
+        payload={
+            "attempt_id": str(attempt.id),
+            "amo_responsible_user_id": attempt.agent_result.get("amo_responsible_user_id"),
+            "recording_url": attempt.agent_result.get("recording_url"),
+        },
     )
     repo.add(Audit, actor_id=None, action=f"call.{attempt.status}", entity_id=attempt.id)
 
@@ -422,6 +426,8 @@ def drain_inbox(db):
             **(attempt.agent_result or {}),
             "amo_responsible_user_id": int(row.payload["amo_responsible_user_id"]),
         }
+    if row.payload.get("recording_url"):
+        attempt.agent_result = {**(attempt.agent_result or {}), "recording_url": str(row.payload["recording_url"])[:500]}
     finish_attempt(db, attempt, row.event, row.payload.get("reason", ""))
     row.status = "processed"
     return True
