@@ -8,12 +8,15 @@ define(['jquery'], function ($) {
     this.callbacks = {
       init: function () { return true; },
       render: function () {
+        var area = self.system && self.system().area;
+        if (area && !/card|lcard|ccard|comcard/i.test(String(area))) return true;
         var phoneNode = $('[data-field-code="PHONE"]').first();
         if (!phoneNode.length) phoneNode = $('a[href^="tel:"]').first();
+        if (!phoneNode.length) {
+          phoneNode = $('a').filter(function () { return /(?:\+7|8|7)\s*[\(]?\d{3}[\)]?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/.test($(this).text()); }).first();
+        }
         if (phoneNode.length && !$('.atos-ats-call-widget').length) {
           phoneNode.after('<button type="button" class="atos-ats-call-widget">Позвонить через ATOS-ATS</button>');
-        } else if (!phoneNode.length && !$('.atos-ats-call-widget').length) {
-          $('body').append('<button type="button" class="atos-ats-call-widget" style="position:fixed;right:24px;bottom:80px;z-index:99999">Позвонить через ATOS-ATS</button>');
         }
         return true;
       },
@@ -41,7 +44,7 @@ define(['jquery'], function ($) {
       },
       settings: function () { return true; },
       onSave: function () { return true; },
-      destroy: function () { return true; }
+      destroy: function () { $(document).off('click.atosAts', '.atos-ats-call-widget'); $('.atos-ats-call-widget').remove(); return true; }
     };
 
     this.callThroughAts = function (crmContactId, phone, amoUserId) {
