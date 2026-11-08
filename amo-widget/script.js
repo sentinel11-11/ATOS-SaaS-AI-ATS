@@ -14,15 +14,16 @@ define(['jquery'], function ($) {
       destroy: function () { return true; }
     };
 
-    this.callThroughAts = function (crmContactId, phone) {
+    this.callThroughAts = function (crmContactId, phone, amoUserId) {
       return $.ajax({
-        url: atsUrl + '/api/v1/workspace/amo/click-to-call',
+        url: atsUrl + '/api/v1/amo/widget/click-to-call',
         method: 'POST',
         contentType: 'application/json',
         xhrFields: { withCredentials: true },
         data: JSON.stringify({
           crm_contact_id: Number(crmContactId),
-          phone: String(phone || '')
+          phone: String(phone || ''),
+          amo_user_id: amoUserId ? Number(amoUserId) : null
         })
       });
     };

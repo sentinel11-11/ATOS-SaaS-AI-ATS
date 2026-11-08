@@ -200,6 +200,12 @@ class AmoClickToCall(Input):
     phone: str | None = Field(default=None, max_length=32)
 
 
+class AmoWidgetClickToCall(Input):
+    amo_user_id: int | None = Field(default=None, gt=0)
+    crm_contact_id: int = Field(gt=0)
+    phone: str | None = Field(default=None, max_length=32)
+
+
 class AmoSyncConfirm(Input):
     item_ids: list[UUID] = Field(min_length=1, max_length=250)
     consent_source: str = Field(min_length=1, max_length=256)

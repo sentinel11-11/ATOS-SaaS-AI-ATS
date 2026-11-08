@@ -23,17 +23,65 @@ from ats.models import (
     Inbox,
     LoginBucket,
     Outbox,
+    Operator,
+    WorkspaceSettings,
     now,
 )
 from ats.schemas import CampaignCreate
 from ats.services import create_campaign
 from ats.repositories import TenantRepository
 from ats.schemas import phone_from_import
-from ats.security import admin, principal
-from ats.workspace_schemas import AmoClickToCall, AmoSyncConfirm, AmoSyncPreview
+from ats.security import Principal, admin, principal
+from ats.workspace_schemas import AmoClickToCall, AmoSyncConfirm, AmoSyncPreview, AmoWidgetClickToCall
 
 router = APIRouter(prefix="/api/v1/workspace/amo", tags=["amocrm"])
 public_router = APIRouter(tags=["amocrm"])
+
+
+@public_router.post("/api/v1/amo/widget/click-to-call")
+def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depends(session)):
+    """CORS entry point used by the amoCRM widget for a single operator call."""
+    origin = request.headers.get("origin", "")
+    if not origin.endswith(".amocrm.ru") and origin != "https://amocrm.ru":
+        raise Problem(403, "amo_widget_origin_rejected")
+    base = settings()
+    tenant_id = base.amo_tenant_id
+    if not tenant_id:
+        raise Problem(503, "crm_tenant_not_bound")
+    config = settings_for_tenant(db, tenant_id)
+    if not config.crm_enabled or config.amo_tenant_id != tenant_id:
+        raise Problem(409, "crm_tenant_not_bound")
+    if data.amo_user_id:
+        try:
+            AmoCRM(config).read(f"/api/v4/users/{data.amo_user_id}")
+        except (Rejected, Retryable) as exc:
+            raise Problem(401, "amo_user_not_verified") from exc
+    repo = TenantRepository(db, tenant_id)
+    contact = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == data.crm_contact_id))
+    if contact is None:
+        raise Problem(404, "crm_contact_not_synced")
+    if data.phone and _phone(data.phone) != contact.phone:
+        raise Problem(409, "contact_phone_mismatch")
+    provider = db.scalar(repo.query(WorkspaceSettings))
+    mapping = (provider.values if provider else {}).get("operator_user_map", {})
+    mapped_extension = next((ext for ext, amo_id in mapping.items() if str(amo_id) == str(data.amo_user_id)), None) if data.amo_user_id else None
+    operator_query = repo.query(Operator).where(Operator.status == "free")
+    if mapped_extension:
+        operator_query = operator_query.where(Operator.extension == str(mapped_extension))
+    free_operators = db.scalars(operator_query.with_for_update()).all()
+    if len(free_operators) != 1:
+        if data.amo_user_id and not mapped_extension:
+            raise Problem(409, "amo_user_operator_mapping_missing")
+        raise Problem(409, "operator_selection_required")
+    operator = free_operators[0]
+    if operator is None:
+        raise Problem(409, "operator_unavailable")
+    command = CampaignCreate(name=f"CRM call {contact.name or contact.phone}", route="megafon_vats", contact_ids=[contact.id], max_channels=1, window_start=0, window_end=24, mode="operator", retry_max=0)
+    campaign, _ = create_campaign(db, Principal(tenant_id, operator.user_id, "operator", "amo-widget"), command, f"amo-widget:{uuid4()}")
+    campaign.schedule = {"operator_id": str(operator.id), "source": "amo_widget"}
+    campaign.status = "running"
+    db.commit()
+    return {"ok": True, "campaign_id": str(campaign.id), "contact_id": str(contact.id), "operator_id": str(operator.id), "status": "queued"}
 
 
 @router.post("/click-to-call")

@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
@@ -33,6 +34,13 @@ from ats.workspace_api import router as workspace_router
 
 log = logging.getLogger("ats.api")
 app = FastAPI(title="ATS Beta", version="0.3.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://omkr.amocrm.ru"],
+    allow_credentials=False,
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 # MegaFon has used several spellings for the same terminal history outcome
 # across VATS accounts.  Keep the strict rejection of genuinely unknown
@@ -70,7 +78,7 @@ def _megafon_history_event(value):
 async def request_guard(request: Request, call_next):
     request.state.request_id = str(uuid4())
     unsafe = request.method not in {"GET", "HEAD", "OPTIONS"}
-    if unsafe and not request.url.path.startswith("/webhooks/"):
+    if unsafe and not request.url.path.startswith("/webhooks/") and not request.url.path.startswith("/api/v1/amo/widget/"):
         if request.headers.get("origin") != settings().public_origin:
             return JSONResponse({"error": "origin_rejected"}, status_code=403)
     # Enforce the limit for both chunked and Content-Length requests before parsing.

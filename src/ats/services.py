@@ -222,6 +222,9 @@ def schedule_one(db, tenant_id):
             operator_query = repo.query(Operator).join(
                 User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id)
             ).where(Operator.status == "free", User.active, User.role == "operator")
+            requested_operator_id = (campaign.schedule or {}).get("operator_id")
+            if requested_operator_id:
+                operator_query = operator_query.where(Operator.id == requested_operator_id)
             if campaign.route == "multicom_ami":
                 operator_query = operator_query.where(Operator.extension != "")
             operator = db.scalar(operator_query.with_for_update(skip_locked=True).limit(1))
