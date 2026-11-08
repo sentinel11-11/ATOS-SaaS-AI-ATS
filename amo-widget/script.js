@@ -23,6 +23,11 @@ define(['jquery'], function ($) {
             var entityId = self.system && self.system().entity_id;
             var phoneNode = $('[data-field-code="PHONE"] a, [data-field-code="PHONE"], a[href^="tel:"]');
             var phone = phoneNode.first().text().replace(/[^+0-9]/g, '') || String(phoneNode.first().attr('href') || '').replace(/^tel:/, '').replace(/[^+0-9]/g, '');
+            if (!phone || phone.length < 11) {
+              var bodyText = $('body').text();
+              var match = bodyText.match(/(?:\+7|8|7)\s*[\(]?\d{3}[\)]?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/);
+              if (match) phone = match[0].replace(/[^+0-9]/g, '');
+            }
             if (!entityId || !phone) {
               button.text('Не найден телефон').prop('disabled', true);
               return;
