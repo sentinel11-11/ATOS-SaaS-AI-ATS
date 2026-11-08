@@ -8,7 +8,7 @@ define(['jquery'], function ($) {
     var mountTimer = null;
     var observer = null;
     var boundDocument = null;
-    var version = '2.0.1';
+    var version = '2.0.2';
 
     var text = {
       call: 'Позвонить через ATOS-ATS',
@@ -39,13 +39,22 @@ define(['jquery'], function ($) {
       return configured.replace(/\/+$/, '');
     }
 
-    function getSystemValue(name) {
+    function getSystem() {
       try {
-        var system = typeof self.system === 'function' ? self.system() : null;
-        return system && system[name] != null ? system[name] : null;
+        return (typeof self.system === 'function' && self.system()) || {};
       } catch (error) {
-        return null;
+        return {};
       }
+    }
+
+    function getSystemValue(name) {
+      var system = getSystem();
+      return system && system[name] != null ? system[name] : null;
+    }
+
+    function positiveId(value) {
+      var id = Number(value);
+      return isFinite(id) && id > 0 ? id : null;
     }
 
     function getAmoUserId() {
@@ -53,16 +62,28 @@ define(['jquery'], function ($) {
       return isFinite(value) && value > 0 ? value : null;
     }
 
+    // Adapter over the amoCRM widget context API (self.system()).
     function getCardContext() {
-      var area = String(getSystemValue('area') || '');
-      var path = String(window.location && window.location.pathname || '');
-      var isCard = /lcard|ccard|comcard|card/i.test(area) ||
-        /\/(leads|contacts|companies)\/detail(?:\/|$)/i.test(path);
-      var entityId = Number(getSystemValue('entity_id'));
-      var contactId = /ccard/i.test(area) && isFinite(entityId) && entityId > 0 ? entityId : null;
+      var system = getSystem();
+      var area = String(system.area || '').toLowerCase();
+      var route = String(
+        (window.location && window.location.pathname || '') + ' ' +
+        (window.location && window.location.hash || '')
+      ).toLowerCase();
+      var entityId = positiveId(system.entity_id) || positiveId(system.card_id) ||
+        positiveId(system.contact_id) || positiveId(system.lead_id) ||
+        positiveId(system.company_id);
+      var areaIsCard = /lcard|ccard|comcard|card|detail/.test(area);
+      var routeIsCard = /(?:^|[\/#])(leads|contacts|companies)\/(?:detail|card)(?:[\/#]|$)/.test(route) ||
+        /(?:^|[\/#])(?:lcard|ccard|comcard)(?:[-_/]|$)/.test(route);
+      var namedCardArea = /^(leads|contacts|companies)$/.test(area) && !!entityId;
+      var isCard = routeIsCard || (areaIsCard && !!entityId) || namedCardArea;
+      var contactId = /ccard|contact/.test(area) && entityId ? entityId : null;
       return {
         open: isCard,
-        contactId: contactId
+        contactId: contactId,
+        entityId: entityId,
+        area: area
       };
     }
 
