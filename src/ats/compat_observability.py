@@ -55,6 +55,7 @@ from ats.models import (
 )
 from ats.repositories import TenantRepository
 from ats.security import admin, principal
+from ats.services import finish_attempt
 from ats.workspace_service import audit, csv_document
 
 router = APIRouter(prefix="/api/v2", tags=["legacy interface: journal and reports"])
@@ -267,10 +268,7 @@ def reconcile_stale_calls(p=Depends(admin), db=Depends(session)):
     cutoff = now() - timedelta(minutes=15)
     rows = db.scalars(select(Attempt).where(Attempt.tenant_id == p.tenant_id, Attempt.status.in_(ACTIVE), Attempt.updated_at < cutoff).with_for_update()).all()
     for row in rows:
-        row.status, row.reason, row.result, row.ended_at = "failed", "stale_call_reconciled", "failed", now()
-        item = db.get(CampaignItem, row.item_id)
-        if item and item.status == "active":
-            item.status = "exhausted"
+        finish_attempt(db, row, "failed", "stale_call_reconciled")
     audit(db, p, "call.stale_reconciled")
     db.commit()
     return {"ok": True, "reconciled": len(rows)}

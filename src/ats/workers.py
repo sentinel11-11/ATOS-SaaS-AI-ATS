@@ -7,7 +7,7 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ats.adapters import AMI, AmoCRM, DeliveryUnknown, Megafon, Rejected, Retryable
 from ats.config import settings
@@ -653,17 +653,65 @@ class Worker:
 
     def watchdog(self):
         with self.factory.begin() as db:
-            rows = db.scalars(
-                select(Attempt)
-                .where(
-                    Attempt.status.in_(["accepted", "answered"]),
-                    Attempt.updated_at < now() - timedelta(minutes=10),
+            tenants = list(db.scalars(select(Tenant.id)).all())
+            for tenant_id in tenants:
+                options = db.scalar(
+                    select(WorkspaceSettings).where(WorkspaceSettings.tenant_id == tenant_id)
                 )
-                .with_for_update(skip_locked=True)
-                .limit(100)
-            ).all()
-            for row in rows:
-                finish_attempt(db, row, "failed", "provider_terminal_event_missing")
+                basic = (options.values if options else {}).get("_legacy_basic", {})
+                try:
+                    watchdog_minutes = max(1, min(1440, int(basic.get("watchdog_timeout_min", 20))))
+                except (TypeError, ValueError):
+                    watchdog_minutes = 20
+                try:
+                    conversation_minutes = max(0, min(1440, int(basic.get("vats_conversation_timeout_min", 30))))
+                except (TypeError, ValueError):
+                    conversation_minutes = 30
+                current = now()
+                stale_cutoff = current - timedelta(minutes=watchdog_minutes)
+                unknown_cutoff = (
+                    current - timedelta(minutes=conversation_minutes)
+                    if conversation_minutes
+                    else None
+                )
+                stale_filter = (
+                    Attempt.tenant_id == tenant_id,
+                    or_(
+                        (
+                            Attempt.status.in_(
+                                ["prepared", "dispatching", "accepted", "answered"]
+                            )
+                            & (Attempt.updated_at < stale_cutoff)
+                        ),
+                        (
+                            (Attempt.status == "unknown")
+                            & (Attempt.updated_at < unknown_cutoff)
+                            if unknown_cutoff is not None
+                            else False
+                        ),
+                    ),
+                )
+                rows = db.scalars(
+                    select(Attempt)
+                    .where(*stale_filter)
+                    .with_for_update(skip_locked=True)
+                    .limit(100)
+                ).all()
+                for row in rows:
+                    if row.status == "dispatching":
+                        # The provider may have accepted the request, so do not
+                        # redial. Keep it fenced as unknown until the longer
+                        # conversation safety timeout releases the slot.
+                        row.status = "unknown"
+                        row.reason = "watchdog_dispatch_unknown"
+                        row.updated_at = current
+                        from ats.workspace_service import event
+
+                        event(db, row, "unknown", row.reason)
+                    elif row.status == "unknown":
+                        finish_attempt(db, row, "failed", "stale_call_reconciled")
+                    else:
+                        finish_attempt(db, row, "failed", "provider_terminal_event_missing")
 
     def diagnostic_job(self):
         """Read-only provider probes run outside API requests and DB transactions."""

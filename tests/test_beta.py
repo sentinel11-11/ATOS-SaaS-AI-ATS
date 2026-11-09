@@ -416,6 +416,61 @@ def test_crash_after_dispatch_does_not_redial(factory, prepared):
         assert db.scalar(select(Attempt)).status == "unknown"
 
 
+def test_watchdog_releases_stale_dispatch_and_unknown(factory, tenants):
+    tenant_id = tenants[0]
+    with factory.begin() as db:
+        contact = Contact(
+            tenant_id=tenant_id,
+            name="Watchdog",
+            phone="+79990000198",
+            consent=True,
+            consent_source="watchdog test",
+        )
+        campaign = Campaign(
+            tenant_id=tenant_id,
+            name="Watchdog campaign",
+            route="megafon_vats",
+            status="running",
+            idempotency_key="watchdog-campaign",
+            request_hash="watchdog-hash",
+            window_start=0,
+            window_end=24,
+        )
+        db.add_all([contact, campaign])
+        db.flush()
+        item = CampaignItem(
+            tenant_id=tenant_id,
+            campaign_id=campaign.id,
+            contact_id=contact.id,
+            status="active",
+        )
+        db.add(item)
+        db.flush()
+        attempt = Attempt(
+            tenant_id=tenant_id,
+            item_id=item.id,
+            route="megafon_vats",
+            status="dispatching",
+            updated_at=now() - timedelta(minutes=25),
+            phone=contact.phone,
+        )
+        db.add(attempt)
+    worker = Worker(factory)
+    worker.watchdog()
+    with factory() as db:
+        row = db.get(Attempt, attempt.id)
+        assert row.status == "unknown"
+        assert row.reason == "watchdog_dispatch_unknown"
+    with factory.begin() as db:
+        db.get(Attempt, attempt.id).updated_at = now() - timedelta(minutes=31)
+    worker.watchdog()
+    with factory() as db:
+        row = db.get(Attempt, attempt.id)
+        assert row.status == "failed"
+        assert row.reason == "stale_call_reconciled"
+        assert db.get(CampaignItem, item.id).status == "failed"
+
+
 def test_stale_worker_cannot_ack_new_lease(factory, tenants):
     with factory.begin() as db:
         row = Outbox(
