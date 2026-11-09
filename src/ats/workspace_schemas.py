@@ -208,6 +208,13 @@ class AmoWidgetClickToCall(Input):
     route: Literal["megafon_vats", "multicom_ami"] | None = None
 
 
+class AmoWidgetCard(Input):
+    """Card reference used by the public amoCRM widget bootstrap request."""
+
+    entity_type: Literal["leads", "contacts", "companies"]
+    entity_id: int = Field(gt=0)
+
+
 class AmoSyncConfirm(Input):
     item_ids: list[UUID] = Field(min_length=1, max_length=250)
     consent_source: str = Field(min_length=1, max_length=256)

@@ -58,6 +58,15 @@
   font: inherit;
 }
 
+.atos-ats-card-caption,
+.atos-ats-responsible {
+  margin: 5px 0 8px;
+  color: #6a7788;
+  font-size: 11px;
+}
+
+.atos-ats-responsible { margin: 8px 0 0; }
+
 .atos-ats-panel-actions {
   display: flex;
   gap: 8px;

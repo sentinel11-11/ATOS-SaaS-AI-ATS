@@ -19,32 +19,93 @@ from ats.models import (
     AmoSyncJob,
     Audit,
     BlacklistEntry,
+    ConnectionProfile,
     Contact,
     Inbox,
     LoginBucket,
-    Outbox,
     Operator,
-    ConnectionProfile,
+    Outbox,
     WorkspaceSettings,
     now,
 )
-from ats.schemas import CampaignCreate
-from ats.services import create_campaign
 from ats.repositories import TenantRepository
-from ats.schemas import phone_from_import
+from ats.schemas import CampaignCreate, phone_from_import
 from ats.security import Principal, admin, principal
-from ats.workspace_schemas import AmoClickToCall, AmoSyncConfirm, AmoSyncPreview, AmoWidgetClickToCall
+from ats.services import create_campaign
+from ats.workspace_schemas import (
+    AmoClickToCall,
+    AmoSyncConfirm,
+    AmoSyncPreview,
+    AmoWidgetCard,
+    AmoWidgetClickToCall,
+)
 
 router = APIRouter(prefix="/api/v1/workspace/amo", tags=["amocrm"])
 public_router = APIRouter(tags=["amocrm"])
 
 
-@public_router.post("/api/v1/amo/widget/click-to-call")
-def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depends(session)):
-    """CORS entry point used by the amoCRM widget for a single operator call."""
+def _check_widget_origin(request: Request):
     origin = request.headers.get("origin", "")
     if not origin.endswith(".amocrm.ru") and origin != "https://amocrm.ru":
         raise Problem(403, "amo_widget_origin_rejected")
+
+
+def _widget_phone(raw):
+    for field in raw.get("custom_fields_values") or []:
+        code = str(field.get("field_code") or field.get("code") or "").upper()
+        name = str(field.get("field_name") or field.get("name") or "").lower()
+        if code != "PHONE" and "телефон" not in name and "phone" not in name:
+            continue
+        for value in field.get("values") or []:
+            phone = _phone((value or {}).get("value") if isinstance(value, dict) else value)
+            if phone:
+                return phone
+    return _phone(raw.get("phone"))
+
+
+@public_router.post("/api/v1/amo/widget/card")
+def widget_card(data: AmoWidgetCard, request: Request, db=Depends(session)):
+    """Resolve an amoCRM card server-side for shells without ``crm_get``."""
+    _check_widget_origin(request)
+    tenant_id = settings().amo_tenant_id
+    if not tenant_id:
+        raise Problem(503, "crm_tenant_not_bound")
+    config = settings_for_tenant(db, tenant_id)
+    if not config.crm_enabled or config.amo_tenant_id != tenant_id:
+        raise Problem(409, "crm_tenant_not_bound")
+    crm = AmoCRM(config)
+    try:
+        raw = crm.read(f"/api/v4/{data.entity_type}/{data.entity_id}", {"with": "contacts"})
+        contact_id = data.entity_id if data.entity_type == "contacts" else None
+        phone = _widget_phone(raw)
+        if not contact_id:
+            linked = raw.get("_embedded", {}).get("contacts", [])
+            if linked:
+                contact_id = int(linked[0].get("id") or linked[0].get("contact_id"))
+        if contact_id and not phone and data.entity_type != "contacts":
+            contact = crm.read(f"/api/v4/contacts/{contact_id}")
+            phone = _widget_phone(contact)
+        if not contact_id:
+            raise Problem(404, "amo_card_contact_missing")
+        if not phone:
+            raise Problem(404, "amo_card_phone_missing")
+    except (Rejected, Retryable) as exc:
+        raise Problem(502, getattr(exc, "code", "crm_read_failed")) from exc
+    return {
+        "ok": True,
+        "entity_type": data.entity_type,
+        "entity_id": data.entity_id,
+        "crm_contact_id": contact_id,
+        "phone": phone,
+        "responsible_user_id": raw.get("responsible_user_id"),
+        "name": str(raw.get("name") or ""),
+    }
+
+
+@public_router.post("/api/v1/amo/widget/click-to-call")
+def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depends(session)):
+    """CORS entry point used by the amoCRM widget for a single operator call."""
+    _check_widget_origin(request)
     base = settings()
     tenant_id = base.amo_tenant_id
     if not tenant_id:

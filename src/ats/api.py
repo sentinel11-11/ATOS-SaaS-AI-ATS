@@ -48,7 +48,11 @@ log = logging.getLogger("ats.api")
 app = FastAPI(title="ATS Beta", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://omkr.amocrm.ru"],
+    # Private amoCRM integrations run on the account subdomain. Keep the
+    # allowlist restricted to HTTPS amoCRM subdomains instead of accepting
+    # arbitrary browser origins.
+    allow_origins=[],
+    allow_origin_regex=r"^https://[a-z0-9][a-z0-9-]{0,62}\.amocrm\.ru$",
     allow_credentials=False,
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],

@@ -3,7 +3,7 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "2.0.4",
+    "version": "3.0.0",
     "interface_version": 2,
     "init_once": false,
     "locale": [
@@ -24,6 +24,11 @@
   "settings": {
     "atsUrl": {
       "name": "settings.atsUrl",
+      "type": "text",
+      "required": true
+    },
+    "route": {
+      "name": "settings.route",
       "type": "text",
       "required": false
     }

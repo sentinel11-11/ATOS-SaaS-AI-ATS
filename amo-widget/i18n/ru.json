@@ -15,6 +15,7 @@
     "error": "Не удалось запустить звонок"
   },
   "settings": {
-    "atsUrl": "Адрес ATS"
+    "atsUrl": "Адрес ATS",
+    "route": "Маршрут (megafon_vats или multicom_ami)"
   }
 }

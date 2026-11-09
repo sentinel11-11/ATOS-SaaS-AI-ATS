@@ -1,400 +1,325 @@
+/* ATOS ATS click-to-call widget for amoCRM. */
 define(['jquery'], function ($) {
   'use strict';
 
   return function () {
     var self = this;
+    var version = '3.0.0';
     var rootId = 'atos-ats-widget-root';
-    var cardButtonClass = 'atos-ats-card-call';
     var mountTimer = null;
     var observer = null;
     var boundDocument = null;
-    var version = '2.0.4';
-
+    var cardCache = {};
+    var pendingCard = null;
     var text = {
-      call: 'Позвонить через ATOS-ATS',
-      launcher: 'АТС',
-      panelTitle: 'Звонок через ATOS-ATS',
-      phonePlaceholder: 'Номер из открытой карточки',
-      phoneFromServer: 'Номер будет взят из синхронизации amoCRM',
-      callButton: 'Позвонить',
-      refreshButton: 'Обновить из карточки',
-      loading: 'Запуск звонка…',
-      queued: 'Звонок поставлен в очередь',
+      launcher: 'АТС', title: 'Позвонить через ATOS-ATS', call: 'Позвонить',
+      refresh: 'Обновить данные карточки', loading: 'Загрузка карточки…',
+      calling: 'Запуск звонка…', queued: 'Звонок поставлен в очередь',
       noCard: 'Откройте карточку контакта, компании или сделки',
-      noPhone: 'В открытой карточке нет телефона',
-      networkError: 'Нет связи с ATOS-ATS',
-      genericError: 'Не удалось запустить звонок'
+      noPhone: 'В карточке не найден номер телефона',
+      amoReadError: 'Не удалось прочитать данные карточки amoCRM',
+      network: 'Нет связи с ATOS-ATS', generic: 'Не удалось запустить звонок'
     };
 
-    function getSettings() {
-      try {
-        return (typeof self.get_settings === 'function' && self.get_settings()) || {};
-      } catch (error) {
-        return {};
-      }
+    function settings() {
+      try { return (typeof self.get_settings === 'function' && self.get_settings()) || {}; }
+      catch (e) { return {}; }
     }
-
-    function getAtsUrl() {
-      var configured = String(getSettings().atsUrl || '').trim();
-      if (!configured) configured = 'https://axiomats.ru';
-      return configured.replace(/\/+$/, '');
+    function atsUrl() {
+      return String(settings().atsUrl || 'https://axiomats.ru').trim().replace(/\/+$/, '');
     }
-
-    function getSystem() {
-      try {
-        return (typeof self.system === 'function' && self.system()) || {};
-      } catch (error) {
-        return {};
-      }
+    function route() {
+      return String(settings().route || '').trim().toLowerCase() === 'multicom_ami' ? 'multicom_ami' : 'megafon_vats';
     }
-
-    function getSystemValue(name) {
-      var system = getSystem();
-      return system && system[name] != null ? system[name] : null;
+    function system() {
+      try { return (typeof self.system === 'function' && self.system()) || {}; }
+      catch (e) { return {}; }
     }
-
+    function systemValue(name) {
+      var value = system();
+      return value && value[name] != null ? value[name] : null;
+    }
     function positiveId(value) {
-      var id = Number(value);
-      return isFinite(id) && id > 0 ? id : null;
+      var number = Number(value);
+      return isFinite(number) && number > 0 ? number : null;
     }
-
-    function getAmoUserId() {
-      var value = Number(getSystemValue('user_id'));
-      return isFinite(value) && value > 0 ? value : null;
+    function currentUserId() {
+      return positiveId(systemValue('amouser_id')) || positiveId(systemValue('amo_user_id')) ||
+        positiveId(systemValue('user_id')) || positiveId(systemValue('userId')) ||
+        positiveId(self.user_id) || positiveId(self.current_user_id);
     }
-
-    // Adapter over the amoCRM widget context API (self.system()).
-    function getCardContext() {
-      var system = getSystem();
-      var area = String(system.area || '').toLowerCase();
-      var route = String(
-        (window.location && window.location.pathname || '') + ' ' +
-        (window.location && window.location.hash || '')
-      ).toLowerCase();
-      var entityId = positiveId(system.entity_id) || positiveId(system.card_id) ||
-        positiveId(system.contact_id) || positiveId(system.lead_id) ||
-        positiveId(system.company_id);
-      var areaIsCard = /lcard|ccard|comcard|card|detail/.test(area);
-      var routeIsCard = /(?:^|[\/#])(leads|contacts|companies)\/(?:detail|card)(?:[\/#]|$)/.test(route) ||
-        /(?:^|[\/#])(?:lcard|ccard|comcard)(?:[-_/]|$)/.test(route);
-      var namedCardArea = /^(leads|contacts|companies)$/.test(area) && !!entityId;
-      var isCard = routeIsCard || (areaIsCard && !!entityId) || namedCardArea;
-      var contactId = /ccard|contact/.test(area) && entityId ? entityId : null;
-      return {
-        open: isCard,
-        contactId: contactId,
-        entityId: entityId,
-        area: area
-      };
+    function locationArea() {
+      var area = String(systemValue('area') || '').toLowerCase();
+      if (/^lcard/.test(area) || /lead/.test(area)) return 'leads';
+      if (/^ccard/.test(area) || /contact/.test(area)) return 'contacts';
+      if (/^comcard/.test(area) || /compan/.test(area)) return 'companies';
+      return '';
     }
-
-    function inSettings() {
-      var area = String(getSystemValue('area') || '');
-      var path = String(window.location && window.location.pathname || '');
-      return /settings|advanced_settings/i.test(area + ' ' + path);
-    }
-
-    function normalizePhone(value) {
-      var raw = String(value || '').trim();
-      if (!raw) return '';
-      var plus = raw.charAt(0) === '+';
-      var digits = raw.replace(/[^0-9]/g, '');
-      if (digits.length < 10) return '';
-      return (plus ? '+' : '') + digits;
-    }
-
-    function phoneFromElement(element) {
-      if (!element) return '';
-      var href = String(element.getAttribute('href') || '').replace(/^tel:/i, '');
-      var value = element.getAttribute('data-value') ||
-        element.getAttribute('data-phone') ||
-        href ||
-        element.textContent ||
-        '';
-      var phone = normalizePhone(value);
-      if (phone) return phone;
-      var child = element.querySelector && element.querySelector('a[href^="tel:"]');
-      return child ? normalizePhone(child.getAttribute('href')) : '';
-    }
-
-    function findPhoneElement() {
-      if (!getCardContext().open) return null;
-      var selectors = [
-        '[data-field-code="PHONE"] a',
-        '[data-field-code="PHONE"]',
-        'a[href^="tel:"]'
-      ];
-      for (var s = 0; s < selectors.length; s += 1) {
-        var nodes = document.querySelectorAll(selectors[s]);
-        for (var i = 0; i < nodes.length; i += 1) {
-          if (phoneFromElement(nodes[i])) return nodes[i];
-        }
-      }
-      var links = document.querySelectorAll('a');
-      var pattern = /(?:\\+7|8|7)\\s*[\\(]?\\d{3}[\\)]?[-\\s]?\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{2}/;
-      for (var j = 0; j < links.length; j += 1) {
-        if (pattern.test(links[j].textContent || '')) return links[j];
+    function entityId() {
+      var values = [self.entity_id, self.card_id, systemValue('entity_id'), systemValue('entityId'),
+        systemValue('card_id'), systemValue('cardId'), systemValue('lead_id'), systemValue('contact_id'), systemValue('company_id')];
+      for (var i = 0; i < values.length; i += 1) {
+        var id = positiveId(values[i]);
+        if (id) return id;
       }
       return null;
     }
-
-    function getCurrentPhone() {
-      var element = findPhoneElement();
-      return element ? phoneFromElement(element) : '';
+    function cardContext() {
+      var area = locationArea();
+      var id = entityId();
+      var routePath = String(((window.location && window.location.pathname) || '') + ' ' + ((window.location && window.location.hash) || '')).toLowerCase();
+      if (!area) {
+        if (/leads/.test(routePath)) area = 'leads';
+        else if (/contacts/.test(routePath)) area = 'contacts';
+        else if (/companies/.test(routePath)) area = 'companies';
+      }
+      return { area: area, id: id, open: !!area && !!id };
+    }
+    function normalizePhone(value) {
+      var raw = String(value == null ? '' : value).trim();
+      if (!raw) return '';
+      var digits = raw.replace(/[^0-9]/g, '');
+      if (digits.length < 10) return '';
+      if (digits.length === 11 && digits.charAt(0) === '8') digits = '7' + digits.slice(1);
+      if (digits.length === 10 && digits.charAt(0) === '9') digits = '7' + digits;
+      return '+' + digits;
+    }
+    function phoneFromFields(fields) {
+      var values = fields || [];
+      for (var i = 0; i < values.length; i += 1) {
+        var field = values[i] || {};
+        var code = String(field.field_code || field.code || '').toUpperCase();
+        var name = String(field.field_name || field.name || '').toLowerCase();
+        if (code !== 'PHONE' && name.indexOf('телефон') < 0 && name.indexOf('phone') < 0) continue;
+        for (var j = 0; j < (field.values || []).length; j += 1) {
+          var phone = normalizePhone(field.values[j] && (field.values[j].value || field.values[j]));
+          if (phone) return phone;
+        }
+      }
+      return '';
+    }
+    function phoneFromElement(element) {
+      if (!element) return '';
+      var href = String(element.getAttribute('href') || '').replace(/^tel:/i, '');
+      return normalizePhone(element.getAttribute('data-value') || element.getAttribute('data-phone') || href || element.textContent);
+    }
+    function phoneFromDom() {
+      var selectors = ['a[href^="tel:"]', '[data-field-code="PHONE"]', '[data-code="PHONE"]'];
+      for (var i = 0; i < selectors.length; i += 1) {
+        var nodes = document.querySelectorAll(selectors[i]);
+        for (var j = 0; j < nodes.length; j += 1) {
+          var phone = phoneFromElement(nodes[j]);
+          if (phone) return phone;
+        }
+      }
+      var links = document.querySelectorAll('a');
+      var pattern = /(?:\+7|8|7)\s*[\(]?\d{3}[\)]?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/;
+      for (var k = 0; k < links.length; k += 1) {
+        if (pattern.test(links[k].textContent || '')) return normalizePhone(links[k].textContent);
+      }
+      return '';
     }
 
-    function getRoot() {
-      return document.getElementById(rootId);
+    /* amoCRM exposes crm_get in newer widget shells. The jQuery fallback is
+     * same-origin and works in older private integrations hosted by amoCRM. */
+    function amoGet(path, done, fail) {
+      var complete = false;
+      var timer = setTimeout(function () { error({ code: 'amo_get_timeout' }); }, 12000);
+      function success(data) { if (!complete) { complete = true; clearTimeout(timer); done(data || {}); } }
+      function error(xhr) { if (!complete) { complete = true; clearTimeout(timer); fail(xhr || {}); } }
+      try {
+        if (typeof self.crm_get === 'function') {
+          var result = self.crm_get(path, {}, success, error);
+          if (result && typeof result.done === 'function') result.done(success).fail(error);
+          return;
+        }
+      } catch (e) { error(e); return; }
+      $.ajax({ url: path, method: 'GET', dataType: 'json', timeout: 10000 }).done(success).fail(error);
     }
-
+    function responsibleFromPayload(data) {
+      return positiveId(data && (data.responsible_user_id || data.responsible_id));
+    }
+    function buildCard(area, id, data) {
+      var payload = data || {};
+      var card = {
+        area: area, entity_id: id,
+        crm_contact_id: area === 'contacts' ? (positiveId(payload.id) || id) : null,
+        phone: phoneFromFields(payload.custom_fields_values) || normalizePhone(payload.phone),
+        responsible_user_id: responsibleFromPayload(payload), name: String(payload.name || '')
+      };
+      var linked = payload._embedded && payload._embedded.contacts;
+      if (!card.crm_contact_id && linked && linked.length) card.crm_contact_id = positiveId(linked[0].id || linked[0].contact_id);
+      return card;
+    }
+    function finishPending(card, error) {
+      var pending = pendingCard;
+      pendingCard = null;
+      if (!pending) return;
+      var i;
+      if (card) for (i = 0; i < pending.done.length; i += 1) pending.done[i](card);
+      else for (i = 0; i < pending.fail.length; i += 1) pending.fail[i](error || {});
+    }
+    function atsCard(context, done, fail) {
+      $.ajax({
+        url: atsUrl() + '/api/v1/amo/widget/card', method: 'POST', dataType: 'json', timeout: 15000,
+        contentType: 'application/json; charset=UTF-8',
+        data: JSON.stringify({ entity_type: context.area, entity_id: Number(context.id) })
+      }).done(done).fail(fail);
+    }
+    function fetchCard(done, fail) {
+      var context = cardContext();
+      if (!context.open) { fail({ code: 'no_card' }); return; }
+      var key = context.area + ':' + context.id;
+      if (cardCache[key]) { done(cardCache[key]); return; }
+      if (pendingCard) { pendingCard.done.push(done); pendingCard.fail.push(fail); return; }
+      pendingCard = { done: [done], fail: [fail] };
+      amoGet('/api/v4/' + context.area + '/' + context.id + '?with=contacts', function (data) {
+        var card = buildCard(context.area, context.id, data);
+        var contactId = card.crm_contact_id;
+        if (context.area !== 'contacts' && contactId && !card.phone) {
+          amoGet('/api/v4/contacts/' + contactId, function (contact) {
+            card.phone = phoneFromFields(contact.custom_fields_values) || normalizePhone(contact.phone);
+            card.crm_contact_id = positiveId(contact.id) || contactId;
+            cardCache[key] = card; finishPending(card);
+          }, function () {
+            card.phone = phoneFromDom(); cardCache[key] = card; finishPending(card);
+          });
+        } else {
+          card.phone = card.phone || phoneFromDom(); cardCache[key] = card; finishPending(card);
+        }
+      }, function () {
+        /* Older amoCRM shells do not expose crm_get. Ask ATS to use its
+         * server-side amo access token before falling back to visible DOM. */
+        atsCard(context, function (data) {
+          var resolved = { area: context.area, entity_id: context.id,
+            crm_contact_id: positiveId(data.crm_contact_id), phone: normalizePhone(data.phone),
+            responsible_user_id: positiveId(data.responsible_user_id), name: String(data.name || '') };
+          if (resolved.phone && resolved.crm_contact_id) { cardCache[key] = resolved; finishPending(resolved); }
+          else finishPending(null, { code: 'amo_read_failed' });
+        }, function () {
+          var fallback = { area: context.area, entity_id: context.id,
+            crm_contact_id: context.area === 'contacts' ? context.id : null, phone: phoneFromDom(),
+            responsible_user_id: null, name: '' };
+          if (fallback.phone) { cardCache[key] = fallback; finishPending(fallback); }
+          else finishPending(null, { code: 'amo_read_failed' });
+        });
+      });
+    }
+    function root() { return document.getElementById(rootId); }
     function setStatus(message, isError) {
-      var root = getRoot();
-      if (!root) return;
-      var status = root.querySelector('.atos-ats-status');
+      var element = root();
+      var status = element && element.querySelector('.atos-ats-status');
       if (!status) return;
       status.textContent = message || '';
       status.className = 'atos-ats-status' + (isError ? ' atos-ats-status-error' : '');
     }
-
-    function syncPhone(force) {
-      var root = getRoot();
-      if (!root) return '';
-      var context = getCardContext();
-      var phone = context.open ? getCurrentPhone() : '';
-      var input = root.querySelector('.atos-ats-phone');
-      var submit = root.querySelector('.atos-ats-submit');
-      var launcher = root.querySelector('.atos-ats-launcher');
-      var key = context.open ? String(window.location.href) + '|' + phone : 'no-card';
-      var changed = root.getAttribute('data-context-key') !== key;
-      root.setAttribute('data-context-key', key);
-      root.setAttribute('data-card-open', context.open ? 'true' : 'false');
-
-      var cardReady = context.open && (!!phone || !!context.contactId);
-      if (input) {
-        input.value = phone;
-        input.placeholder = !context.open ? text.noCard : phone ? text.phonePlaceholder : text.phoneFromServer;
-      }
-      if (launcher) {
-        launcher.disabled = !cardReady || root.getAttribute('data-call-state') === 'busy';
-        launcher.title = cardReady ? text.call : text.noCard;
-      }
-      if (submit) submit.disabled = !cardReady || root.getAttribute('data-call-state') === 'busy';
-
-      if (changed && root.getAttribute('data-call-state') !== 'busy') {
-        if (!context.open) setStatus(text.noCard, true);
-        else if (!cardReady) setStatus(text.noPhone, true);
-        else if (!phone && context.contactId) setStatus(text.phoneFromServer, false);
-        else setStatus('', false);
-      }
-      return phone;
+    function updatePanel(card) {
+      var element = root();
+      if (!element) return;
+      var context = cardContext();
+      var input = element.querySelector('.atos-ats-phone');
+      var responsible = element.querySelector('.atos-ats-responsible');
+      var submit = element.querySelector('.atos-ats-submit');
+      if (input) input.value = (card && card.phone) || '';
+      if (responsible) responsible.textContent = card && card.responsible_user_id ? 'Ответственный: #' + card.responsible_user_id : 'Ответственный: текущий пользователь';
+      var ready = !!(context.open && card && card.phone && card.crm_contact_id);
+      if (submit) submit.disabled = !ready || element.getAttribute('data-call-state') === 'busy';
+      element.setAttribute('data-card-ready', ready ? 'true' : 'false');
+      if (!context.open) setStatus(text.noCard, true);
+      else if (!card || !card.phone) setStatus(text.noPhone, true);
+      else if (!card.crm_contact_id) setStatus('Контакт amoCRM не связан с карточкой', true);
+      else setStatus('', false);
     }
-
-    function responseError(xhr) {
-      if (!xhr || xhr.status === 0) return text.networkError;
-      var body = xhr.responseJSON || {};
-      return body.error || text.genericError;
-    }
-
-    function startCall(button, phoneValue) {
-      var root = getRoot();
-      var context = getCardContext();
-      var phone = normalizePhone(phoneValue);
-      if (!context.open) {
-        setStatus(text.noCard, true);
-        if (button) button.disabled = false;
-        return;
-      }
-      if (!phone && !context.contactId) {
-        setStatus(text.noPhone, true);
-        if (button) button.disabled = false;
-        return;
-      }
-      if (root) root.setAttribute('data-call-state', 'busy');
-      if (button) {
-        button.disabled = true;
-        button.textContent = text.loading;
-      }
+    function syncCard(force) {
+      var element = root();
+      if (!element) return;
+      var context = cardContext();
+      var key = context.open ? context.area + ':' + context.id : 'no-card';
+      if (!force && element.getAttribute('data-context-key') === key && element.getAttribute('data-card-ready') === 'true') return;
+      element.setAttribute('data-context-key', key);
+      if (!context.open) { updatePanel(null); return; }
       setStatus(text.loading, false);
-      self.callThroughAts(phone, context.contactId)
-        .done(function () {
-          if (button) button.textContent = text.queued;
-          setStatus(text.queued, false);
-        })
+      fetchCard(function (card) { updatePanel(card); }, function () { updatePanel(null); setStatus(text.amoReadError, true); });
+    }
+    function responseError(xhr) {
+      if (!xhr || xhr.status === 0) return text.network;
+      var body = xhr.responseJSON || {};
+      var code = String(body.error || body.detail || '');
+      var messages = {
+        crm_contact_not_synced: 'Контакт ещё не синхронизирован с ATS',
+        amo_user_operator_mapping_missing: 'Для ответственного не настроено соответствие оператору ATS',
+        operator_unavailable: 'Оператор сейчас недоступен', operator_selection_required: 'Не удалось выбрать оператора',
+        live_calls_disabled_for_tenant: 'Живые звонки отключены для этого контура',
+        megafon_not_configured: 'МегаФон ВАТС не настроен', ami_not_configured: 'Multicom/AMI не настроен',
+        contact_phone_mismatch: 'Номер карточки не совпадает с номером в ATS'
+      };
+      return messages[code] || code || text.generic;
+    }
+    function call(card, button) {
+      var element = root();
+      if (!card || !card.phone || !card.crm_contact_id) { setStatus(text.noPhone, true); return; }
+      var amoUserId = card.responsible_user_id || currentUserId();
+      element.setAttribute('data-call-state', 'busy');
+      if (button) { button.disabled = true; button.textContent = text.calling; }
+      setStatus(text.calling, false);
+      $.ajax({
+        url: atsUrl() + '/api/v1/amo/widget/click-to-call', method: 'POST', dataType: 'json', timeout: 20000,
+        contentType: 'application/json; charset=UTF-8',
+        data: JSON.stringify({ phone: card.phone, amo_user_id: amoUserId || null,
+          crm_contact_id: Number(card.crm_contact_id), route: route(),
+          request_id: 'amo-' + Date.now() + '-' + Math.random().toString(36).slice(2, 12) })
+      }).done(function () { if (button) button.textContent = text.queued; setStatus(text.queued, false); })
         .fail(function (xhr) {
-          if (root) root.setAttribute('data-call-state', 'idle');
-          if (button) {
-            button.disabled = false;
-            button.textContent = text.callButton;
-          }
+          element.setAttribute('data-call-state', 'idle');
+          if (button) { button.disabled = false; button.textContent = text.call; }
           setStatus(responseError(xhr), true);
-          if (window.console && console.error) {
-            console.error('ATOS-ATS click-to-call failed', xhr);
-          }
+          if (window.console && console.error) console.error('ATOS ATS click-to-call failed', xhr);
         });
     }
-
-    function mountLauncher() {
-      if (inSettings() || !document.body || getRoot()) return !!getRoot();
-      var root = document.createElement('div');
-      root.id = rootId;
-      root.setAttribute('data-atos-ats-version', version);
-      root.className = 'atos-ats-widget-root';
-      root.innerHTML =
-        '<button type="button" class="atos-ats-launcher" aria-expanded="false" title="' + text.call + '">' +
-          '<span class="atos-ats-launcher-icon" aria-hidden="true">☎</span>' +
-          '<span class="atos-ats-launcher-label">' + text.launcher + '</span>' +
-        '</button>' +
-        '<section class="atos-ats-panel" hidden aria-label="' + text.panelTitle + '">' +
-          '<div class="atos-ats-panel-title">' + text.panelTitle + '</div>' +
-          '<input class="atos-ats-phone" type="tel" readonly aria-readonly="true" autocomplete="off" placeholder="' + text.noCard + '">' +
-          '<div class="atos-ats-panel-actions">' +
-            '<button type="button" class="atos-ats-refresh">' + text.refreshButton + '</button>' +
-            '<button type="button" class="atos-ats-submit" disabled>' + text.callButton + '</button>' +
-          '</div>' +
-          '<div class="atos-ats-status" role="status" aria-live="polite"></div>' +
-        '</section>';
-      document.body.appendChild(root);
-      syncPhone(true);
-      return true;
+    function mount() {
+      var element = root();
+      if (element || !document.body) return !!element;
+      var area = String(systemValue('area') || '').toLowerCase();
+      if (/settings/.test(area)) return false;
+      element = document.createElement('div'); element.id = rootId; element.className = 'atos-ats-widget-root';
+      element.setAttribute('data-atos-ats-version', version);
+      element.innerHTML = '<button type="button" class="atos-ats-launcher" aria-expanded="false" title="' + text.title + '"><span class="atos-ats-launcher-icon" aria-hidden="true">☎</span><span>' + text.launcher + '</span></button>' +
+        '<section class="atos-ats-panel" hidden aria-label="' + text.title + '"><div class="atos-ats-panel-title">' + text.title + '</div><div class="atos-ats-card-caption">Данные открытой карточки</div><input class="atos-ats-phone" type="tel" readonly aria-readonly="true" autocomplete="off"><div class="atos-ats-responsible">Ответственный: текущий пользователь</div><div class="atos-ats-panel-actions"><button type="button" class="atos-ats-refresh">' + text.refresh + '</button><button type="button" class="atos-ats-submit" disabled>' + text.call + '</button></div><div class="atos-ats-status" role="status" aria-live="polite"></div></section>';
+      document.body.appendChild(element); syncCard(true); return true;
     }
-
-    function mountCardButton() {
-      if (inSettings() || !getCardContext().open) return false;
-      var phoneElement = findPhoneElement();
-      if (!phoneElement || phoneElement.getAttribute('data-atos-ats-phone-button') === '1') return false;
-      if (phoneElement.parentNode && phoneElement.parentNode.querySelector('.' + cardButtonClass)) return true;
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.className = cardButtonClass;
-      button.setAttribute('data-atos-ats-phone-button', '1');
-      button.textContent = text.call;
-      phoneElement.parentNode.insertBefore(button, phoneElement.nextSibling);
-      return true;
-    }
-
-    function removeLegacyControls() {
-      var old = document.querySelectorAll('.atos-ats-call-widget');
-      for (var i = 0; i < old.length; i += 1) old[i].parentNode.removeChild(old[i]);
-    }
-
-    self.mountWidget = function () {
-      removeLegacyControls();
-      mountLauncher();
-      mountCardButton();
-      syncPhone(false);
-      return true;
-    };
-
-    function handleClick(event) {
-      var target = event.target;
-      if (!target || !target.closest) return;
-
+    function onClick(event) {
+      var target = event.target; if (!target || !target.closest) return;
+      var element = root();
       var launcher = target.closest('.atos-ats-launcher');
-      if (launcher) {
-        event.preventDefault();
-        event.stopPropagation();
-        var root = getRoot();
-        if (!root) return;
-        var panel = root.querySelector('.atos-ats-panel');
-        var open = panel && !panel.hidden;
-        if (panel) panel.hidden = open;
-        launcher.setAttribute('aria-expanded', String(!open));
-        syncPhone(false);
-        return;
+      if (launcher && element) {
+        event.preventDefault(); event.stopPropagation(); var panel = element.querySelector('.atos-ats-panel');
+        var open = panel && !panel.hidden; if (panel) panel.hidden = open; launcher.setAttribute('aria-expanded', String(!open)); syncCard(false); return;
       }
-
       var refresh = target.closest('.atos-ats-refresh');
-      if (refresh) {
-        event.preventDefault();
-        event.stopPropagation();
-        syncPhone(true);
-        return;
-      }
-
+      if (refresh) { event.preventDefault(); event.stopPropagation(); cardCache = {}; syncCard(true); return; }
       var submit = target.closest('.atos-ats-submit');
-      if (submit) {
-        event.preventDefault();
-        event.stopPropagation();
-        var root = getRoot();
-        startCall(submit, root && root.querySelector('.atos-ats-phone').value);
-        return;
-      }
-
-      var cardButton = target.closest('.' + cardButtonClass);
-      if (cardButton) {
-        event.preventDefault();
-        event.stopPropagation();
-        startCall(cardButton, getCurrentPhone());
-      }
+      if (submit && element) { event.preventDefault(); event.stopPropagation(); var context = cardContext(); call(cardCache[context.area + ':' + context.id], submit); }
     }
-
-    function bindActions() {
+    function bind() {
       if (boundDocument === document) return;
-      if (boundDocument) boundDocument.removeEventListener('click', handleClick, true);
-      document.addEventListener('click', handleClick, true);
-      boundDocument = document;
+      if (boundDocument) boundDocument.removeEventListener('click', onClick, true);
+      document.addEventListener('click', onClick, true); boundDocument = document;
     }
-
     function startMounting() {
-      self.mountWidget();
-      if (!mountTimer) mountTimer = setInterval(self.mountWidget, 1000);
-      if (!observer && window.MutationObserver && document.body) {
-        observer = new MutationObserver(function () { self.mountWidget(); });
-        observer.observe(document.body, { childList: true, subtree: true });
-      }
+      mount();
+      if (!mountTimer) mountTimer = setInterval(function () { if (!root()) mount(); syncCard(false); }, 1200);
+      if (!observer && window.MutationObserver && document.body) { observer = new MutationObserver(function () { if (!root()) mount(); }); observer.observe(document.body, { childList: true, subtree: true }); }
     }
-
     self.callbacks = {
-      init: function () {
-        bindActions();
-        self.mountWidget();
-        setTimeout(self.mountWidget, 0);
-        return true;
-      },
-      bind_actions: function () {
-        bindActions();
-        return true;
-      },
-      render: function () {
-        startMounting();
-        return true;
-      },
-      settings: function () {
-        return true;
-      },
-      onSave: function () {
-        return true;
-      },
+      init: function () { bind(); mount(); return true; }, bind_actions: function () { bind(); return true; },
+      render: function () { startMounting(); return true; }, settings: function () { return true; }, onSave: function () { return true; },
       destroy: function () {
-        if (mountTimer) clearInterval(mountTimer);
-        mountTimer = null;
-        if (observer) observer.disconnect();
-        observer = null;
-        if (boundDocument) boundDocument.removeEventListener('click', handleClick, true);
-        boundDocument = null;
-        var root = getRoot();
-        if (root && root.parentNode) root.parentNode.removeChild(root);
-        var old = document.querySelectorAll('.' + cardButtonClass);
-        for (var i = 0; i < old.length; i += 1) old[i].parentNode.removeChild(old[i]);
-        return true;
+        if (mountTimer) clearInterval(mountTimer); mountTimer = null;
+        if (observer) observer.disconnect(); observer = null;
+        if (boundDocument) boundDocument.removeEventListener('click', onClick, true); boundDocument = null;
+        var element = root(); if (element && element.parentNode) element.parentNode.removeChild(element);
+        cardCache = {}; pendingCard = null; return true;
       }
-    };
-
-    self.callThroughAts = function (phone, contactId) {
-      var payload = {
-        phone: String(phone || ''),
-        amo_user_id: getAmoUserId(),
-        crm_contact_id: contactId ? Number(contactId) : null,
-        request_id: 'amo-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10)
-      };
-      return $.ajax({
-        url: getAtsUrl() + '/api/v1/amo/widget/click-to-call',
-        method: 'POST',
-        contentType: 'application/json; charset=UTF-8',
-        dataType: 'json',
-        data: JSON.stringify(payload),
-        timeout: 15000
-      });
     };
   };
 });
