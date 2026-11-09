@@ -4,7 +4,7 @@ define(['jquery'], function ($) {
 
   return function () {
     var self = this;
-    var version = '4.1.0';
+    var version = '4.2.0';
     var rootId = 'atos-ats-widget-root';
     var timer = null;
     var boundDocument = null;
@@ -404,7 +404,6 @@ define(['jquery'], function ($) {
       if (element || !document.body) return !!element;
       var area = String(systemValue('area') || '').toLowerCase();
       if (/settings/.test(area)) return false;
-      if (!cardContext().open) return false;
       element = document.createElement('div');
       element.id = rootId;
       element.className = 'atos-ats-widget-root';

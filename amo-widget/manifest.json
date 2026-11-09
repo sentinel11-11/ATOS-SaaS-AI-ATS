@@ -3,7 +3,7 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "4.1.0",
+    "version": "4.2.0",
     "interface_version": 2,
     "init_once": false,
     "locale": [
@@ -16,9 +16,7 @@
     }
   },
   "locations": [
-    "leads",
-    "contacts",
-    "companies",
+    "everywhere",
     "settings"
   ],
   "settings": {
