@@ -1,109 +1,135 @@
 .atos-ats-widget-root {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 2147483000;
-  font-family: Arial, sans-serif;
-}
-
-.atos-ats-launcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 38px;
-  padding: 0 12px;
-  border: 1px solid #2f76ff;
-  border-radius: 20px;
-  background: #2f76ff;
-  color: #fff;
-  box-shadow: 0 3px 12px rgba(0, 0, 0, .22);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.atos-ats-launcher:hover { background: #1f63df; }
-.atos-ats-launcher:disabled { opacity: .55; cursor: not-allowed; }
-.atos-ats-launcher-icon { font-size: 16px; line-height: 1; }
-
-.atos-ats-panel {
-  position: absolute;
-  right: 0;
-  bottom: 48px;
-  width: 286px;
-  box-sizing: border-box;
-  padding: 14px;
-  border: 1px solid #d8e0eb;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .24);
-}
-
-.atos-ats-panel[hidden] { display: none !important; }
-
-.atos-ats-panel-title {
-  margin-bottom: 10px;
-  color: #243142;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.atos-ats-phone {
+  display: block;
   width: 100%;
-  height: 36px;
+  max-width: 100%;
   box-sizing: border-box;
-  padding: 0 10px;
-  border: 1px solid #b8c4d3;
-  border-radius: 4px;
-  color: #243142;
-  font: inherit;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #31516b;
+  border-radius: 10px;
+  background: #102b40;
+  color: #eaf3fa;
+  font-family: Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
-.atos-ats-card-caption,
-.atos-ats-responsible {
-  margin: 5px 0 8px;
-  color: #6a7788;
+.atos-ats-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #31516b;
+  background: #0b2235;
+}
+
+.atos-ats-brand {
+  color: #74b7ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.atos-ats-title {
+  margin-top: 2px;
+  color: #d9e8f4;
+  font-size: 12px;
+}
+
+.atos-ats-route {
+  flex: 0 0 auto;
+  max-width: 110px;
+  overflow: hidden;
+  color: #93aabd;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atos-ats-card-body { padding: 11px 12px 12px; }
+
+.atos-ats-field {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.atos-ats-field > span {
+  color: #9eb3c2;
   font-size: 11px;
 }
 
-.atos-ats-responsible { margin: 8px 0 0; }
+.atos-ats-field > strong {
+  max-width: 68%;
+  overflow: hidden;
+  color: #f2f8fc;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.atos-ats-panel-actions {
+.atos-ats-actions {
   display: flex;
-  gap: 8px;
+  gap: 7px;
   margin-top: 10px;
 }
 
-.atos-ats-panel-actions button,
-.atos-ats-card-call {
+.atos-ats-actions button {
+  min-height: 34px;
+  box-sizing: border-box;
   border: 0;
-  border-radius: 4px;
-  background: #2f76ff;
-  color: #fff;
+  border-radius: 6px;
   cursor: pointer;
   font: inherit;
   font-size: 12px;
+  font-weight: 600;
 }
 
-.atos-ats-panel-actions button { min-height: 32px; padding: 0 9px; }
-.atos-ats-refresh { background: #edf2f7 !important; color: #34465b !important; }
-.atos-ats-submit { flex: 1; }
-.atos-ats-panel-actions button:disabled,
-.atos-ats-card-call:disabled { opacity: .6; cursor: wait; }
+.atos-ats-submit {
+  flex: 1;
+  padding: 0 12px;
+  background: #3e8df3;
+  color: #fff;
+}
+
+.atos-ats-submit:hover { background: #2d78d8; }
+
+.atos-ats-refresh {
+  width: 34px;
+  padding: 0;
+  background: #24445c;
+  color: #dbeaf4;
+  font-size: 18px !important;
+  line-height: 1;
+}
+
+.atos-ats-refresh:hover { background: #315a76; }
+
+.atos-ats-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
 
 .atos-ats-status {
-  min-height: 18px;
+  min-height: 17px;
   margin-top: 8px;
-  color: #2f6f44;
-  font-size: 12px;
+  color: #86d6a5;
+  font-size: 11px;
 }
 
-.atos-ats-status-error { color: #b3261e; }
+.atos-ats-status-error { color: #ff9e9e; }
 
-.atos-ats-card-call {
-  display: inline-block;
-  margin: 6px 0 0 8px;
-  padding: 7px 10px;
-  vertical-align: middle;
+@media (max-width: 240px) {
+  .atos-ats-card-header { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .atos-ats-route { max-width: 100%; }
+  .atos-ats-field { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .atos-ats-field > strong { max-width: 100%; text-align: left; }
 }
