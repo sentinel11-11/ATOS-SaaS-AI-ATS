@@ -40,6 +40,8 @@
   box-shadow: 0 8px 28px rgba(0, 0, 0, .24);
 }
 
+.atos-ats-panel[hidden] { display: none !important; }
+
 .atos-ats-panel-title {
   margin-bottom: 10px;
   color: #243142;

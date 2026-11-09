@@ -282,10 +282,14 @@ define(['jquery'], function ($) {
       var area = String(systemValue('area') || '').toLowerCase();
       if (/settings/.test(area)) return false;
       element = document.createElement('div'); element.id = rootId; element.className = 'atos-ats-widget-root';
+      element.style.position = 'fixed'; element.style.right = '18px'; element.style.bottom = '18px'; element.style.zIndex = '2147483000';
       element.setAttribute('data-atos-ats-version', version);
       element.innerHTML = '<button type="button" class="atos-ats-launcher" aria-expanded="false" title="' + text.title + '"><span class="atos-ats-launcher-icon" aria-hidden="true">☎</span><span>' + text.launcher + '</span></button>' +
         '<section class="atos-ats-panel" hidden aria-label="' + text.title + '"><div class="atos-ats-panel-title">' + text.title + '</div><div class="atos-ats-card-caption">Данные открытой карточки</div><input class="atos-ats-phone" type="tel" readonly aria-readonly="true" autocomplete="off"><div class="atos-ats-responsible">Ответственный: текущий пользователь</div><div class="atos-ats-panel-actions"><button type="button" class="atos-ats-refresh">' + text.refresh + '</button><button type="button" class="atos-ats-submit" disabled>' + text.call + '</button></div><div class="atos-ats-status" role="status" aria-live="polite"></div></section>';
-      document.body.appendChild(element); syncCard(true); return true;
+      document.body.appendChild(element);
+      var panel = element.querySelector('.atos-ats-panel');
+      if (panel) { panel.hidden = true; panel.style.display = 'none'; panel.setAttribute('data-open', 'false'); }
+      syncCard(true); return true;
     }
     function onClick(event) {
       var target = event.target; if (!target || !target.closest) return;
@@ -293,7 +297,9 @@ define(['jquery'], function ($) {
       var launcher = target.closest('.atos-ats-launcher');
       if (launcher && element) {
         event.preventDefault(); event.stopPropagation(); var panel = element.querySelector('.atos-ats-panel');
-        var open = panel && !panel.hidden; if (panel) panel.hidden = open; launcher.setAttribute('aria-expanded', String(!open)); syncCard(false); return;
+        var open = panel && panel.getAttribute('data-open') === 'true';
+        if (panel) { panel.hidden = open; panel.style.display = open ? 'none' : 'block'; panel.setAttribute('data-open', String(!open)); }
+        launcher.setAttribute('aria-expanded', String(!open)); syncCard(false); return;
       }
       var refresh = target.closest('.atos-ats-refresh');
       if (refresh) { event.preventDefault(); event.stopPropagation(); cardCache = {}; syncCard(true); return; }
