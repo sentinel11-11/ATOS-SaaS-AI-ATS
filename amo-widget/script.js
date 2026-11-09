@@ -4,7 +4,7 @@ define(['jquery'], function ($) {
 
   return function () {
     var self = this;
-    var version = '4.0.0';
+    var version = '4.1.0';
     var rootId = 'atos-ats-widget-root';
     var timer = null;
     var boundDocument = null;
@@ -39,6 +39,25 @@ define(['jquery'], function ($) {
 
     function atsUrl() {
       return String(getSettings().atsUrl || 'https://axiomats.ru').trim().replace(/\/+$/, '');
+    }
+
+    function loadStyles() {
+      var config = getSettings();
+      var path = String(config.path || '').replace(/\/+$/, '');
+      if (!path || !document.head) return;
+      var widgetVersion = typeof self.get_version === 'function' ? self.get_version() : version;
+      var href = path + '/style.css?v=' + encodeURIComponent(widgetVersion);
+      var links = document.querySelectorAll('link[data-atos-ats-style]');
+      for (var i = 0; i < links.length; i += 1) {
+        if (links[i].getAttribute('href') === href) return;
+        links[i].parentNode.removeChild(links[i]);
+      }
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.type = 'text/css';
+      link.href = href;
+      link.setAttribute('data-atos-ats-style', 'true');
+      document.head.appendChild(link);
     }
 
     function route() {
@@ -385,6 +404,7 @@ define(['jquery'], function ($) {
       if (element || !document.body) return !!element;
       var area = String(systemValue('area') || '').toLowerCase();
       if (/settings/.test(area)) return false;
+      if (!cardContext().open) return false;
       element = document.createElement('div');
       element.id = rootId;
       element.className = 'atos-ats-widget-root';
@@ -426,15 +446,21 @@ define(['jquery'], function ($) {
     }
 
     function start() {
+      loadStyles();
       mount();
       if (!timer) timer = setInterval(function () {
+        if (!cardContext().open) {
+          var stale = root();
+          if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+          return;
+        }
         if (!root()) mount();
         syncCard(false);
       }, 1500);
     }
 
     self.callbacks = {
-      init: function () { bind(); mount(); return true; },
+      init: function () { bind(); return true; },
       bind_actions: function () { bind(); return true; },
       render: function () { start(); return true; },
       settings: function () { return true; },
