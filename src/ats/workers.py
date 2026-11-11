@@ -552,7 +552,7 @@ class Worker:
                 crm = self.crm_drivers[str(tenant_id)] = AmoCRM(runtime_config)
             raw_contacts = []
             for page in range(1, 21):
-                batch = crm.contacts(page=page, limit=250)
+                batch = crm.lead_contacts(page=page, limit=250)
                 raw_contacts.extend(batch)
                 if len(batch) < 250:
                     break

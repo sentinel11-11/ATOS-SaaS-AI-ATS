@@ -219,6 +219,44 @@ class AmoCRM:
             result.append(normalized)
         return result
 
+    def lead_contacts(self, page=1, limit=250, created_from=None, created_to=None):
+        """Return unique contacts linked to leads, carrying lead attribution."""
+        params = {"page": page, "limit": min(250, max(1, limit)), "with": "contacts"}
+        if created_from:
+            params["filter[created_at][from]"] = int(created_from)
+        if created_to:
+            params["filter[created_at][to]"] = int(created_to)
+        data = self.read("/api/v4/leads", params)
+        by_id = {}
+        for lead in data.get("_embedded", {}).get("leads", []):
+            pipeline_id = lead.get("pipeline_id")
+            stage_id = lead.get("status_id")
+            responsible_id = lead.get("responsible_user_id")
+            lead_tags = lead.get("_embedded", {}).get("tags", []) or lead.get("tags", []) or []
+            lead_tag_names = [str(tag.get("name") or "").strip() for tag in lead_tags if tag.get("name")]
+            linked = lead.get("_embedded", {}).get("contacts", []) or []
+            for linked_contact in linked:
+                contact_id = linked_contact.get("id")
+                if not contact_id:
+                    continue
+                raw = linked_contact
+                if not raw.get("custom_fields_values"):
+                    raw = self.read(f"/api/v4/contacts/{int(contact_id)}")
+                normalized = self.normalize_contact(raw)
+                normalized["pipeline_ids"] = list(dict.fromkeys(normalized.get("pipeline_ids", []) + ([int(pipeline_id)] if pipeline_id else [])))
+                normalized["status_ids"] = list(dict.fromkeys(normalized.get("status_ids", []) + ([int(stage_id)] if stage_id else [])))
+                normalized["tag_names"] = list(dict.fromkeys(normalized.get("tag_names", []) + lead_tag_names))
+                if responsible_id and not normalized.get("responsible_user_id"):
+                    normalized["responsible_user_id"] = responsible_id
+                current = by_id.get(normalized["crm_contact_id"])
+                if current:
+                    current["pipeline_ids"] = list(dict.fromkeys(current["pipeline_ids"] + normalized["pipeline_ids"]))
+                    current["status_ids"] = list(dict.fromkeys(current["status_ids"] + normalized["status_ids"]))
+                    current["tag_names"] = list(dict.fromkeys(current.get("tag_names", []) + normalized.get("tag_names", [])))
+                else:
+                    by_id[normalized["crm_contact_id"]] = normalized
+        return list(by_id.values())
+
     def pipelines(self):
         return self.read("/api/v4/leads/pipelines", {"limit": 250}).get("_embedded", {}).get("pipelines", [])
 

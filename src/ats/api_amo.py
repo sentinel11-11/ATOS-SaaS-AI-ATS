@@ -242,7 +242,7 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             created_from = int(datetime.combine(data.created_from, time.min, tzinfo=timezone.utc).timestamp()) if data.created_from else None
             created_to = int(datetime.combine(data.created_to, time.max, tzinfo=timezone.utc).timestamp()) if data.created_to else None
             for page in range(1, 101):
-                batch = crm.contacts(page=page, limit=250, created_from=created_from, created_to=created_to)
+                batch = crm.lead_contacts(page=page, limit=250, created_from=created_from, created_to=created_to)
                 raw_contacts.extend(batch)
                 if len(raw_contacts) >= data.limit or len(batch) < 250:
                     raw_contacts = raw_contacts[: data.limit]
