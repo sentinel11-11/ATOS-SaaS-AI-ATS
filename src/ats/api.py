@@ -97,6 +97,17 @@ def _megafon_history_event(value):
     return None
 
 
+def _megafon_event(value):
+    status = str(value or "").strip().lower().replace(" ", "_")
+    if status in {"completed", "complete", "connected", "answered", "answer", "ok", "success", "hangup", "hang_up", "disconnected", "terminated", "finished", "4"}:
+        return "completed" if status not in {"answered", "answer", "connected"} else "answered"
+    if status in MEGAFON_HISTORY_FAILED or status in {"busy", "noanswer", "no_answer", "6"}:
+        return "failed"
+    if status in {"ringing", "accepted", "accept"}:
+        return "accepted"
+    return None
+
+
 def _megafon_operator_key(payload):
     for key in ("user", "extension", "operator", "internal_number", "internal", "agent"):
         value = str(payload.get(key) or "").strip()
@@ -138,6 +149,7 @@ def _megafon_callback_payload(payload, mapping=None):
         "phone", "user", "extension", "operator", "internal_number", "internal", "agent",
         "telnum", "type", "status", "direction", "duration", "result", "cmd", "command",
         "callid", "call_id", "id", "link", "recording", "record_url", "recording_url",
+        "dst", "destination", "called", "number", "callee",
         "recording_link", "url",
     )
     callback = {
@@ -561,14 +573,14 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
         db.commit()
         return {"result": "success"}
     if cmd == "event":
-        event = {"RINGING": "accepted"}.get(str(form.get("type", "")).upper())
+        event = _megafon_event(form.get("type") or form.get("status") or form.get("event"))
     elif cmd == "history":
         if _megafon_history_event(form.get("status")) is None:
             raise Problem(422, "unsupported_history_status")
         event = _megafon_history_event(form.get("status"))
     else:
         raise Problem(422, "unsupported_webhook_command")
-    if event is None:
+    if event in {None, "accepted"}:
         # ACCEPTED can refer to the operator leg. Do not claim client answered.
         return {"result": "accepted_without_state_change"}
     external_id = str(form.get("callid") or form.get("call_id") or form.get("id") or "")
@@ -615,9 +627,9 @@ async def megafon_events(request: Request, db=Depends(session)):
     raw_status = str(payload.get("status") or payload.get("result") or "").lower()
     event = _megafon_history_event(raw_status) if cmd == "history" else None
     if event is None and cmd == "event":
-        event = {"ringing": "accepted", "accepted": "accepted", "answered": "answered"}.get(raw_status)
-        if raw_status in MEGAFON_HISTORY_FAILED:
-            event = "failed"
+        event = _megafon_event(raw_status)
+    if event == "accepted":
+        return {"result": "accepted_without_state_change"}
     if event is None:
         raise Problem(422, "unsupported_history_status")
     external_id = str(payload.get("callid") or payload.get("call_id") or payload.get("id") or "")

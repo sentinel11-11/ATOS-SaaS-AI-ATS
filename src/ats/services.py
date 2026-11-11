@@ -370,7 +370,15 @@ def drain_inbox(db):
         # same tenant and normalized customer number; ambiguity stays orphaned.
         from ats.inbound import normalize_phone
 
-        phone = normalize_phone((row.payload or {}).get("phone", ""))
+        callback = row.payload or {}
+        phone = next(
+            (
+                normalize_phone(callback.get(key, ""))
+                for key in ("phone", "dst", "destination", "called", "number", "callee")
+                if normalize_phone(callback.get(key, ""))
+            ),
+            "",
+        )
         query = repo.query(Attempt).where(
             Attempt.route == row.route,
             Attempt.status.in_(ACTIVE),

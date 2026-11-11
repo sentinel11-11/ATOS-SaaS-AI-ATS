@@ -13,7 +13,7 @@ from ats.adapters import AMI, AmoCRM, DeliveryUnknown, Megafon, Rejected, Retrya
 from ats.amo_context import contact_context, reference_data
 from ats.config import settings
 from ats.db import session_factory
-from ats.domain import Problem, next_state
+from ats.domain import ACTIVE, Problem, next_state
 from ats.models import (
     AmoSyncJob,
     Attempt,
@@ -138,6 +138,51 @@ class Worker:
                         state,
                     )
                 return
+        if frame.get("Event") == "OriginateResponse" and frame.get("ActionID"):
+            try:
+                with self.factory.begin() as db:
+                    attempt = db.scalar(
+                        select(Attempt)
+                        .where(
+                            Attempt.id == UUID(frame["ActionID"]),
+                            Attempt.tenant_id == settings().telephony_tenant_id,
+                        )
+                        .with_for_update()
+                    )
+                    if attempt and frame.get("Channel") and len(frame["Channel"]) <= 160:
+                        attempt.channel = frame["Channel"]
+                        attempt.updated_at = now()
+            except (ValueError, TypeError):
+                pass
+        if frame.get("Event") == "Hangup":
+            channels = {str(frame.get("Channel") or ""), str(frame.get("Linkedid") or "")}
+            channels.discard("")
+            if channels:
+                try:
+                    with self.factory.begin() as db:
+                        attempt = db.scalar(
+                            select(Attempt)
+                            .where(
+                                Attempt.tenant_id == settings().telephony_tenant_id,
+                                Attempt.channel.in_(channels),
+                                Attempt.status.in_(ACTIVE),
+                            )
+                            .with_for_update()
+                        )
+                        if attempt:
+                            event = "completed" if attempt.status == "answered" else "failed"
+                            ingest(
+                                db,
+                                attempt.tenant_id,
+                                "multicom_ami",
+                                f"{attempt.id}:hangup:{frame.get('Uniqueid', '')}",
+                                str(attempt.id),
+                                event,
+                                {"reason": "ami_hangup_fallback"},
+                            )
+                    return
+                except (ValueError, TypeError):
+                    pass
         external = event = None
         if frame.get("Event") == "UserEvent" and frame.get("UserEvent") == "ATSCall":
             external, event = frame.get("AttemptID"), frame.get("State")
