@@ -38,8 +38,8 @@ class Login(Input):
 class ContactCreate(Input):
     name: str = Field(min_length=1, max_length=120)
     phone: str
-    consent: bool = False
-    consent_source: str = Field(default="", max_length=256)
+    consent: bool = True
+    consent_source: str = Field(default="Manual contact entry", max_length=256)
     crm_contact_id: int | None = Field(default=None, gt=0)
     _phone = field_validator("phone")(phone_e164)
 

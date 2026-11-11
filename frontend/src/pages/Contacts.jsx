@@ -91,6 +91,22 @@ export default function Contacts({ addToast, refreshKey }) {
     } else addToast(result?.error || 'Импорт amoCRM не выполнен', 'err');
   };
 
+  const amoSelectableItems = (amoJob?.items || []).filter(
+    (item) => !['invalid_phone', 'duplicate_phone', 'unchanged'].includes(item.action),
+  );
+  const amoAllSelected = amoSelectableItems.length > 0 && amoSelectableItems.every((item) => item.selected);
+  const toggleAllAmoItems = () => {
+    const selected = !amoAllSelected;
+    setAmoJob((current) => current ? {
+      ...current,
+      items: current.items.map((item) => (
+        ['invalid_phone', 'duplicate_phone', 'unchanged'].includes(item.action)
+          ? item
+          : { ...item, selected }
+      )),
+    } : current);
+  };
+
   // Toggle consent for a single contact
   const handleToggleSingleConsent = async (contact) => {
     const newConsentStatus = !contact.consent;
@@ -320,11 +336,15 @@ export default function Contacts({ addToast, refreshKey }) {
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
             {Object.entries(amoJob?.counts || {}).map(([key, value]) => <div key={key} className="rounded-lg bg-[#081221] border border-line p-2"><span className="text-dim block">{key}</span><b className="text-white">{value}</b></div>)}
           </div>
+          <label className="flex items-center gap-2 text-white cursor-pointer">
+            <input type="checkbox" checked={amoAllSelected} onChange={toggleAllAmoItems} disabled={!amoSelectableItems.length} />
+            <span>Выбрать все доступные контакты ({amoSelectableItems.length})</span>
+          </label>
           <div className="max-h-72 overflow-auto border border-line rounded-xl">
-            {(amoJob?.items || []).map((item) => <div key={item.id} className="flex items-center gap-3 px-3 py-2 border-b border-line/40"><input type="checkbox" checked={item.selected} disabled={item.action === 'invalid_phone' || item.action === 'duplicate_phone'} onChange={(event) => setAmoJob({ ...amoJob, items: amoJob.items.map((row) => row.id === item.id ? { ...row, selected: event.target.checked } : row) })} /><span className="text-white flex-1">{item.name || 'Без имени'} · {item.phone || 'нет телефона'}</span><span className="text-muted">{item.action}</span></div>)}
+            {(amoJob?.items || []).map((item) => <div key={item.id} className="flex items-center gap-3 px-3 py-2 border-b border-line/40"><input type="checkbox" checked={!!item.selected} disabled={['invalid_phone', 'duplicate_phone', 'unchanged'].includes(item.action)} onChange={(event) => setAmoJob((current) => ({ ...current, items: current.items.map((row) => row.id === item.id ? { ...row, selected: event.target.checked } : row) }))} /><span className="text-white flex-1">{item.name || 'Без имени'} · {item.phone || 'нет телефона'}</span><span className="text-muted">{item.action}</span></div>)}
           </div>
           <input value={amoConsentSource} onChange={(event) => setAmoConsentSource(event.target.value)} maxLength={256} className="w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white" placeholder="Источник согласия" />
-          <div className="flex justify-end gap-2"><button onClick={() => setAmoJob(null)} className="px-4 py-2 rounded-xl bg-line text-white">Отмена</button><button onClick={confirmAmoContacts} disabled={amoLoading || !amoConsentSource.trim()} className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#5b8cff] to-[#3d6bff] text-white font-bold disabled:opacity-50">Подтвердить импорт</button></div>
+          <div className="flex justify-end gap-2"><button onClick={() => setAmoJob(null)} className="px-4 py-2 rounded-xl bg-line text-white">Отмена</button><button onClick={confirmAmoContacts} disabled={amoLoading || !amoConsentSource.trim() || !amoJob?.items?.some((item) => item.selected)} className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#5b8cff] to-[#3d6bff] text-white font-bold disabled:opacity-50">Подтвердить импорт</button></div>
         </div>
       </Modal>
 

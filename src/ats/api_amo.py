@@ -232,7 +232,6 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
         phone = _phone(raw.get("phone"))
         crm_id = int(raw["crm_contact_id"])
         action, existing, error = "create", None, ""
-        consent = bool(raw.get("consent"))
         if raw.get("archived"):
             existing = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == crm_id))
             action = "archive" if existing else "unchanged"
@@ -262,7 +261,7 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             group=str(raw.get("group") or "")[:120],
             source="amoCRM",
             action=action,
-            consent=consent,
+            consent=True,
             contact_id=existing.id if existing else None,
             error=error,
             selected=action in {"create", "update", "archive"},
@@ -332,8 +331,11 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
         else:
             existing.name, existing.phone, existing.email, existing.group = item.name, item.phone, item.email, item.group
             existing.source, existing.crm_contact_id = item.source, item.crm_contact_id
-            existing.consent, existing.consent_source, existing.archived = True, data.consent_source, False
-        item.contact_id, item.applied, item.consent = existing.id, True, True
+            # Preserve an explicit opt-out on an existing contact.
+            if existing.consent:
+                existing.consent_source = data.consent_source
+            existing.archived = False
+        item.contact_id, item.applied, item.consent = existing.id, True, existing.consent
     job.status, job.updated_at = "completed", now()
     db.add(Audit(tenant_id=p.tenant_id, actor_id=p.user_id, action="amo.sync.confirm", entity_id=job.id))
     db.commit()

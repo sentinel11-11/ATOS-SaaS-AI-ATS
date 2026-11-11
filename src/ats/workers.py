@@ -596,13 +596,11 @@ class Worker:
                         counts["skipped"] += 1
                         continue
                     if existing is None:
-                        existing = repo.add(Contact, name=raw["name"], phone=phone, email=raw["email"], group=raw["group"], source="amoCRM", consent=bool(raw.get("consent")), consent_source="amoCRM", crm_contact_id=crm_id)
+                        existing = repo.add(Contact, name=raw["name"], phone=phone, email=raw["email"], group=raw["group"], source="amoCRM", consent=True, consent_source="amoCRM", crm_contact_id=crm_id)
                         counts["created"] += 1
                     else:
                         existing.name, existing.phone, existing.email, existing.group = raw["name"], phone, raw["email"], raw["group"]
                         existing.crm_contact_id, existing.source, existing.archived = crm_id, "amoCRM", False
-                        if raw.get("consent"):
-                            existing.consent, existing.consent_source = True, "amoCRM"
                         counts["updated"] += 1
                 row_job.counts, row_job.status, row_job.updated_at = counts, "completed", now()
                 if payload.get("event_key"):

@@ -18,8 +18,8 @@ class ContactEdit(ContactCreate):
 class ImportContacts(Input):
     text: str = Field(max_length=180000)
     list_id: UUID | None = None
-    consent: bool = False
-    consent_source: str = Field(default="", max_length=256)
+    consent: bool = True
+    consent_source: str = Field(default="CSV/XLSX import", max_length=256)
 
     @model_validator(mode="after")
     def source(self):

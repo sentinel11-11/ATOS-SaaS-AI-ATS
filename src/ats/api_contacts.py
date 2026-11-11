@@ -175,8 +175,8 @@ def contact_history(contact_id: UUID, p=Depends(principal), db=Depends(session))
 @router.post("/contacts-import-file")
 async def contacts_import_file(
     file: UploadFile,
-    consent: bool = Form(False),
-    consent_source: str = Form("", max_length=256),
+    consent: bool = Form(True),
+    consent_source: str = Form("CSV/XLSX import", max_length=256),
     list_id: UUID | None = Form(None),
     p=Depends(admin),
     db=Depends(session),
