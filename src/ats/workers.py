@@ -590,6 +590,13 @@ class Worker:
 
             with self.factory() as config_db:
                 runtime_config = settings_for_tenant(config_db, tenant_id)
+                provider_row = config_db.scalar(
+                    select(WorkspaceSettings).where(WorkspaceSettings.tenant_id == tenant_id)
+                )
+                provider_values = provider_row.values if provider_row else {}
+                amo_values = provider_values.get("amocrm", provider_values)
+                pipeline_id = amo_values.get("pipeline_id")
+                status_id = amo_values.get("status_id")
             if not runtime_config.crm_enabled or runtime_config.amo_tenant_id != tenant_id:
                 raise Rejected("crm_tenant_not_bound")
             crm = self.crm_drivers.get(str(tenant_id))
@@ -597,7 +604,12 @@ class Worker:
                 crm = self.crm_drivers[str(tenant_id)] = AmoCRM(runtime_config)
             raw_contacts = []
             for page in range(1, 21):
-                batch = crm.lead_contacts(page=page, limit=250)
+                batch = crm.lead_contacts(
+                    page=page,
+                    limit=250,
+                    pipeline_id=int(pipeline_id) if pipeline_id else None,
+                    status_id=int(status_id) if status_id else None,
+                )
                 raw_contacts.extend(batch)
                 if getattr(crm, "last_lead_page_count", len(batch)) < 250:
                     break

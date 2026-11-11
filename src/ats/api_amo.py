@@ -280,6 +280,8 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
                         status_id=data.status_id,
                     )
                     raw_contacts.extend(batch)
+                    if len(raw_contacts) >= data.limit:
+                        break
                     if getattr(crm, "last_lead_page_count", len(batch)) < 250:
                         break
             raw_contacts = _merge_contacts(raw_contacts)[: data.limit]
