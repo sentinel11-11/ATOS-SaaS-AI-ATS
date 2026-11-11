@@ -263,6 +263,10 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             ranges = [(created_from, created_to, None, None)]
             if created_from or created_to:
                 ranges.append((None, None, created_from, created_to))
+            if (data.pipeline_id or data.status_id) and (created_from or created_to):
+                # A lead created before the selected window can still be active
+                # in the selected funnel/stage during that window.
+                ranges.append((None, created_to, None, None))
             for range_created_from, range_created_to, updated_from, updated_to in ranges:
                 for page in range(1, 101):
                     batch = crm.lead_contacts(

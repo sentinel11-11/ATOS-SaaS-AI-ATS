@@ -45,6 +45,10 @@ export default function Contacts({ addToast, refreshKey }) {
   const [amoSyncOptionsOpen, setAmoSyncOptionsOpen] = useState(false);
   const [amoCreatedFrom, setAmoCreatedFrom] = useState('');
   const [amoCreatedTo, setAmoCreatedTo] = useState('');
+  const [amoSyncPipeline, setAmoSyncPipeline] = useState('');
+  const [amoSyncStage, setAmoSyncStage] = useState('');
+  const [amoSyncPipelines, setAmoSyncPipelines] = useState([]);
+  const [amoSyncStages, setAmoSyncStages] = useState([]);
   const [amoConsentSource, setAmoConsentSource] = useState('amoCRM: подтверждение администратора');
 
   // Import Options State
@@ -70,6 +74,18 @@ export default function Contacts({ addToast, refreshKey }) {
     loadContacts();
   }, [refreshKey]);
 
+  useEffect(() => {
+    if (!amoSyncPipeline) {
+      setAmoSyncStages([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api(`/api/v1/workspace/amo/pipelines/${amoSyncPipeline}/statuses`).then((result) => {
+      if (!cancelled) setAmoSyncStages(Array.isArray(result?.statuses) ? result.statuses : []);
+    });
+    return () => { cancelled = true; };
+  }, [amoSyncPipeline]);
+
   const loadContactCard = async (cid) => {
     setCardLoading(true);
     const res = await api(`/contacts/history?id=${cid}`);
@@ -92,11 +108,19 @@ export default function Contacts({ addToast, refreshKey }) {
     setAmoLoading(true);
     const result = await api('/api/v1/workspace/amo/sync/preview', {
       method: 'POST',
-      body: { limit: 5000, created_from: amoCreatedFrom || null, created_to: amoCreatedTo || null },
+      body: { limit: 5000, created_from: amoCreatedFrom || null, created_to: amoCreatedTo || null, pipeline_id: amoSyncPipeline ? Number(amoSyncPipeline) : null, status_id: amoSyncStage ? Number(amoSyncStage) : null },
     });
     setAmoLoading(false);
     if (result?.job_id) setAmoJob(result);
     else addToast(result?.error || 'Не удалось получить контакты amoCRM', 'err');
+  };
+
+  const openAmoSyncOptions = async () => {
+    setAmoSyncOptionsOpen(true);
+    if (!amoSyncPipelines.length) {
+      const result = await api('/api/v1/workspace/amo/pipelines');
+      if (Array.isArray(result?.pipelines)) setAmoSyncPipelines(result.pipelines);
+    }
   };
 
   const confirmAmoContacts = async () => {
@@ -343,7 +367,7 @@ export default function Contacts({ addToast, refreshKey }) {
             <Upload className="w-4 h-4" /> Импорт из CSV / Excel
           </button>
           <button
-            onClick={() => setAmoSyncOptionsOpen(true)}
+            onClick={openAmoSyncOptions}
             disabled={amoLoading}
             className="px-4 py-2 rounded-xl bg-emerald-600/80 hover:bg-emerald-600 font-semibold text-xs text-white flex items-center gap-1.5 disabled:opacity-50"
           >
@@ -358,6 +382,10 @@ export default function Contacts({ addToast, refreshKey }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="text-muted">Созданы с даты<input type="date" value={amoCreatedFrom} onChange={(event) => setAmoCreatedFrom(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white cursor-text" /></label>
             <label className="text-muted">Созданы по дату<input type="date" value={amoCreatedTo} onChange={(event) => setAmoCreatedTo(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white cursor-text" /></label>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-muted">Воронка amoCRM<select value={amoSyncPipeline} onChange={(event) => { setAmoSyncPipeline(event.target.value); setAmoSyncStage(''); }} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white"><option value="">Все воронки</option>{amoSyncPipelines.map((pipeline) => <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>)}</select></label>
+            <label className="text-muted">Этап выбранной воронки<select value={amoSyncStage} onChange={(event) => setAmoSyncStage(event.target.value)} disabled={!amoSyncPipeline} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white"><option value="">Все этапы</option>{amoSyncStages.map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}</select></label>
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t border-line">
             <button onClick={() => setAmoSyncOptionsOpen(false)} className="px-4 py-2 rounded-xl bg-line text-white">Отмена</button>
