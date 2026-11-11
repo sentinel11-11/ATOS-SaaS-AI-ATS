@@ -194,7 +194,7 @@ class AmoCRM:
         values["status_names"] = [str(x.get("status_name") or x.get("status") or "") for x in leads if isinstance(x, dict) and (x.get("status_name") or x.get("status"))]
         return values
 
-    def contacts(self, page=1, limit=250, ids=None):
+    def contacts(self, page=1, limit=250, ids=None, enrich_missing=False):
         params = {"page": page, "limit": min(250, max(1, limit)), "with": "leads"}
         if ids:
             params["filter[id][]"] = [int(i) for i in ids]
@@ -204,7 +204,7 @@ class AmoCRM:
             normalized = self.normalize_contact(item)
             # Some amoCRM accounts omit linked leads from collection responses
             # even with `with=leads`; the detail endpoint returns them.
-            if not normalized["pipeline_ids"] and item.get("id"):
+            if enrich_missing and not normalized["pipeline_ids"] and item.get("id"):
                 detail = self.read(f"/api/v4/contacts/{int(item['id'])}", {"with": "leads"})
                 detailed = self.normalize_contact(detail)
                 for key in ("pipeline_ids", "status_ids", "pipeline_names", "status_names"):

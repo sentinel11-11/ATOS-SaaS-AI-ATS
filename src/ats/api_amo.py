@@ -236,7 +236,7 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
     crm = _crm(db, p.tenant_id)
     try:
         if data.contact_ids:
-            raw_contacts = crm.contacts(ids=data.contact_ids, limit=min(data.limit, 250))
+            raw_contacts = crm.contacts(ids=data.contact_ids, limit=min(data.limit, 250), enrich_missing=True)
         else:
             raw_contacts = []
             for page in range(1, 21):
