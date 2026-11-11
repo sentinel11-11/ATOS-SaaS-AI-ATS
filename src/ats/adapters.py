@@ -219,7 +219,7 @@ class AmoCRM:
             result.append(normalized)
         return result
 
-    def lead_contacts(self, page=1, limit=250, created_from=None, created_to=None, updated_from=None, updated_to=None):
+    def lead_contacts(self, page=1, limit=250, created_from=None, created_to=None, updated_from=None, updated_to=None, pipeline_id=None, status_id=None):
         """Return unique contacts linked to leads, carrying lead attribution."""
         params = {"page": page, "limit": min(250, max(1, limit)), "with": "contacts"}
         if created_from:
@@ -230,6 +230,10 @@ class AmoCRM:
             params["filter[updated_at][from]"] = int(updated_from)
         if updated_to:
             params["filter[updated_at][to]"] = int(updated_to)
+        if pipeline_id:
+            params["filter[statuses][0][pipeline_id]"] = int(pipeline_id)
+        if status_id:
+            params["filter[statuses][0][status_id]"] = int(status_id)
         data = self.read("/api/v4/leads", params)
         self.last_lead_page_count = len(data.get("_embedded", {}).get("leads", []))
         lead_context = {}

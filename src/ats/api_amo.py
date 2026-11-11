@@ -276,6 +276,8 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
                         created_to=range_created_to,
                         updated_from=updated_from,
                         updated_to=updated_to,
+                        pipeline_id=data.pipeline_id,
+                        status_id=data.status_id,
                     )
                     raw_contacts.extend(batch)
                     if getattr(crm, "last_lead_page_count", len(batch)) < 250:

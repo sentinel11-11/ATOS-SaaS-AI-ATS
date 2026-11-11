@@ -106,10 +106,14 @@ export default function Contacts({ addToast, refreshKey }) {
     }
     setAmoSyncOptionsOpen(false);
     setAmoLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 60000);
     const result = await api('/api/v1/workspace/amo/sync/preview', {
       method: 'POST',
       body: { limit: 5000, created_from: amoCreatedFrom || null, created_to: amoCreatedTo || null, pipeline_id: amoSyncPipeline ? Number(amoSyncPipeline) : null, status_id: amoSyncStage ? Number(amoSyncStage) : null },
+      signal: controller.signal,
     });
+    window.clearTimeout(timeout);
     setAmoLoading(false);
     if (result?.job_id) setAmoJob(result);
     else addToast(result?.error || 'Не удалось получить контакты amoCRM', 'err');
