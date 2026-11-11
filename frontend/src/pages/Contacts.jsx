@@ -356,8 +356,8 @@ export default function Contacts({ addToast, refreshKey }) {
         <div className="flex flex-col gap-4 text-xs">
           <p className="text-muted">Выберите период создания карточек (сделок) в amoCRM. Если даты не указаны, будут загружены все доступные карточки постранично.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-muted">Созданы с даты<input type="date" value={amoCreatedFrom} onChange={(event) => setAmoCreatedFrom(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white" /></label>
-            <label className="text-muted">Созданы по дату<input type="date" value={amoCreatedTo} onChange={(event) => setAmoCreatedTo(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white" /></label>
+            <label className="text-muted">Созданы с даты<input type="date" value={amoCreatedFrom} onChange={(event) => setAmoCreatedFrom(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white cursor-text" /></label>
+            <label className="text-muted">Созданы по дату<input type="date" value={amoCreatedTo} onChange={(event) => setAmoCreatedTo(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white cursor-text" /></label>
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t border-line">
             <button onClick={() => setAmoSyncOptionsOpen(false)} className="px-4 py-2 rounded-xl bg-line text-white">Отмена</button>

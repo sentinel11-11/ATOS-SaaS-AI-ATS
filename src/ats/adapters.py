@@ -227,7 +227,7 @@ class AmoCRM:
         if created_to:
             params["filter[created_at][to]"] = int(created_to)
         data = self.read("/api/v4/leads", params)
-        by_id = {}
+        lead_context = {}
         for lead in data.get("_embedded", {}).get("leads", []):
             pipeline_id = lead.get("pipeline_id")
             stage_id = lead.get("status_id")
@@ -239,22 +239,28 @@ class AmoCRM:
                 contact_id = linked_contact.get("id")
                 if not contact_id:
                     continue
-                raw = linked_contact
-                if not raw.get("custom_fields_values"):
-                    raw = self.read(f"/api/v4/contacts/{int(contact_id)}")
-                normalized = self.normalize_contact(raw)
-                normalized["pipeline_ids"] = list(dict.fromkeys(normalized.get("pipeline_ids", []) + ([int(pipeline_id)] if pipeline_id else [])))
-                normalized["status_ids"] = list(dict.fromkeys(normalized.get("status_ids", []) + ([int(stage_id)] if stage_id else [])))
-                normalized["tag_names"] = list(dict.fromkeys(normalized.get("tag_names", []) + lead_tag_names))
-                if responsible_id and not normalized.get("responsible_user_id"):
-                    normalized["responsible_user_id"] = responsible_id
-                current = by_id.get(normalized["crm_contact_id"])
-                if current:
-                    current["pipeline_ids"] = list(dict.fromkeys(current["pipeline_ids"] + normalized["pipeline_ids"]))
-                    current["status_ids"] = list(dict.fromkeys(current["status_ids"] + normalized["status_ids"]))
-                    current["tag_names"] = list(dict.fromkeys(current.get("tag_names", []) + normalized.get("tag_names", [])))
-                else:
-                    by_id[normalized["crm_contact_id"]] = normalized
+                context = lead_context.setdefault(int(contact_id), {"pipeline_ids": [], "status_ids": [], "tag_names": [], "responsible_user_id": None})
+                if pipeline_id:
+                    context["pipeline_ids"].append(int(pipeline_id))
+                if stage_id:
+                    context["status_ids"].append(int(stage_id))
+                context["tag_names"].extend(lead_tag_names)
+                context["responsible_user_id"] = context["responsible_user_id"] or responsible_id
+        by_id = {}
+        contact_ids = list(lead_context)
+        for start in range(0, len(contact_ids), 250):
+            batch_ids = contact_ids[start : start + 250]
+            full = self.contacts(ids=batch_ids, limit=250, enrich_missing=False)
+            by_id.update({item["crm_contact_id"]: item for item in full})
+        for contact_id, context in lead_context.items():
+            normalized = by_id.get(contact_id)
+            if not normalized:
+                continue
+            normalized["pipeline_ids"] = list(dict.fromkeys(normalized.get("pipeline_ids", []) + context["pipeline_ids"]))
+            normalized["status_ids"] = list(dict.fromkeys(normalized.get("status_ids", []) + context["status_ids"]))
+            normalized["tag_names"] = list(dict.fromkeys(normalized.get("tag_names", []) + context["tag_names"]))
+            if context["responsible_user_id"] and not normalized.get("responsible_user_id"):
+                normalized["responsible_user_id"] = context["responsible_user_id"]
         return list(by_id.values())
 
     def pipelines(self):
