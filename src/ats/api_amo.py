@@ -249,7 +249,12 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
                 action, error = "duplicate_phone", "duplicate_phone"
             if existing:
                 if action != "duplicate_phone":
-                    action = "update" if (existing.name != raw.get("name", "") or existing.phone != phone or existing.email != raw.get("email", "")) else "unchanged"
+                    action = "update" if (
+                        existing.archived
+                        or existing.name != raw.get("name", "")
+                        or existing.phone != phone
+                        or existing.email != raw.get("email", "")
+                    ) else "unchanged"
         counts[action] = counts.get(action, 0) + 1
         item = AmoSyncItem(
             tenant_id=p.tenant_id,
