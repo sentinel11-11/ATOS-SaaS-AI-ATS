@@ -3,6 +3,24 @@ import { Upload, Plus, Trash2, Users, FileSpreadsheet, ShieldAlert, Search, Filt
 import { api, openWithTicket } from '../api';
 import Modal from '../components/Modal';
 
+function NewContactModal({ isOpen, onClose, onSave }) {
+  const [draft, setDraft] = useState({ phone: '', name: '', group_name: '', consent: true });
+  useEffect(() => {
+    if (isOpen) setDraft({ phone: '', name: '', group_name: '', consent: true });
+  }, [isOpen]);
+  const update = (field, value) => setDraft((current) => ({ ...current, [field]: value }));
+  return <Modal isOpen={isOpen} onClose={onClose} title="Новый контакт">
+    <div className="flex flex-col gap-4 text-xs">
+      {[['phone', 'Телефон (E.164)', '79260000000', 'font-mono'], ['name', 'Имя клиента', 'Иван Петров', ''], ['group_name', 'Группа / Категория', 'Клиенты VIP', '']].map(([field, label, placeholder, extra]) => <div key={field}>
+        <label className="font-semibold text-muted block mb-1">{label}</label>
+        <input className={`w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc ${extra}`} value={draft[field]} onChange={(event) => update(field, event.target.value)} placeholder={placeholder} />
+      </div>)}
+      <div className="flex items-center gap-2 pt-1"><input type="checkbox" id="cConsent" checked={draft.consent} onChange={(event) => update('consent', event.target.checked)} className="accent-acc w-4 h-4 cursor-pointer" /><label htmlFor="cConsent" className="text-white font-medium cursor-pointer">Есть согласие на обзвон (152-ФЗ)</label></div>
+      <div className="flex items-center justify-end gap-3 mt-4 pt-4 border-t border-line"><button onClick={onClose} className="px-4 py-2 rounded-xl bg-line/50 hover:bg-line text-white">Отмена</button><button onClick={() => onSave(draft)} className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#5b8cff] to-[#3d6bff] font-bold text-white shadow-lg">Сохранить</button></div>
+    </div>
+  </Modal>;
+}
+
 export default function Contacts({ addToast, refreshKey }) {
   const [contacts, setContacts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
@@ -31,13 +49,6 @@ export default function Contacts({ addToast, refreshKey }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importReport, setImportReport] = useState(null);
-
-  const [newContact, setNewContact] = useState({
-    phone: '',
-    name: '',
-    group_name: '',
-    consent: true,
-  });
 
   const loadContacts = async () => {
     if (!loaded) setLoading(true);
@@ -233,9 +244,9 @@ export default function Contacts({ addToast, refreshKey }) {
     }
   };
 
-  const handleSaveContact = async () => {
-    if (!newContact.phone) return addToast('Укажите телефон', 'warn');
-    const res = await api('/contacts/save', { body: newContact });
+  const handleSaveContact = async (contact) => {
+    if (!contact.phone) return addToast('Укажите телефон', 'warn');
+    const res = await api('/contacts/save', { body: contact });
     if (res && res.ok) {
       if (res.updated_existing) {
         addToast('Контакт с этим номером уже был в БД — данные обновлены (защита от дублей)', 'ok');
@@ -243,7 +254,6 @@ export default function Contacts({ addToast, refreshKey }) {
         addToast('Новый контакт успешно создан', 'ok');
       }
       setShowNewModal(false);
-      setNewContact({ phone: '', name: '', group_name: '', consent: true });
       loadContacts();
     } else {
       addToast('Ошибка сохранения контакта: ' + (res?.error || '?'), 'err');
@@ -505,58 +515,7 @@ export default function Contacts({ addToast, refreshKey }) {
         </table>
       </div>
 
-      {/* New Contact Modal */}
-      <Modal isOpen={showNewModal} onClose={() => setShowNewModal(false)} title="Новый контакт">
-        <div className="flex flex-col gap-4 text-xs">
-          <div>
-            <label className="font-semibold text-muted block mb-1">Телефон (E.164)</label>
-            <input
-              className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-sm font-mono text-white outline-none focus:border-acc"
-              value={newContact.phone}
-              onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })}
-              placeholder="79260000000"
-            />
-          </div>
-          <div>
-            <label className="font-semibold text-muted block mb-1">Имя клиента</label>
-            <input
-              className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
-              value={newContact.name}
-              onChange={(e) => setNewContact({ ...newContact, name: e.target.value })}
-              placeholder="Иван Петров"
-            />
-          </div>
-          <div>
-            <label className="font-semibold text-muted block mb-1">Группа / Категория</label>
-            <input
-              className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
-              value={newContact.group_name}
-              onChange={(e) => setNewContact({ ...newContact, group_name: e.target.value })}
-              placeholder="Клиенты VIP"
-            />
-          </div>
-          <div className="flex items-center gap-2 pt-1">
-            <input
-              type="checkbox"
-              id="cConsent"
-              checked={newContact.consent}
-              onChange={(e) => setNewContact({ ...newContact, consent: e.target.checked })}
-              className="accent-acc w-4 h-4 cursor-pointer"
-            />
-            <label htmlFor="cConsent" className="text-white font-medium cursor-pointer">
-              Есть согласие на обзвон (152-ФЗ)
-            </label>
-          </div>
-          <div className="flex items-center justify-end gap-3 mt-4 pt-4 border-t border-line">
-            <button onClick={() => setShowNewModal(false)} className="px-4 py-2 rounded-xl bg-line/50 hover:bg-line text-white">
-              Отмена
-            </button>
-            <button onClick={handleSaveContact} className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#5b8cff] to-[#3d6bff] font-bold text-white shadow-lg">
-              Сохранить
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <NewContactModal isOpen={showNewModal} onClose={() => setShowNewModal(false)} onSave={handleSaveContact} />
 
       {/* Import File Modal */}
       <Modal isOpen={showImportModal} onClose={() => setShowImportModal(false)} title="Импорт контактов из файла (CSV / Excel)">
