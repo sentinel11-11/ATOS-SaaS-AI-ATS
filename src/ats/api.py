@@ -624,7 +624,7 @@ async def megafon_events(request: Request, db=Depends(session)):
     if not expected or not secrets.compare_digest(supplied, expected):
         raise Problem(403, "webhook_rejected")
     cmd = str(payload.get("cmd") or payload.get("command") or "history").lower()
-    raw_status = str(payload.get("status") or payload.get("result") or "").lower()
+    raw_status = str(payload.get("status") or payload.get("result") or payload.get("type") or payload.get("event") or "").lower()
     event = _megafon_history_event(raw_status) if cmd == "history" else None
     if event is None and cmd == "event":
         event = _megafon_event(raw_status)
