@@ -231,6 +231,25 @@ def _item_json(item):
     }
 
 
+def _merge_contacts(rows):
+    merged = {}
+    for row in rows:
+        current = merged.get(row["crm_contact_id"])
+        if not current:
+            merged[row["crm_contact_id"]] = row
+            continue
+        for key in ("pipeline_ids", "status_ids", "tag_names"):
+            current[key] = list(dict.fromkeys(current.get(key, []) + row.get(key, [])))
+        current["pipeline_stages"] = list({
+            (pair["pipeline_id"], pair["stage_id"]): pair
+            for pair in current.get("pipeline_stages", []) + row.get("pipeline_stages", [])
+            if pair.get("pipeline_id") and pair.get("stage_id")
+        }.values())
+        if not current.get("responsible_user_id"):
+            current["responsible_user_id"] = row.get("responsible_user_id")
+    return list(merged.values())
+
+
 @router.post("/sync/preview")
 def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
     crm = _crm(db, p.tenant_id)
@@ -241,12 +260,23 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             raw_contacts = []
             created_from = int(datetime.combine(data.created_from, time.min, tzinfo=timezone.utc).timestamp()) if data.created_from else None
             created_to = int(datetime.combine(data.created_to, time.max, tzinfo=timezone.utc).timestamp()) if data.created_to else None
-            for page in range(1, 101):
-                batch = crm.lead_contacts(page=page, limit=250, created_from=created_from, created_to=created_to)
-                raw_contacts.extend(batch)
-                if len(raw_contacts) >= data.limit or getattr(crm, "last_lead_page_count", len(batch)) < 250:
-                    raw_contacts = raw_contacts[: data.limit]
-                    break
+            ranges = [(created_from, created_to, None, None)]
+            if created_from or created_to:
+                ranges.append((None, None, created_from, created_to))
+            for range_created_from, range_created_to, updated_from, updated_to in ranges:
+                for page in range(1, 101):
+                    batch = crm.lead_contacts(
+                        page=page,
+                        limit=250,
+                        created_from=range_created_from,
+                        created_to=range_created_to,
+                        updated_from=updated_from,
+                        updated_to=updated_to,
+                    )
+                    raw_contacts.extend(batch)
+                    if getattr(crm, "last_lead_page_count", len(batch)) < 250:
+                        break
+            raw_contacts = _merge_contacts(raw_contacts)[: data.limit]
         if data.pipeline_id is not None:
             raw_contacts = [item for item in raw_contacts if data.pipeline_id in item.get("pipeline_ids", []) and (data.status_id is None or data.status_id in item.get("status_ids", []))]
     except (Rejected, Retryable) as exc:

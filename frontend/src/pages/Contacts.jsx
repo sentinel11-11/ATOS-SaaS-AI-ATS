@@ -354,7 +354,7 @@ export default function Contacts({ addToast, refreshKey }) {
 
       <Modal isOpen={amoSyncOptionsOpen} onClose={() => !amoLoading && setAmoSyncOptionsOpen(false)} title="Параметры синхронизации amoCRM">
         <div className="flex flex-col gap-4 text-xs">
-          <p className="text-muted">Выберите период создания карточек (сделок) в amoCRM. Если даты не указаны, будут загружены все доступные карточки постранично.</p>
+          <p className="text-muted">Выберите период актуализации карточек (сделок) в amoCRM. В импорт попадут сделки, созданные или изменённые в этом периоде; одинаковые контакты объединяются.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="text-muted">Созданы с даты<input type="date" value={amoCreatedFrom} onChange={(event) => setAmoCreatedFrom(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white cursor-text" /></label>
             <label className="text-muted">Созданы по дату<input type="date" value={amoCreatedTo} onChange={(event) => setAmoCreatedTo(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white cursor-text" /></label>
