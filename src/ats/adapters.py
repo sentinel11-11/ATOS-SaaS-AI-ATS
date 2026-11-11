@@ -194,10 +194,14 @@ class AmoCRM:
         values["status_names"] = [str(x.get("status_name") or x.get("status") or "") for x in leads if isinstance(x, dict) and (x.get("status_name") or x.get("status"))]
         return values
 
-    def contacts(self, page=1, limit=250, ids=None, enrich_missing=False):
+    def contacts(self, page=1, limit=250, ids=None, enrich_missing=False, created_from=None, created_to=None):
         params = {"page": page, "limit": min(250, max(1, limit)), "with": "leads"}
         if ids:
             params["filter[id][]"] = [int(i) for i in ids]
+        if created_from:
+            params["filter[created_at][from]"] = int(created_from)
+        if created_to:
+            params["filter[created_at][to]"] = int(created_to)
         data = self.read("/api/v4/contacts", params)
         result = []
         for item in data.get("_embedded", {}).get("contacts", []):

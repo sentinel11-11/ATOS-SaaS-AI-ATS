@@ -42,6 +42,9 @@ export default function Contacts({ addToast, refreshKey }) {
   const [cardLoading, setCardLoading] = useState(false);
   const [amoJob, setAmoJob] = useState(null);
   const [amoLoading, setAmoLoading] = useState(false);
+  const [amoSyncOptionsOpen, setAmoSyncOptionsOpen] = useState(false);
+  const [amoCreatedFrom, setAmoCreatedFrom] = useState('');
+  const [amoCreatedTo, setAmoCreatedTo] = useState('');
   const [amoConsentSource, setAmoConsentSource] = useState('amoCRM: подтверждение администратора');
 
   // Import Options State
@@ -81,8 +84,16 @@ export default function Contacts({ addToast, refreshKey }) {
   };
 
   const previewAmoContacts = async () => {
+    if (amoCreatedFrom && amoCreatedTo && amoCreatedTo < amoCreatedFrom) {
+      addToast('Дата окончания не может быть раньше даты начала', 'warn');
+      return;
+    }
+    setAmoSyncOptionsOpen(false);
     setAmoLoading(true);
-    const result = await api('/api/v1/workspace/amo/sync/preview', { method: 'POST', body: { limit: 5000 } });
+    const result = await api('/api/v1/workspace/amo/sync/preview', {
+      method: 'POST',
+      body: { limit: 5000, created_from: amoCreatedFrom || null, created_to: amoCreatedTo || null },
+    });
     setAmoLoading(false);
     if (result?.job_id) setAmoJob(result);
     else addToast(result?.error || 'Не удалось получить контакты amoCRM', 'err');
@@ -332,7 +343,7 @@ export default function Contacts({ addToast, refreshKey }) {
             <Upload className="w-4 h-4" /> Импорт из CSV / Excel
           </button>
           <button
-            onClick={previewAmoContacts}
+            onClick={() => setAmoSyncOptionsOpen(true)}
             disabled={amoLoading}
             className="px-4 py-2 rounded-xl bg-emerald-600/80 hover:bg-emerald-600 font-semibold text-xs text-white flex items-center gap-1.5 disabled:opacity-50"
           >
@@ -340,6 +351,20 @@ export default function Contacts({ addToast, refreshKey }) {
           </button>
         </div>
       </div>
+
+      <Modal isOpen={amoSyncOptionsOpen} onClose={() => !amoLoading && setAmoSyncOptionsOpen(false)} title="Параметры синхронизации amoCRM">
+        <div className="flex flex-col gap-4 text-xs">
+          <p className="text-muted">Выберите период создания карточек. Если даты не указаны, будут загружены все доступные карточки постранично.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-muted">Созданы с даты<input type="date" value={amoCreatedFrom} onChange={(event) => setAmoCreatedFrom(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white" /></label>
+            <label className="text-muted">Созданы по дату<input type="date" value={amoCreatedTo} onChange={(event) => setAmoCreatedTo(event.target.value)} className="mt-1 w-full bg-[#081221] border border-line rounded-xl px-3 py-2 text-white" /></label>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-line">
+            <button onClick={() => setAmoSyncOptionsOpen(false)} className="px-4 py-2 rounded-xl bg-line text-white">Отмена</button>
+            <button onClick={previewAmoContacts} disabled={amoLoading} className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#5b8cff] to-[#3d6bff] text-white font-bold disabled:opacity-50">Загрузить preview</button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal isOpen={!!amoJob} onClose={() => !amoLoading && setAmoJob(null)} title="Предварительный просмотр amoCRM" wide>
         <div className="flex flex-col gap-4 text-xs">

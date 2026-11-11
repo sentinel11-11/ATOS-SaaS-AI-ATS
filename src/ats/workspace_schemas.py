@@ -1,5 +1,6 @@
 """Validated commands for the operator workspace. No arbitrary ORM/setting dictionaries."""
 
+from datetime import date
 from typing import Literal
 from uuid import UUID
 
@@ -186,6 +187,14 @@ class AmoSyncPreview(Input):
     mode: Literal["manual", "scheduled"] = "manual"
     pipeline_id: int | None = Field(default=None, gt=0)
     status_id: int | None = Field(default=None, gt=0)
+    created_from: date | None = None
+    created_to: date | None = None
+
+    @model_validator(mode="after")
+    def valid_date_range(self):
+        if self.created_from and self.created_to and self.created_to < self.created_from:
+            raise ValueError("created_to must be on or after created_from")
+        return self
 
     @field_validator("contact_ids")
     @classmethod
