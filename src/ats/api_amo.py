@@ -235,7 +235,16 @@ def _item_json(item):
 def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
     crm = _crm(db, p.tenant_id)
     try:
-        raw_contacts = crm.contacts(ids=data.contact_ids, limit=data.limit) if data.contact_ids else crm.contacts(limit=data.limit)
+        if data.contact_ids:
+            raw_contacts = crm.contacts(ids=data.contact_ids, limit=min(data.limit, 250))
+        else:
+            raw_contacts = []
+            for page in range(1, 21):
+                batch = crm.contacts(page=page, limit=250)
+                raw_contacts.extend(batch)
+                if len(raw_contacts) >= data.limit or len(batch) < 250:
+                    raw_contacts = raw_contacts[: data.limit]
+                    break
         if data.pipeline_id is not None:
             raw_contacts = [item for item in raw_contacts if data.pipeline_id in item.get("pipeline_ids", []) and (data.status_id is None or data.status_id in item.get("status_ids", []))]
     except (Rejected, Retryable) as exc:
@@ -249,12 +258,19 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
     db.flush()
     repo = TenantRepository(db, p.tenant_id)
     seen_phones = set()
-    counts = {"create": 0, "update": 0, "unchanged": 0, "duplicate_phone": 0, "invalid_phone": 0, "archive": 0}
+    seen_crm_ids = set()
+    counts = {"create": 0, "update": 0, "unchanged": 0, "duplicate_phone": 0, "duplicate_crm_id": 0, "invalid_phone": 0, "archive": 0}
     for raw in raw_contacts:
         phone = _phone(raw.get("phone"))
         crm_id = int(raw["crm_contact_id"])
         action, existing, error = "create", None, ""
-        if raw.get("archived"):
+        if crm_id in seen_crm_ids:
+            action, error = "duplicate_crm_id", "duplicate_crm_id"
+        else:
+            seen_crm_ids.add(crm_id)
+        if action == "duplicate_crm_id":
+            pass
+        elif raw.get("archived"):
             existing = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == crm_id))
             action = "archive" if existing else "unchanged"
         elif not phone:
@@ -344,7 +360,7 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
     if len(items) != len(set(data.item_ids)):
         raise Problem(404, "amo_sync_item_not_found")
     for item in items:
-        if item.action in {"invalid_phone", "duplicate_phone"}:
+        if item.action in {"invalid_phone", "duplicate_phone", "duplicate_crm_id"}:
             continue
         if item.action == "unchanged":
             if item.contact_id:

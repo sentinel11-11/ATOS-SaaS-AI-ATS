@@ -182,7 +182,7 @@ class RetryJob(Input):
 
 class AmoSyncPreview(Input):
     contact_ids: list[int] | None = Field(default=None, max_length=250)
-    limit: int = Field(default=250, ge=1, le=250)
+    limit: int = Field(default=5000, ge=1, le=5000)
     mode: Literal["manual", "scheduled"] = "manual"
     pipeline_id: int | None = Field(default=None, gt=0)
     status_id: int | None = Field(default=None, gt=0)
@@ -216,7 +216,7 @@ class AmoWidgetCard(Input):
 
 
 class AmoSyncConfirm(Input):
-    item_ids: list[UUID] = Field(min_length=1, max_length=250)
+    item_ids: list[UUID] = Field(min_length=1, max_length=5000)
     consent_source: str = Field(min_length=1, max_length=256)
 
     @field_validator("item_ids")

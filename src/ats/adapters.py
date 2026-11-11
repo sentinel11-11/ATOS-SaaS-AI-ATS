@@ -198,7 +198,21 @@ class AmoCRM:
         if ids:
             params["filter[id][]"] = [int(i) for i in ids]
         data = self.read("/api/v4/contacts", params)
-        return [self.normalize_contact(item) for item in data.get("_embedded", {}).get("contacts", [])]
+        result = []
+        for item in data.get("_embedded", {}).get("contacts", []):
+            normalized = self.normalize_contact(item)
+            # Some amoCRM accounts omit linked leads from collection responses
+            # even with `with=leads`; the detail endpoint returns them.
+            if not normalized["pipeline_ids"] and item.get("id"):
+                detail = self.read(f"/api/v4/contacts/{int(item['id'])}", {"with": "leads"})
+                detailed = self.normalize_contact(detail)
+                for key in ("pipeline_ids", "status_ids", "pipeline_names", "status_names"):
+                    if detailed.get(key):
+                        normalized[key] = detailed[key]
+                if not normalized.get("responsible_user_id"):
+                    normalized["responsible_user_id"] = detailed.get("responsible_user_id")
+            result.append(normalized)
+        return result
 
     def pipelines(self):
         return self.read("/api/v4/leads/pipelines", {"limit": 250}).get("_embedded", {}).get("pipelines", [])
