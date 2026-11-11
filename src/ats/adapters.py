@@ -171,6 +171,7 @@ class AmoCRM:
         values["crm_contact_id"] = int(raw["id"])
         values["responsible_user_id"] = raw.get("responsible_user_id")
         tags = raw.get("_embedded", {}).get("tags", []) or raw.get("tags", []) or []
+        values["tag_names"] = [str(tag.get("name") or "").strip() for tag in tags if tag.get("name")]
         if tags:
             values["group"] = str(tags[0].get("name") or "")[:120]
         values["updated_at"] = raw.get("updated_at")

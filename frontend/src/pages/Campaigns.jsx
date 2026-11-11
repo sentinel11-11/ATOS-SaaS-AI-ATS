@@ -34,6 +34,9 @@ export default function Campaigns({ addToast, refreshKey }) {
   const [selectedContactIds, setSelectedContactIds] = useState([]);
   const [selectedDbId, setSelectedDbId] = useState('');
   const [contactSearchQuery, setContactSearchQuery] = useState('');
+  const [selectedCrmTag, setSelectedCrmTag] = useState('');
+  const [selectedCrmPipeline, setSelectedCrmPipeline] = useState('');
+  const [selectedCrmStage, setSelectedCrmStage] = useState('');
 
   const loadAll = async () => {
     if (!loaded) setLoading(true);
@@ -201,6 +204,9 @@ export default function Campaigns({ addToast, refreshKey }) {
     setSelectedContactIds([]);
     setSelectedDbId(databases[0]?.id || '');
     setContactSearchQuery('');
+    setSelectedCrmTag('');
+    setSelectedCrmPipeline('');
+    setSelectedCrmStage('');
   };
 
   const handleAddSelectedContacts = async () => {
@@ -262,6 +268,48 @@ export default function Campaigns({ addToast, refreshKey }) {
     const q = contactSearchQuery.toLowerCase().trim();
     return !q || (c.name && c.name.toLowerCase().includes(q)) || (c.phone && c.phone.includes(q));
   }).slice(0, 300);
+
+  const crmTags = [...new Set(contacts.flatMap((contact) => contact.crm_context?.tags || []))].sort();
+  const crmPipelines = [...new Map(contacts.flatMap((contact) => {
+    const context = contact.crm_context || {};
+    return context.pipeline_id ? [[String(context.pipeline_id), context.pipeline_name || `Воронка ${context.pipeline_id}`]] : [];
+  }))].sort((a, b) => a[1].localeCompare(b[1]));
+  const crmStages = [...new Map(contacts.flatMap((contact) => {
+    const context = contact.crm_context || {};
+    return context.stage_id ? [[String(context.stage_id), context.stage_name || `Этап ${context.stage_id}`]] : [];
+  }))].sort((a, b) => a[1].localeCompare(b[1]));
+  const handleAddCrmFilter = async () => {
+    if (!addContactsModalCampId || (!selectedCrmTag && !selectedCrmPipeline && !selectedCrmStage)) return;
+    const res = await api(`/campaigns/${addContactsModalCampId}/add-contacts`, {
+      method: 'POST',
+      body: {
+        crm_tag: selectedCrmTag,
+        crm_pipeline_id: selectedCrmPipeline ? Number(selectedCrmPipeline) : null,
+        crm_stage_id: selectedCrmStage ? Number(selectedCrmStage) : null,
+      },
+    });
+    if (res && res.ok) {
+      addToast(`Добавлено контактов по фильтру CRM: +${res.added || 0}`, 'ok');
+      setAddContactsModalCampId(null);
+      loadAll();
+    } else addToast('Ошибка добавления по фильтру: ' + (res?.error || '?'), 'err');
+  };
+  const handleCreateCrmCampaign = async () => {
+    if (!selectedCrmTag && !selectedCrmPipeline && !selectedCrmStage) return;
+    const res = await api('/campaigns/create-by-crm-filter', {
+      method: 'POST',
+      body: {
+        crm_tag: selectedCrmTag,
+        crm_pipeline_id: selectedCrmPipeline ? Number(selectedCrmPipeline) : null,
+        crm_stage_id: selectedCrmStage ? Number(selectedCrmStage) : null,
+      },
+    });
+    if (res && res.ok) {
+      addToast(`Кампания создана: +${res.added || 0} контактов`, 'ok');
+      setAddContactsModalCampId(null);
+      loadAll();
+    } else addToast('Ошибка создания кампании: ' + (res?.error || '?'), 'err');
+  };
 
   const campaignsList = Array.isArray(campaigns) ? campaigns : [];
   const templatesList = Array.isArray(templates) ? templates : [];
@@ -687,6 +735,28 @@ export default function Campaigns({ addToast, refreshKey }) {
             >
               Добавить ВСЕ с согласием (152-ФЗ)
             </button>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[#081221] border border-line">
+            <div className="font-bold text-white mb-2">Массовый обзвон по данным amoCRM</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <select className="bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white" value={selectedCrmTag} onChange={(e) => setSelectedCrmTag(e.target.value)}>
+                <option value="">Любой тег</option>
+                {crmTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+              </select>
+              <select className="bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white" value={selectedCrmPipeline} onChange={(e) => setSelectedCrmPipeline(e.target.value)}>
+                <option value="">Любая воронка</option>
+                {crmPipelines.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+              <select className="bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white" value={selectedCrmStage} onChange={(e) => setSelectedCrmStage(e.target.value)}>
+                <option value="">Любой этап</option>
+                {crmStages.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <button onClick={handleAddCrmFilter} disabled={!selectedCrmTag && !selectedCrmPipeline && !selectedCrmStage} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold disabled:opacity-50">Добавить в эту кампанию</button>
+              <button onClick={handleCreateCrmCampaign} disabled={!selectedCrmTag && !selectedCrmPipeline && !selectedCrmStage} className="px-4 py-2 rounded-xl bg-acc text-white font-bold disabled:opacity-50">Создать новую кампанию</button>
+            </div>
           </div>
 
           <input

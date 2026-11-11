@@ -41,4 +41,5 @@ def contact_context(raw, pipelines, statuses, users):
         "responsible_name": users.get(responsible_id, "") if responsible_id else "",
         "pipeline_ids": pipeline_ids,
         "stage_ids": stage_ids,
+        "tags": list(dict.fromkeys(raw.get("tag_names", []))),
     }

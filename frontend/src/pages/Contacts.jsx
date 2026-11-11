@@ -660,7 +660,7 @@ export default function Contacts({ addToast, refreshKey }) {
                 </button>
               </div>
             </div>
-            {cardContactData?.contact?.crm_context && (cardContactData.contact.crm_context.pipeline_name || cardContactData.contact.crm_context.stage_name || cardContactData.contact.crm_context.responsible_name) && (
+            {cardContactData?.contact?.crm_context && (cardContactData.contact.crm_context.pipeline_name || cardContactData.contact.crm_context.stage_name || cardContactData.contact.crm_context.responsible_name || cardContactData.contact.crm_context.tags?.length > 0) && (
               <div className="p-4 rounded-xl bg-[#081221] border border-line">
                 <div className="text-dim mb-3">Данные из amoCRM</div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -668,6 +668,7 @@ export default function Contacts({ addToast, refreshKey }) {
                   <div><span className="text-dim block">Этап</span><span className="font-semibold text-white">{cardContactData.contact.crm_context.stage_name || '—'}</span></div>
                   <div><span className="text-dim block">Ответственный</span><span className="font-semibold text-white">{cardContactData.contact.crm_context.responsible_name || '—'}</span></div>
                 </div>
+                {cardContactData.contact.crm_context.tags?.length > 0 && <div className="mt-3"><span className="text-dim block mb-1">Теги amoCRM</span><div className="flex flex-wrap gap-1.5">{cardContactData.contact.crm_context.tags.map((tag) => <span key={tag} className="px-2 py-0.5 rounded-full bg-acc/15 border border-acc/30 text-acc2">{tag}</span>)}</div></div>}
               </div>
             )}
 

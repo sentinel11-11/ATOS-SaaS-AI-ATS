@@ -22,6 +22,7 @@ from ats.models import (
     now,
 )
 from ats.repositories import TenantRepository
+from ats.schemas import CampaignCreate
 from ats.security import admin, principal
 from ats.services import create_campaign, validate_route
 from ats.workspace_queries import calls_query
@@ -60,6 +61,29 @@ class AddContacts(BaseModel):
     group: str = Field(default="", max_length=120)
     consent_only: bool = True
     with_consent: bool | None = None
+    crm_tag: str = Field(default="", max_length=120)
+    crm_pipeline_id: int | None = Field(default=None, gt=0)
+    crm_stage_id: int | None = Field(default=None, gt=0)
+
+
+def _crm_filter_ids(db, repo, data):
+    query = repo.query(Contact).where(~Contact.archived, ~Contact.blocked, Contact.consent)
+    if data.group:
+        query = query.where(Contact.group == data.group)
+    if data.database_id:
+        repo.get(ContactList, data.database_id)
+        query = query.where(Contact.id.in_(select(ListMember.contact_id).where(ListMember.tenant_id == repo.tenant_id, ListMember.list_id == data.database_id)))
+    candidates = list(db.scalars(query.limit(5001)))
+    tag = data.crm_tag.strip().casefold()
+    return [
+        contact.id
+        for contact in candidates
+        if (
+            (not tag or any(str(value).casefold() == tag for value in (contact.crm_context or {}).get("tags", [])))
+            and (data.crm_pipeline_id is None or data.crm_pipeline_id in (contact.crm_context or {}).get("pipeline_ids", []))
+            and (data.crm_stage_id is None or data.crm_stage_id in (contact.crm_context or {}).get("stage_ids", []))
+        )
+    ]
 
 
 def campaign_dict(row, template_name="", counts=None, call_count=0, call_ok=0):
@@ -214,7 +238,10 @@ def campaign_add_contacts(campaign_id: UUID, data: AddContacts, p=Depends(admin)
         if data.database_id:
             repo.get(ContactList, data.database_id)
             query = query.where(Contact.id.in_(select(ListMember.contact_id).where(ListMember.tenant_id == p.tenant_id, ListMember.list_id == data.database_id)))
-        identities = list(db.scalars(query.with_only_columns(Contact.id).limit(5001)))
+        if data.crm_tag or data.crm_pipeline_id or data.crm_stage_id:
+            identities = _crm_filter_ids(db, repo, data)
+        else:
+            identities = list(db.scalars(query.with_only_columns(Contact.id).limit(5001)))
         if len(identities) > 5000:
             raise Problem(422, "select_at_most_5000_contacts")
     cancelled = db.scalars(repo.query(CampaignItem).where(CampaignItem.campaign_id == row.id, CampaignItem.contact_id.in_(identities), CampaignItem.status == "cancelled").with_for_update()).all()
@@ -224,6 +251,32 @@ def campaign_add_contacts(campaign_id: UUID, data: AddContacts, p=Depends(admin)
         item.status, item.available_at = "queued", now()
     db.commit()
     return {"ok": True, "added": added + len(cancelled)}
+
+
+@router.post("/campaigns/create-by-crm-filter")
+def campaign_create_by_crm_filter(data: AddContacts, p=Depends(admin), db=Depends(session)):
+    if not (data.crm_tag or data.crm_pipeline_id or data.crm_stage_id):
+        raise Problem(422, "crm_filter_required")
+    repo = TenantRepository(db, p.tenant_id)
+    identities = _crm_filter_ids(db, repo, data)
+    if not identities:
+        raise Problem(404, "crm_filter_contacts_not_found")
+    label = data.crm_tag or (
+        f"воронка {data.crm_pipeline_id}" if data.crm_pipeline_id else f"этап {data.crm_stage_id}"
+    )
+    command = CampaignCreate(
+        name=f"Обзвон amoCRM: {label}"[:120],
+        route="megafon_vats",
+        contact_ids=identities,
+        max_channels=1,
+        window_start=0,
+        window_end=24,
+        mode="operator",
+        retry_max=0,
+    )
+    campaign, _ = create_campaign(db, p, command, f"amo-filter:{uuid4()}")
+    db.commit()
+    return {"ok": True, "id": str(campaign.id), "added": len(identities)}
 
 
 @router.post("/campaigns/{campaign_id}/start")
