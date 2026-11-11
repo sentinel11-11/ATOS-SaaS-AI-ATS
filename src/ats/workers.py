@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import or_, select
 
 from ats.adapters import AMI, AmoCRM, DeliveryUnknown, Megafon, Rejected, Retryable
+from ats.amo_context import contact_context, reference_data
 from ats.config import settings
 from ats.db import session_factory
 from ats.domain import Problem, next_state
@@ -555,6 +556,7 @@ class Worker:
                 raw_contacts.extend(batch)
                 if len(batch) < 250:
                     break
+            pipelines, statuses, users = reference_data(crm, raw_contacts)
             with self.factory.begin() as db:
                 repo = TenantRepository(db, tenant_id)
                 row_job = repo.get(AmoSyncJob, UUID(payload["job_id"]), lock=True)
@@ -596,11 +598,12 @@ class Worker:
                         counts["skipped"] += 1
                         continue
                     if existing is None:
-                        existing = repo.add(Contact, name=raw["name"], phone=phone, email=raw["email"], group=raw["group"], source="amoCRM", consent=True, consent_source="amoCRM", crm_contact_id=crm_id)
+                        existing = repo.add(Contact, name=raw["name"], phone=phone, email=raw["email"], group=raw["group"], source="amoCRM", consent=True, consent_source="amoCRM", crm_contact_id=crm_id, crm_context=contact_context(raw, pipelines, statuses, users))
                         counts["created"] += 1
                     else:
                         existing.name, existing.phone, existing.email, existing.group = raw["name"], phone, raw["email"], raw["group"]
                         existing.crm_contact_id, existing.source, existing.archived = crm_id, "amoCRM", False
+                        existing.crm_context = contact_context(raw, pipelines, statuses, users)
                         counts["updated"] += 1
                 row_job.counts, row_job.status, row_job.updated_at = counts, "completed", now()
                 if payload.get("event_key"):

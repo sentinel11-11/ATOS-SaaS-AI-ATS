@@ -169,12 +169,15 @@ class AmoCRM:
                 elif code in {"CONSENT", "PD_CONSENT", "PERSONAL_DATA_CONSENT"}:
                     values["consent"] = value.lower() in {"1", "true", "yes", "да"}
         values["crm_contact_id"] = int(raw["id"])
+        values["responsible_user_id"] = raw.get("responsible_user_id")
         tags = raw.get("_embedded", {}).get("tags", []) or raw.get("tags", []) or []
         if tags:
             values["group"] = str(tags[0].get("name") or "")[:120]
         values["updated_at"] = raw.get("updated_at")
         values["archived"] = bool(raw.get("is_deleted") or raw.get("deleted_at"))
         leads = raw.get("_embedded", {}).get("leads", []) or []
+        if not values["responsible_user_id"] and leads:
+            values["responsible_user_id"] = leads[0].get("responsible_user_id")
         values["pipeline_ids"] = [int(x["pipeline_id"]) for x in leads if x.get("pipeline_id")]
         values["status_ids"] = [int(x["status_id"]) for x in leads if x.get("status_id")]
         return values
@@ -191,6 +194,9 @@ class AmoCRM:
 
     def pipeline_statuses(self, pipeline_id):
         return self.read(f"/api/v4/leads/pipelines/{int(pipeline_id)}/statuses", {"limit": 250}).get("_embedded", {}).get("statuses", [])
+
+    def users(self):
+        return self.read("/api/v4/users", {"limit": 250}).get("_embedded", {}).get("users", [])
 
     def update_contact(self, crm_contact_id, phone=None, name=None):
         payload = {}

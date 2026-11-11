@@ -660,6 +660,16 @@ export default function Contacts({ addToast, refreshKey }) {
                 </button>
               </div>
             </div>
+            {cardContactData?.contact?.crm_context && (cardContactData.contact.crm_context.pipeline_name || cardContactData.contact.crm_context.stage_name || cardContactData.contact.crm_context.responsible_name) && (
+              <div className="p-4 rounded-xl bg-[#081221] border border-line">
+                <div className="text-dim mb-3">Данные из amoCRM</div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div><span className="text-dim block">Воронка</span><span className="font-semibold text-white">{cardContactData.contact.crm_context.pipeline_name || '—'}</span></div>
+                  <div><span className="text-dim block">Этап</span><span className="font-semibold text-white">{cardContactData.contact.crm_context.stage_name || '—'}</span></div>
+                  <div><span className="text-dim block">Ответственный</span><span className="font-semibold text-white">{cardContactData.contact.crm_context.responsible_name || '—'}</span></div>
+                </div>
+              </div>
+            )}
 
             <div className="flex flex-col gap-2">
               <span className="font-bold text-white text-sm">История вызовов клиента ({(Array.isArray(cardContactData?.calls) ? cardContactData.calls : []).length})</span>

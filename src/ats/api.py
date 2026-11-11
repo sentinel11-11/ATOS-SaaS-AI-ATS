@@ -289,7 +289,7 @@ def live():
 def ready(db=Depends(session)):
     # Verify required schema, not merely TCP/Postgres availability.
     version = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if version not in {"0007", "0008", "0009"}:
+    if version not in {"0007", "0008", "0009", "0010", "0011"}:
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
     config = settings()

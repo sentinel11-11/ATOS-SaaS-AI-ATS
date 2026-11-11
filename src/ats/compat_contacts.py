@@ -108,6 +108,7 @@ def contact_dict(row, database=None, complaints=0):
         "db_name": database.name if database else "",
         "complaints": complaints,
         "crm_contact_id": row.crm_contact_id,
+        "crm_context": row.crm_context or {},
         "created": row.created_at.isoformat(),
     }
 

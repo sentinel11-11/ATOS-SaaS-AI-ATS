@@ -81,6 +81,7 @@ class Contact(Owned, Base):
     consent_source: Mapped[str] = mapped_column(String(256), default="")
     blocked: Mapped[bool] = mapped_column(default=False)
     crm_contact_id: Mapped[int | None] = mapped_column(Integer)
+    crm_context: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     group: Mapped[str] = mapped_column(String(120), default="", server_default="")
     email: Mapped[str] = mapped_column(String(254), default="", server_default="")
@@ -394,6 +395,7 @@ class AmoSyncItem(Owned, Base):
     consent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     contact_id: Mapped[UUID | None]
+    crm_context: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     error: Mapped[str] = mapped_column(String(120), default="", server_default="")
     __table_args__ = (
         UniqueConstraint("tenant_id", "job_id", "crm_contact_id"),

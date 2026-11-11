@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from ats.adapters import AmoCRM, Rejected, Retryable
+from ats.amo_context import contact_context, reference_data
 from ats.config import settings
 from ats.connections import settings_for_tenant
 from ats.db import session
@@ -226,6 +227,7 @@ def _item_json(item):
         "selected": item.selected,
         "applied": item.applied,
         "error": item.error,
+        "crm_context": item.crm_context or {},
     }
 
 
@@ -238,6 +240,10 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             raw_contacts = [item for item in raw_contacts if data.pipeline_id in item.get("pipeline_ids", []) and (data.status_id is None or data.status_id in item.get("status_ids", []))]
     except (Rejected, Retryable) as exc:
         raise Problem(502, getattr(exc, "code", "crm_read_failed")) from exc
+    try:
+        pipelines, statuses, users = reference_data(crm, raw_contacts)
+    except (Rejected, Retryable) as exc:
+        raise Problem(502, getattr(exc, "code", "crm_reference_read_failed")) from exc
     job = AmoSyncJob(tenant_id=p.tenant_id, mode=data.mode, status="preview", counts={})
     db.add(job)
     db.flush()
@@ -285,7 +291,8 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             consent=True,
             contact_id=existing.id if existing else None,
             error=error,
-            selected=action in {"create", "update", "archive"},
+            crm_context=contact_context(raw, pipelines, statuses, users),
+            selected=action in {"create", "update", "unchanged", "archive"},
         )
         db.add(item)
     job.counts = counts
@@ -337,7 +344,13 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
     if len(items) != len(set(data.item_ids)):
         raise Problem(404, "amo_sync_item_not_found")
     for item in items:
-        if item.action in {"invalid_phone", "duplicate_phone", "unchanged"}:
+        if item.action in {"invalid_phone", "duplicate_phone"}:
+            continue
+        if item.action == "unchanged":
+            if item.contact_id:
+                existing = repo.get(Contact, item.contact_id, lock=True)
+                existing.crm_context = item.crm_context or {}
+                item.applied = True
             continue
         if item.action == "archive":
             if item.contact_id:
@@ -348,10 +361,11 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
         existing = repo.get(Contact, item.contact_id, lock=True) if item.contact_id else None
         if existing is None:
             blocked = db.scalar(repo.query(BlacklistEntry).where(BlacklistEntry.phone == item.phone)) is not None
-            existing = repo.add(Contact, name=item.name, phone=item.phone, email=item.email, group=item.group, source=item.source, consent=True, consent_source=data.consent_source, crm_contact_id=item.crm_contact_id, blocked=blocked)
+            existing = repo.add(Contact, name=item.name, phone=item.phone, email=item.email, group=item.group, source=item.source, consent=True, consent_source=data.consent_source, crm_contact_id=item.crm_contact_id, crm_context=item.crm_context, blocked=blocked)
         else:
             existing.name, existing.phone, existing.email, existing.group = item.name, item.phone, item.email, item.group
             existing.source, existing.crm_contact_id = item.source, item.crm_contact_id
+            existing.crm_context = item.crm_context or {}
             # Preserve an explicit opt-out on an existing contact.
             if existing.consent:
                 existing.consent_source = data.consent_source
