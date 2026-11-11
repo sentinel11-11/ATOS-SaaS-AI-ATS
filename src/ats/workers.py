@@ -599,7 +599,7 @@ class Worker:
             for page in range(1, 21):
                 batch = crm.lead_contacts(page=page, limit=250)
                 raw_contacts.extend(batch)
-                if len(batch) < 250:
+                if getattr(crm, "last_lead_page_count", len(batch)) < 250:
                     break
             pipelines, statuses, users = reference_data(crm, raw_contacts)
             with self.factory.begin() as db:

@@ -244,7 +244,7 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             for page in range(1, 101):
                 batch = crm.lead_contacts(page=page, limit=250, created_from=created_from, created_to=created_to)
                 raw_contacts.extend(batch)
-                if len(raw_contacts) >= data.limit or len(batch) < 250:
+                if len(raw_contacts) >= data.limit or getattr(crm, "last_lead_page_count", len(batch)) < 250:
                     raw_contacts = raw_contacts[: data.limit]
                     break
         if data.pipeline_id is not None:
