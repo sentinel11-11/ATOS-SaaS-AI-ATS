@@ -175,11 +175,22 @@ class AmoCRM:
             values["group"] = str(tags[0].get("name") or "")[:120]
         values["updated_at"] = raw.get("updated_at")
         values["archived"] = bool(raw.get("is_deleted") or raw.get("deleted_at"))
-        leads = raw.get("_embedded", {}).get("leads", []) or []
+        embedded = raw.get("_embedded", {}) or {}
+        leads = embedded.get("leads") or raw.get("leads") or []
+        if isinstance(leads, dict):
+            leads = leads.get("items") or leads.get("_embedded", {}).get("leads", []) or []
         if not values["responsible_user_id"] and leads:
             values["responsible_user_id"] = leads[0].get("responsible_user_id")
-        values["pipeline_ids"] = [int(x["pipeline_id"]) for x in leads if x.get("pipeline_id")]
-        values["status_ids"] = [int(x["status_id"]) for x in leads if x.get("status_id")]
+        pipeline_ids = [x.get("pipeline_id") for x in leads if isinstance(x, dict) and x.get("pipeline_id")]
+        status_ids = [x.get("status_id") for x in leads if isinstance(x, dict) and x.get("status_id")]
+        if raw.get("pipeline_id"):
+            pipeline_ids.append(raw["pipeline_id"])
+        if raw.get("status_id"):
+            status_ids.append(raw["status_id"])
+        values["pipeline_ids"] = list(dict.fromkeys(int(value) for value in pipeline_ids))
+        values["status_ids"] = list(dict.fromkeys(int(value) for value in status_ids))
+        values["pipeline_names"] = [str(x.get("pipeline_name") or "") for x in leads if isinstance(x, dict) and x.get("pipeline_name")]
+        values["status_names"] = [str(x.get("status_name") or x.get("status") or "") for x in leads if isinstance(x, dict) and (x.get("status_name") or x.get("status"))]
         return values
 
     def contacts(self, page=1, limit=250, ids=None):

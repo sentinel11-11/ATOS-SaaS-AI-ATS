@@ -26,11 +26,17 @@ def contact_context(raw, pipelines, statuses, users):
         responsible_id = int(responsible_id) if responsible_id else None
     except (TypeError, ValueError):
         responsible_id = None
+    pipeline_name = pipelines.get(pipeline_ids[0], "") if pipeline_ids else ""
+    stage_name = statuses.get(stage_ids[0], "") if stage_ids else ""
+    if not pipeline_name and raw.get("pipeline_names"):
+        pipeline_name = raw["pipeline_names"][0]
+    if not stage_name and raw.get("status_names"):
+        stage_name = raw["status_names"][0]
     return {
         "pipeline_id": pipeline_ids[0] if pipeline_ids else None,
-        "pipeline_name": pipelines.get(pipeline_ids[0], "") if pipeline_ids else "",
+        "pipeline_name": pipeline_name,
         "stage_id": stage_ids[0] if stage_ids else None,
-        "stage_name": statuses.get(stage_ids[0], "") if stage_ids else "",
+        "stage_name": stage_name,
         "responsible_id": responsible_id,
         "responsible_name": users.get(responsible_id, "") if responsible_id else "",
         "pipeline_ids": pipeline_ids,
