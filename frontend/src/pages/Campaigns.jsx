@@ -68,10 +68,16 @@ export default function Campaigns({ addToast, refreshKey }) {
     }
     let cancelled = false;
     api(`/api/v1/workspace/amo/pipelines/${selectedCrmPipeline}/statuses`).then((result) => {
-      if (!cancelled) setCrmPipelineStages(Array.isArray(result?.statuses) ? result.statuses : []);
+      if (!cancelled) {
+        const known = new Set(contacts.flatMap((contact) => (contact.crm_context?.pipeline_stages || [])
+          .filter((pair) => String(pair.pipeline_id) === String(selectedCrmPipeline))
+          .map((pair) => String(pair.stage_id))));
+        const statuses = Array.isArray(result?.statuses) ? result.statuses : [];
+        setCrmPipelineStages(known.size ? statuses.filter((stage) => known.has(String(stage.id))) : statuses);
+      }
     });
     return () => { cancelled = true; };
-  }, [selectedCrmPipeline]);
+  }, [selectedCrmPipeline, contacts]);
 
   const loadCampDetail = async (cid) => {
     setCampDetailLoading(true);

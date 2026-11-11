@@ -32,6 +32,16 @@ def contact_context(raw, pipelines, statuses, users):
         pipeline_name = raw["pipeline_names"][0]
     if not stage_name and raw.get("status_names"):
         stage_name = raw["status_names"][0]
+    pipeline_stages = [
+        {
+            "pipeline_id": int(pair["pipeline_id"]),
+            "stage_id": int(pair["stage_id"]),
+            "pipeline_name": pipelines.get(int(pair["pipeline_id"]), ""),
+            "stage_name": statuses.get(int(pair["stage_id"]), ""),
+        }
+        for pair in raw.get("pipeline_stages", [])
+        if pair.get("pipeline_id") and pair.get("stage_id")
+    ]
     return {
         "pipeline_id": pipeline_ids[0] if pipeline_ids else None,
         "pipeline_name": pipeline_name,
@@ -41,6 +51,6 @@ def contact_context(raw, pipelines, statuses, users):
         "responsible_name": users.get(responsible_id, "") if responsible_id else "",
         "pipeline_ids": pipeline_ids,
         "stage_ids": stage_ids,
-        "pipeline_stages": raw.get("pipeline_stages", []),
+        "pipeline_stages": pipeline_stages,
         "tags": list(dict.fromkeys(raw.get("tag_names", []))),
     }

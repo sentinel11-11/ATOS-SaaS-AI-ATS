@@ -227,7 +227,9 @@ class AmoCRM:
         if created_to:
             params["filter[created_at][to]"] = int(created_to)
         data = self.read("/api/v4/leads", params)
+        self.last_lead_page_count = len(data.get("_embedded", {}).get("leads", []))
         lead_context = {}
+        embedded_contacts = {}
         for lead in data.get("_embedded", {}).get("leads", []):
             pipeline_id = lead.get("pipeline_id")
             stage_id = lead.get("status_id")
@@ -239,6 +241,7 @@ class AmoCRM:
                 contact_id = linked_contact.get("id")
                 if not contact_id:
                     continue
+                embedded_contacts.setdefault(int(contact_id), linked_contact)
                 context = lead_context.setdefault(int(contact_id), {"pipeline_ids": [], "status_ids": [], "pipeline_stages": [], "tag_names": [], "responsible_user_id": None})
                 if pipeline_id:
                     context["pipeline_ids"].append(int(pipeline_id))
@@ -250,10 +253,16 @@ class AmoCRM:
                 context["responsible_user_id"] = context["responsible_user_id"] or responsible_id
         by_id = {}
         contact_ids = list(lead_context)
+        for _contact_id, linked_contact in embedded_contacts.items():
+            if linked_contact.get("custom_fields_values"):
+                normalized = self.normalize_contact(linked_contact)
+                by_id[normalized["crm_contact_id"]] = normalized
         for start in range(0, len(contact_ids), 250):
             batch_ids = contact_ids[start : start + 250]
-            full = self.contacts(ids=batch_ids, limit=250, enrich_missing=False)
-            by_id.update({item["crm_contact_id"]: item for item in full})
+            missing_ids = [contact_id for contact_id in batch_ids if contact_id not in by_id]
+            if missing_ids:
+                full = self.contacts(ids=missing_ids, limit=250, enrich_missing=False)
+                by_id.update({item["crm_contact_id"]: item for item in full})
         for contact_id, context in lead_context.items():
             normalized = by_id.get(contact_id)
             if not normalized:
