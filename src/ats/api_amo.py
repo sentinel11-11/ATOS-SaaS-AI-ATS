@@ -123,7 +123,23 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
     if contact is None and data.phone:
         contact = db.scalar(repo.query(Contact).where(Contact.phone == _phone(data.phone), ~Contact.archived))
     if contact is None:
-        raise Problem(404, "crm_contact_not_synced")
+        try:
+            raw = AmoCRM(config).read(f"/api/v4/contacts/{data.crm_contact_id}")
+        except (Rejected, Retryable) as exc:
+            raise Problem(502, getattr(exc, "code", "crm_read_failed")) from exc
+        phone = _widget_phone(raw) or _phone(data.phone)
+        if not phone:
+            raise Problem(404, "amo_contact_phone_missing")
+        contact = repo.add(
+            Contact,
+            name=str(raw.get("name") or "Новый контакт")[:120],
+            phone=phone,
+            source="amoCRM",
+            consent=True,
+            consent_source="amoCRM widget",
+            crm_contact_id=data.crm_contact_id,
+        )
+        db.flush()
     if data.phone and _phone(data.phone) != contact.phone:
         raise Problem(409, "contact_phone_mismatch")
     provider = db.scalar(repo.query(WorkspaceSettings))
