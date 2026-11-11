@@ -136,6 +136,7 @@ def legacy_call(attempt, contact, campaign):
 @router.get("/contacts")
 def contacts(
     q: str = Query("", max_length=120),
+    group: str = Query("", max_length=120),
     offset: int = Query(0, ge=0),
     limit: int = Query(5000, ge=1, le=5000),
     p=Depends(principal),
@@ -145,6 +146,8 @@ def contacts(
     query = repo.query(Contact).where(~Contact.archived)
     if q:
         query = query.where(or_(Contact.name.ilike(f"%{q}%"), Contact.phone.contains(q)))
+    if group:
+        query = query.where(Contact.group == group)
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     rows = db.scalars(query.order_by(Contact.created_at.desc(), Contact.id).offset(offset).limit(limit)).all()
     # Fetch memberships/counts in bulk: no per-row SQL for a 5,000-contact legacy page.

@@ -30,6 +30,9 @@ export default function Contacts({ addToast, refreshKey }) {
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGroupFilter, setSelectedGroupFilter] = useState('');
+  const [contactPage, setContactPage] = useState(0);
+  const [contactTotal, setContactTotal] = useState(0);
+  const contactsPageSize = 30;
 
   // Selection
   const [selectedContactIds, setSelectedContactIds] = useState([]);
@@ -59,20 +62,25 @@ export default function Contacts({ addToast, refreshKey }) {
 
   const loadContacts = async () => {
     if (!loaded) setLoading(true);
+    const params = new URLSearchParams({ offset: String(contactPage * contactsPageSize), limit: String(contactsPageSize) });
+    if (searchQuery.trim()) params.set('q', searchQuery.trim());
+    if (selectedGroupFilter) params.set('group', selectedGroupFilter);
     const [cRes, campRes] = await Promise.all([
-      api('/contacts'),
+      api(`/contacts?${params.toString()}`),
       api('/campaigns')
     ]);
 
     if (cRes && cRes.contacts) setContacts(cRes.contacts);
+    if (cRes && Number.isFinite(cRes.total)) setContactTotal(cRes.total);
     if (campRes && campRes.campaigns) setCampaigns(campRes.campaigns);
     setLoaded(true);
     setLoading(false);
   };
 
   useEffect(() => {
-    loadContacts();
-  }, [refreshKey]);
+    const timer = window.setTimeout(loadContacts, 200);
+    return () => window.clearTimeout(timer);
+  }, [refreshKey, contactPage, searchQuery, selectedGroupFilter]);
 
   useEffect(() => {
     if (!amoSyncPipeline) {
@@ -233,6 +241,13 @@ export default function Contacts({ addToast, refreshKey }) {
 
     return matchesSearch && matchesGroup;
   });
+
+  const contactCrmLabel = (contact) => {
+    const context = contact.crm_context || {};
+    const pipeline = context.pipeline_name || '';
+    const stage = context.stage_name || '';
+    return pipeline && stage ? `${pipeline} / ${stage}` : pipeline || stage || contact.group_name || contact.grp || '—';
+  };
 
   const handleSelectAll = (e) => {
     if (e.target.checked) {
@@ -511,7 +526,7 @@ export default function Contacts({ addToast, refreshKey }) {
               </th>
               <th className="py-2.5 px-3">Имя</th>
               <th className="py-2.5 px-3">Телефон</th>
-              <th className="py-2.5 px-3">Группа</th>
+              <th className="py-2.5 px-3">Воронка / этап</th>
               <th className="py-2.5 px-3">Согласие (152-ФЗ)</th>
               <th className="py-2.5 px-3 text-right">Действия</th>
             </tr>
@@ -530,7 +545,7 @@ export default function Contacts({ addToast, refreshKey }) {
                 </td>
               </tr>
             ) : (
-              filteredContacts.slice(0, 300).map((c) => {
+              filteredContacts.map((c) => {
                 const isChecked = selectedContactIds.includes(c.id);
 
                 return (
@@ -545,7 +560,7 @@ export default function Contacts({ addToast, refreshKey }) {
                     </td>
                     <td className="py-3 px-3 font-semibold text-white">{c.name || 'Без имени'}</td>
                     <td className="py-3 px-3 font-mono text-muted">{c.phone}</td>
-                    <td className="py-3 px-3 text-muted">{c.group_name || c.grp || '—'}</td>
+                    <td className="py-3 px-3 text-muted">{contactCrmLabel(c)}</td>
                     <td className="py-3 px-3">
                       <button
                         onClick={() => handleToggleSingleConsent(c)}
@@ -572,6 +587,15 @@ export default function Contacts({ addToast, refreshKey }) {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex items-center justify-between text-xs text-muted">
+        <span>{contactTotal ? `${contactPage * contactsPageSize + 1}–${Math.min((contactPage + 1) * contactsPageSize, contactTotal)} из ${contactTotal}` : '0 контактов'}</span>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setContactPage((page) => Math.max(0, page - 1))} disabled={contactPage === 0} className="px-3 py-1.5 rounded-lg bg-line text-white disabled:opacity-40">Назад</button>
+          <span>Страница {contactPage + 1} из {Math.max(1, Math.ceil(contactTotal / contactsPageSize))}</span>
+          <button onClick={() => setContactPage((page) => page + 1)} disabled={(contactPage + 1) * contactsPageSize >= contactTotal} className="px-3 py-1.5 rounded-lg bg-line text-white disabled:opacity-40">Вперёд</button>
+        </div>
       </div>
 
       <NewContactModal isOpen={showNewModal} onClose={() => setShowNewModal(false)} onSave={handleSaveContact} />
