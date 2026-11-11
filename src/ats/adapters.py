@@ -239,11 +239,13 @@ class AmoCRM:
                 contact_id = linked_contact.get("id")
                 if not contact_id:
                     continue
-                context = lead_context.setdefault(int(contact_id), {"pipeline_ids": [], "status_ids": [], "tag_names": [], "responsible_user_id": None})
+                context = lead_context.setdefault(int(contact_id), {"pipeline_ids": [], "status_ids": [], "pipeline_stages": [], "tag_names": [], "responsible_user_id": None})
                 if pipeline_id:
                     context["pipeline_ids"].append(int(pipeline_id))
                 if stage_id:
                     context["status_ids"].append(int(stage_id))
+                if pipeline_id and stage_id:
+                    context["pipeline_stages"].append({"pipeline_id": int(pipeline_id), "stage_id": int(stage_id)})
                 context["tag_names"].extend(lead_tag_names)
                 context["responsible_user_id"] = context["responsible_user_id"] or responsible_id
         by_id = {}
@@ -258,6 +260,11 @@ class AmoCRM:
                 continue
             normalized["pipeline_ids"] = list(dict.fromkeys(normalized.get("pipeline_ids", []) + context["pipeline_ids"]))
             normalized["status_ids"] = list(dict.fromkeys(normalized.get("status_ids", []) + context["status_ids"]))
+            normalized["pipeline_stages"] = list({
+                (pair["pipeline_id"], pair["stage_id"]): pair
+                for pair in normalized.get("pipeline_stages", []) + context["pipeline_stages"]
+                if pair.get("pipeline_id") and pair.get("stage_id")
+            }.values())
             normalized["tag_names"] = list(dict.fromkeys(normalized.get("tag_names", []) + context["tag_names"]))
             if context["responsible_user_id"] and not normalized.get("responsible_user_id"):
                 normalized["responsible_user_id"] = context["responsible_user_id"]

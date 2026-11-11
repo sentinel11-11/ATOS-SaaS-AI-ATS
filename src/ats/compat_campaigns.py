@@ -82,6 +82,10 @@ def _crm_filter_ids(db, repo, data):
             (not tag or any(str(value).casefold() == tag for value in (contact.crm_context or {}).get("tags", [])))
             and (data.crm_pipeline_id is None or data.crm_pipeline_id in (contact.crm_context or {}).get("pipeline_ids", []))
             and (data.crm_stage_id is None or data.crm_stage_id in (contact.crm_context or {}).get("stage_ids", []))
+                    and (data.crm_pipeline_id is None or data.crm_stage_id is None or any(
+                        pair.get("pipeline_id") == data.crm_pipeline_id and pair.get("stage_id") == data.crm_stage_id
+                        for pair in (contact.crm_context or {}).get("pipeline_stages", [])
+                    ))
         )
     ]
 

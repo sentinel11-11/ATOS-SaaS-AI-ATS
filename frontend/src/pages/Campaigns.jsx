@@ -37,6 +37,7 @@ export default function Campaigns({ addToast, refreshKey }) {
   const [selectedCrmTag, setSelectedCrmTag] = useState('');
   const [selectedCrmPipeline, setSelectedCrmPipeline] = useState('');
   const [selectedCrmStage, setSelectedCrmStage] = useState('');
+  const [crmPipelineStages, setCrmPipelineStages] = useState([]);
 
   const loadAll = async () => {
     if (!loaded) setLoading(true);
@@ -58,6 +59,19 @@ export default function Campaigns({ addToast, refreshKey }) {
   useEffect(() => {
     loadAll();
   }, [refreshKey]);
+
+  useEffect(() => {
+    if (!selectedCrmPipeline) {
+      setCrmPipelineStages([]);
+      setSelectedCrmStage('');
+      return undefined;
+    }
+    let cancelled = false;
+    api(`/api/v1/workspace/amo/pipelines/${selectedCrmPipeline}/statuses`).then((result) => {
+      if (!cancelled) setCrmPipelineStages(Array.isArray(result?.statuses) ? result.statuses : []);
+    });
+    return () => { cancelled = true; };
+  }, [selectedCrmPipeline]);
 
   const loadCampDetail = async (cid) => {
     setCampDetailLoading(true);
@@ -273,10 +287,6 @@ export default function Campaigns({ addToast, refreshKey }) {
   const crmPipelines = [...new Map(contacts.flatMap((contact) => {
     const context = contact.crm_context || {};
     return context.pipeline_id ? [[String(context.pipeline_id), context.pipeline_name || `Воронка ${context.pipeline_id}`]] : [];
-  }))].sort((a, b) => a[1].localeCompare(b[1]));
-  const crmStages = [...new Map(contacts.flatMap((contact) => {
-    const context = contact.crm_context || {};
-    return context.stage_id ? [[String(context.stage_id), context.stage_name || `Этап ${context.stage_id}`]] : [];
   }))].sort((a, b) => a[1].localeCompare(b[1]));
   const handleAddCrmFilter = async () => {
     if (!addContactsModalCampId || (!selectedCrmTag && !selectedCrmPipeline && !selectedCrmStage)) return;
@@ -744,13 +754,13 @@ export default function Campaigns({ addToast, refreshKey }) {
                 <option value="">Любой тег</option>
                 {crmTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
               </select>
-              <select className="bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white" value={selectedCrmPipeline} onChange={(e) => setSelectedCrmPipeline(e.target.value)}>
+              <select className="bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white" value={selectedCrmPipeline} onChange={(e) => { setSelectedCrmPipeline(e.target.value); setSelectedCrmStage(''); }}>
                 <option value="">Любая воронка</option>
                 {crmPipelines.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
               </select>
               <select className="bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white" value={selectedCrmStage} onChange={(e) => setSelectedCrmStage(e.target.value)}>
                 <option value="">Любой этап</option>
-                {crmStages.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                {crmPipelineStages.map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}
               </select>
             </div>
             <div className="flex flex-wrap gap-2 mt-2">
