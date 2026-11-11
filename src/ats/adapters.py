@@ -291,6 +291,13 @@ class AmoCRM:
         return self.read("/api/v4/leads/pipelines", {"limit": 250}).get("_embedded", {}).get("pipelines", [])
 
     def pipeline_statuses(self, pipeline_id):
+        for pipeline in self.pipelines():
+            if int(pipeline.get("id", 0)) != int(pipeline_id):
+                continue
+            embedded = pipeline.get("_embedded", {}) or {}
+            statuses = embedded.get("statuses") or pipeline.get("statuses")
+            if isinstance(statuses, list):
+                return statuses
         return self.read(f"/api/v4/leads/pipelines/{int(pipeline_id)}/statuses", {"limit": 250}).get("_embedded", {}).get("statuses", [])
 
     def users(self):
