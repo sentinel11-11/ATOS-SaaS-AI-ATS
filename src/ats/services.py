@@ -192,6 +192,12 @@ def schedule_one(db, tenant_id):
             )
             if count == 0 and not pending:
                 campaign.status = "completed"
+                # One-shot campaigns should leave the active campaigns view as
+                # soon as every item has a terminal outcome.  Archiving is a
+                # visibility flag only: attempts, events and recordings keep
+                # their campaign foreign key and remain available in history.
+                campaign.archived = True
+                repo.add(Audit, actor_id=None, action="campaign.completed", entity_id=campaign.id)
             continue
         contact = repo.get(Contact, item.contact_id, lock=True)
         blacklisted = db.scalar(
@@ -335,6 +341,23 @@ def finish_attempt(db, attempt, event, reason=""):
         and (campaign.mode == "operator" or attempt.agent_result.get("qualified"))
     ):
         repo.add(QueueEntry, attempt_id=attempt.id)
+    # Finalize one-shot campaigns in the same transaction as their last
+    # terminal attempt.  This removes them from the active campaigns view
+    # without deleting the immutable attempt/call history.
+    remaining = db.scalar(
+        select(func.count())
+        .select_from(CampaignItem)
+        .where(
+            CampaignItem.tenant_id == campaign.tenant_id,
+            CampaignItem.campaign_id == campaign.id,
+            CampaignItem.status.in_(["queued", "active"]),
+        )
+    )
+    if not remaining:
+        campaign.status = "completed"
+        if not campaign.archived:
+            campaign.archived = True
+            repo.add(Audit, actor_id=None, action="campaign.completed", entity_id=campaign.id)
     repo.add(
         Outbox,
         kind="crm",
@@ -374,7 +397,21 @@ def drain_inbox(db):
         phone = next(
             (
                 normalize_phone(callback.get(key, ""))
-                for key in ("phone", "dst", "destination", "called", "number", "callee")
+                for key in (
+                    "phone",
+                    "phone_number",
+                    "customer_phone",
+                    "client_phone",
+                    "abonent",
+                    "dst",
+                    "destination",
+                    "destination_number",
+                    "called",
+                    "called_number",
+                    "number",
+                    "callee",
+                    "callerid",
+                )
                 if normalize_phone(callback.get(key, ""))
             ),
             "",

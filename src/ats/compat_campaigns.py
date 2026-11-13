@@ -129,10 +129,14 @@ def _counts(db, p, ids):
 @router.get("/campaigns")
 def campaigns(offset: int = Query(0, ge=0), limit: int = Query(1000, ge=1, le=5000), p=Depends(principal), db=Depends(session)):
     repo = TenantRepository(db, p.tenant_id)
-    query = repo.query(Campaign).where(~Campaign.archived)
+    query = repo.query(Campaign).where(~Campaign.archived, Campaign.status != "completed")
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     rows = db.execute(select(Campaign, Template.name).outerjoin(Template, (Template.id == Campaign.template_id) & (Template.tenant_id == Campaign.tenant_id))
-        .where(Campaign.tenant_id == p.tenant_id, ~Campaign.archived)
+        .where(
+            Campaign.tenant_id == p.tenant_id,
+            ~Campaign.archived,
+            Campaign.status != "completed",
+        )
         .order_by(Campaign.created_at.desc(), Campaign.id).offset(offset).limit(limit)).all()
     counts, calls, ok = _counts(db, p, [c.id for c, _ in rows])
     return {"ok": True, "campaigns": [campaign_dict(c, name or "", counts.get(c.id), calls.get(c.id, 0), ok.get(c.id, 0)) for c, name in rows], "total": total, "offset": offset, "limit": limit}

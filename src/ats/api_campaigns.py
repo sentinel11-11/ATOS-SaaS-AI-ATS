@@ -42,7 +42,11 @@ def campaigns(
         db,
         TenantRepository(db, p.tenant_id)
         .query(Campaign)
-        .where(~Campaign.archived, Campaign.name.ilike(f"%{q}%"))
+        .where(
+            ~Campaign.archived,
+            Campaign.status != "completed",
+            Campaign.name.ilike(f"%{q}%"),
+        )
         .order_by(Campaign.created_at.desc(), Campaign.id),
         *pg,
     )

@@ -89,16 +89,52 @@ MEGAFON_HISTORY_FAILED = {
 
 
 def _megafon_history_event(value):
-    status = str(value or "").strip().lower().replace(" ", "_")
+    status = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
     if status in {"success", "completed", "complete", "connected", "answered", "answer", "ok", "4"}:
         return "completed"
+    # Some VATS accounts include an intermediate history row.  Preserve it as
+    # an active provider acknowledgement instead of treating it as an unknown
+    # failure (the later terminal history row remains authoritative).
+    if status in {"accepted", "accept", "ringing", "dialing", "in_progress", "inprogress", "trying"}:
+        return "accepted"
     if status in MEGAFON_HISTORY_FAILED or status == "6":
         return "failed"
     return None
 
 
+def _megafon_status(payload):
+    """Select a terminal/provider status across VATS callback variants."""
+    if not isinstance(payload, dict):
+        return ""
+    return (
+        payload.get("status")
+        or payload.get("result")
+        or payload.get("outcome")
+        or payload.get("call_status")
+        or payload.get("call_result")
+        or payload.get("disposition")
+        or payload.get("event")
+        or payload.get("type")
+        or ""
+    )
+
+
+def _megafon_call_id(payload):
+    if not isinstance(payload, dict):
+        return ""
+    return str(
+        payload.get("callid")
+        or payload.get("call_id")
+        or payload.get("call_uuid")
+        or payload.get("uuid")
+        or payload.get("external_id")
+        or payload.get("id")
+        or ""
+    )
+
+
 def _megafon_event(value):
-    status = str(value or "").strip().lower().replace(" ", "_")
+    status = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
     if status in {"completed", "complete", "connected", "answered", "answer", "ok", "success", "hangup", "hang_up", "disconnected", "terminated", "finished", "4"}:
         return "completed" if status not in {"answered", "answer", "connected"} else "answered"
     if status in MEGAFON_HISTORY_FAILED or status in {"busy", "noanswer", "no_answer", "6"}:
@@ -147,9 +183,10 @@ def _mapped_amo_user_id(mapping, operator_key):
 def _megafon_callback_payload(payload, mapping=None):
     keys = (
         "phone", "user", "extension", "operator", "internal_number", "internal", "agent",
-        "telnum", "type", "status", "direction", "duration", "result", "cmd", "command",
-        "callid", "call_id", "id", "link", "recording", "record_url", "recording_url",
-        "dst", "destination", "called", "number", "callee",
+        "telnum", "type", "status", "direction", "duration", "result", "outcome", "call_status", "call_result", "disposition", "cmd", "command",
+        "callid", "call_id", "call_uuid", "uuid", "external_id", "id", "link", "recording", "record_url", "recording_url",
+        "dst", "destination", "destination_number", "called", "called_number", "number", "callee",
+        "phone_number", "customer_phone", "client_phone", "abonent", "callerid",
         "recording_link", "url",
     )
     callback = {
@@ -157,6 +194,26 @@ def _megafon_callback_payload(payload, mapping=None):
         for key in keys
         if payload.get(key) is not None and str(payload.get(key)) != ""
     }
+    # Normalize provider-specific phone field names once at ingress so the
+    # inbox worker can correlate a history leg with the original attempt.
+    if "phone" not in callback:
+        for key in (
+            "phone_number",
+            "customer_phone",
+            "client_phone",
+            "abonent",
+            "dst",
+            "destination",
+            "destination_number",
+            "called",
+            "called_number",
+            "number",
+            "callee",
+            "callerid",
+        ):
+            if callback.get(key):
+                callback["phone"] = callback[key]
+                break
     raw_direction = str(payload.get("direction") or payload.get("type") or "").strip().lower()
     if raw_direction in {"in", "inbound", "incoming", "receive", "received"}:
         callback["direction"] = "in"
@@ -405,7 +462,7 @@ def campaigns(p=Depends(principal), db=Depends(session), offset: int = 0):
     return db.scalars(
         TenantRepository(db, p.tenant_id)
         .query(Campaign)
-        .where(~Campaign.archived)
+        .where(~Campaign.archived, Campaign.status != "completed")
         .order_by(Campaign.created_at.desc())
         .offset(max(0, offset))
         .limit(100)
@@ -524,7 +581,10 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     ):
         raise Problem(403, "webhook_rejected")
     # Never store crm_token or the raw form. History is authoritative for callback outcome.
-    cmd = str(form.get("cmd") or form.get("command") or "").lower()
+    # History callbacks from older VATS accounts omit `cmd`; a terminal
+    # status is still authoritative, so treat that form as history rather than
+    # dropping the callback and later exhausting the attempt by watchdog.
+    cmd = str(form.get("cmd") or form.get("command") or "history").lower()
     if cmd == "contact":
         from ats.inbound import normalize_phone
 
@@ -541,13 +601,14 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     if direction == "in" and config.inbound_enabled:
         from ats.inbound import ingest_inbound
 
-        if cmd == "history" and _megafon_history_event(form.get("status")) is None:
+        history_status = _megafon_status(form)
+        if cmd == "history" and _megafon_history_event(history_status) is None:
             raise Problem(422, "unsupported_history_status")
 
         state = (
             {"INCOMING": "ringing", "ACCEPTED": "answered"}.get(str(form.get("type", "")).upper())
             if cmd == "event"
-            else _megafon_history_event(form.get("status"))
+            else _megafon_history_event(history_status)
             if cmd == "history"
             else None
         )
@@ -557,7 +618,7 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
             duration = int(form.get("duration", "0"))
         except (ValueError, TypeError):
             raise Problem(422, "invalid_duration") from None
-        inbound_id = str(form.get("callid") or form.get("call_id") or form.get("id") or "")
+        inbound_id = _megafon_call_id(form)
         if not inbound_id or len(inbound_id) > 120:
             raise Problem(422, "invalid_callid")
         ingest_inbound(
@@ -573,17 +634,26 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
         db.commit()
         return {"result": "success"}
     if cmd == "event":
-        event = _megafon_event(form.get("type") or form.get("status") or form.get("event"))
+        # Event callbacks use `type` for the current leg even when an older
+        # status field from the same form still contains a history result.
+        event = _megafon_event(
+            form.get("type")
+            or form.get("status")
+            or form.get("result")
+            or form.get("outcome")
+            or form.get("event")
+        )
     elif cmd == "history":
-        if _megafon_history_event(form.get("status")) is None:
+        history_status = _megafon_status(form)
+        if _megafon_history_event(history_status) is None:
             raise Problem(422, "unsupported_history_status")
-        event = _megafon_history_event(form.get("status"))
+        event = _megafon_history_event(history_status)
     else:
         raise Problem(422, "unsupported_webhook_command")
     if event in {None, "accepted"}:
         # ACCEPTED can refer to the operator leg. Do not claim client answered.
         return {"result": "accepted_without_state_change"}
-    external_id = str(form.get("callid") or form.get("call_id") or form.get("id") or "")
+    external_id = _megafon_call_id(form)
     if not external_id or len(external_id) > 120:
         raise Problem(422, "invalid_callid")
     event_key = hashlib.sha256(f"{external_id}:{cmd}:{event}".encode()).hexdigest()
@@ -624,7 +694,17 @@ async def megafon_events(request: Request, db=Depends(session)):
     if not expected or not secrets.compare_digest(supplied, expected):
         raise Problem(403, "webhook_rejected")
     cmd = str(payload.get("cmd") or payload.get("command") or "history").lower()
-    raw_status = str(payload.get("status") or payload.get("result") or payload.get("type") or payload.get("event") or "").lower()
+    raw_status = str(
+        (
+            payload.get("type")
+            or payload.get("status")
+            or payload.get("result")
+            or payload.get("outcome")
+            or payload.get("event")
+        )
+        if cmd == "event"
+        else _megafon_status(payload)
+    ).lower()
     event = _megafon_history_event(raw_status) if cmd == "history" else None
     if event is None and cmd == "event":
         event = _megafon_event(raw_status)
@@ -632,7 +712,7 @@ async def megafon_events(request: Request, db=Depends(session)):
         return {"result": "accepted_without_state_change"}
     if event is None:
         raise Problem(422, "unsupported_history_status")
-    external_id = str(payload.get("callid") or payload.get("call_id") or payload.get("id") or "")
+    external_id = _megafon_call_id(payload)
     if not external_id or len(external_id) > 120:
         raise Problem(422, "invalid_callid")
     callback = _megafon_callback_payload(
