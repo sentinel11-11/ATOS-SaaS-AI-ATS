@@ -710,9 +710,10 @@ class Worker:
         return crm_id
 
     def watchdog(self):
-        with self.factory.begin() as db:
+        with self.factory() as db:
             tenants = list(db.scalars(select(Tenant.id)).all())
-            for tenant_id in tenants:
+        for tenant_id in tenants:
+            with self.factory.begin() as db:
                 options = db.scalar(
                     select(WorkspaceSettings).where(WorkspaceSettings.tenant_id == tenant_id)
                 )
@@ -725,12 +726,39 @@ class Worker:
                     conversation_minutes = max(0, min(1440, int(basic.get("vats_conversation_timeout_min", 30))))
                 except (TypeError, ValueError):
                     conversation_minutes = 30
+                try:
+                    megafon_unconfirmed_minutes = max(
+                        2, min(60, int(basic.get("megafon_unconfirmed_timeout_min", 5)))
+                    )
+                except (TypeError, ValueError):
+                    megafon_unconfirmed_minutes = 5
                 current = now()
                 stale_cutoff = current - timedelta(minutes=watchdog_minutes)
                 unknown_cutoff = (
                     current - timedelta(minutes=conversation_minutes)
                     if conversation_minutes
                     else None
+                )
+                unconfirmed_cutoff = current - timedelta(minutes=megafon_unconfirmed_minutes)
+                click_to_call_items = (
+                    select(CampaignItem.id)
+                    .join(Campaign, Campaign.id == CampaignItem.campaign_id)
+                    .where(
+                        Campaign.tenant_id == tenant_id,
+                        Campaign.route == "megafon_vats",
+                        Campaign.mode == "operator",
+                        or_(
+                            Campaign.idempotency_key.like("amo-click:%"),
+                            Campaign.idempotency_key.like("amo-widget:%"),
+                        ),
+                    )
+                )
+                unconfirmed = (
+                    (Attempt.route == "megafon_vats")
+                    & (Attempt.status == "accepted")
+                    & (Attempt.answered_at.is_(None))
+                    & (Attempt.updated_at < unconfirmed_cutoff)
+                    & (Attempt.item_id.in_(click_to_call_items))
                 )
                 stale_filter = (
                     Attempt.tenant_id == tenant_id,
@@ -747,19 +775,19 @@ class Worker:
                             if unknown_cutoff is not None
                             else False
                         ),
+                        unconfirmed,
                     ),
                 )
                 rows = db.scalars(
                     select(Attempt)
                     .where(*stale_filter)
+                    .order_by(Attempt.updated_at, Attempt.id)
                     .with_for_update(skip_locked=True)
                     .limit(100)
                 ).all()
+                click_to_call_item_ids = set(db.scalars(click_to_call_items).all())
                 for row in rows:
                     if row.status == "dispatching":
-                        # The provider may have accepted the request, so do not
-                        # redial. Keep it fenced as unknown until the longer
-                        # conversation safety timeout releases the slot.
                         row.status = "unknown"
                         row.reason = "watchdog_dispatch_unknown"
                         row.updated_at = current
@@ -768,6 +796,14 @@ class Worker:
                         event(db, row, "unknown", row.reason)
                     elif row.status == "unknown":
                         finish_attempt(db, row, "failed", "stale_call_reconciled")
+                    elif (
+                        row.route == "megafon_vats"
+                        and row.status == "accepted"
+                        and row.answered_at is None
+                        and row.updated_at < unconfirmed_cutoff
+                        and row.item_id in click_to_call_item_ids
+                    ):
+                        finish_attempt(db, row, "failed", "megafon_unconfirmed_timeout")
                     else:
                         finish_attempt(db, row, "failed", "provider_terminal_event_missing")
 
@@ -903,6 +939,14 @@ class Worker:
             self.crm.close()
 
 
+def scheduler_iteration(worker):
+    try:
+        worker.schedule()
+    except Exception:
+        log.exception("scheduler_allocation_failed")
+    worker.watchdog()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("role", choices=["scheduler", "telephony", "crm", "inbox"])
@@ -915,8 +959,7 @@ def main():
         while not stop.is_set():
             try:
                 if args.role == "scheduler":
-                    worker.schedule()
-                    worker.watchdog()
+                    scheduler_iteration(worker)
                 elif args.role == "telephony":
                     # Keep AMI subscribed across reconnects and process restarts.
                     if (

@@ -17,6 +17,8 @@ from ats.models import (
     HistoricalCall,
     Inbox,
     Outbox,
+    Operator,
+    QueueEntry,
     Session,
     User,
     now,
@@ -24,7 +26,7 @@ from ats.models import (
 from ats.schemas import CampaignCreate
 from ats.security import Principal
 from ats.services import create_campaign, drain_inbox, ingest, schedule_one
-from ats.workers import Worker, backoff, claim, complete_job
+from ats.workers import Worker, backoff, claim, complete_job, scheduler_iteration
 
 
 def test_health_and_auth_required(client):
@@ -517,6 +519,98 @@ def test_watchdog_releases_stale_dispatch_and_unknown(factory, tenants):
         assert row.status == "failed"
         assert row.reason == "stale_call_reconciled"
         assert db.get(CampaignItem, item.id).status == "failed"
+
+
+def test_scheduler_runs_watchdog_even_if_allocation_fails(caplog):
+    class WorkerStub:
+        watchdog_called = False
+
+        def schedule(self):
+            raise RuntimeError("allocation failed")
+
+        def watchdog(self):
+            self.watchdog_called = True
+
+    worker = WorkerStub()
+    scheduler_iteration(worker)
+    assert worker.watchdog_called
+    assert "scheduler_allocation_failed" in caplog.text
+
+
+def test_megafon_unconfirmed_amo_call_releases_operator_and_archives(factory, tenants, prepared):
+    Worker(factory).schedule()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        campaign = db.scalar(select(Campaign))
+        user = db.scalar(select(User).where(User.tenant_id == tenants[0]))
+        campaign.route = "megafon_vats"
+        campaign.mode = "operator"
+        campaign.idempotency_key = "amo-widget:test-unconfirmed"
+        attempt.route = "megafon_vats"
+        attempt.status = "accepted"
+        attempt.updated_at = now() - timedelta(minutes=6)
+        operator = Operator(
+            tenant_id=tenants[0],
+            user_id=user.id,
+            name="Test operator",
+            status="busy",
+        )
+        db.add(operator)
+        db.flush()
+        db.add(
+            QueueEntry(
+                tenant_id=tenants[0],
+                attempt_id=attempt.id,
+                operator_id=operator.id,
+                status="accepted",
+            )
+        )
+        attempt_id, operator_id, campaign_id = attempt.id, operator.id, campaign.id
+    Worker(factory).watchdog()
+    with factory() as db:
+        attempt = db.get(Attempt, attempt_id)
+        campaign = db.get(Campaign, campaign_id)
+        assert attempt.status == "failed"
+        assert attempt.reason == "megafon_unconfirmed_timeout"
+        assert attempt.ended_at is not None
+        assert db.get(Operator, operator_id).status == "free"
+        assert db.scalar(select(QueueEntry).where(QueueEntry.attempt_id == attempt_id)).status == "completed"
+        assert campaign.status == "completed"
+        assert campaign.archived is True
+        assert db.scalar(
+            select(Outbox).where(Outbox.kind == "crm", Outbox.dedupe_key == f"crm:{attempt_id}")
+        ) is not None
+
+
+@pytest.mark.parametrize(
+    "mode,source,status,age_min,should_fail",
+    [
+        ("operator", "amo-widget:test", "accepted", 4, False),
+        ("operator", "amo-widget:test", "answered", 6, False),
+        ("operator", "manual-campaign", "accepted", 6, False),
+        ("message", "amo-widget:test", "accepted", 6, False),
+        ("operator", "amo-widget:test", "accepted", 6, True),
+    ],
+)
+def test_megafon_unconfirmed_timeout_scope(
+    factory, tenants, prepared, mode, source, status, age_min, should_fail
+):
+    Worker(factory).schedule()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        campaign = db.scalar(select(Campaign))
+        campaign.route = "megafon_vats"
+        campaign.mode = mode
+        campaign.idempotency_key = source
+        attempt.route = "megafon_vats"
+        attempt.status = status
+        attempt.updated_at = now() - timedelta(minutes=age_min)
+        if status == "answered":
+            attempt.answered_at = now() - timedelta(minutes=age_min)
+    Worker(factory).watchdog()
+    with factory() as db:
+        attempt = db.scalar(select(Attempt))
+        assert attempt.status == ("failed" if should_fail else status)
 
 
 def test_stale_worker_cannot_ack_new_lease(factory, tenants):
