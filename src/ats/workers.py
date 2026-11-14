@@ -939,6 +939,14 @@ class Worker:
             self.crm.close()
 
 
+def scheduler_iteration(worker):
+    try:
+        worker.schedule()
+    except Exception:
+        log.exception("scheduler_allocation_failed")
+    worker.watchdog()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("role", choices=["scheduler", "telephony", "crm", "inbox"])
@@ -951,11 +959,7 @@ def main():
         while not stop.is_set():
             try:
                 if args.role == "scheduler":
-                    try:
-                        worker.schedule()
-                    except Exception:
-                        log.exception("scheduler_allocation_failed")
-                    worker.watchdog()
+                    scheduler_iteration(worker)
                 elif args.role == "telephony":
                     # Keep AMI subscribed across reconnects and process restarts.
                     if (
