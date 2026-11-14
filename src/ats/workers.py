@@ -785,6 +785,7 @@ class Worker:
                     .with_for_update(skip_locked=True)
                     .limit(100)
                 ).all()
+                click_to_call_item_ids = set(db.scalars(click_to_call_items).all())
                 for row in rows:
                     if row.status == "dispatching":
                         row.status = "unknown"
@@ -800,7 +801,7 @@ class Worker:
                         and row.status == "accepted"
                         and row.answered_at is None
                         and row.updated_at < unconfirmed_cutoff
-                        and row.item_id in set(db.scalars(click_to_call_items).all())
+                        and row.item_id in click_to_call_item_ids
                     ):
                         finish_attempt(db, row, "failed", "megafon_unconfirmed_timeout")
                     else:
