@@ -26,7 +26,7 @@ from ats.models import (
 from ats.schemas import CampaignCreate
 from ats.security import Principal
 from ats.services import create_campaign, drain_inbox, ingest, schedule_one
-from ats.workers import Worker, backoff, claim, complete_job
+from ats.workers import Worker, backoff, claim, complete_job, scheduler_iteration
 
 
 def test_health_and_auth_required(client):
@@ -519,6 +519,22 @@ def test_watchdog_releases_stale_dispatch_and_unknown(factory, tenants):
         assert row.status == "failed"
         assert row.reason == "stale_call_reconciled"
         assert db.get(CampaignItem, item.id).status == "failed"
+
+
+def test_scheduler_runs_watchdog_even_if_allocation_fails(caplog):
+    class WorkerStub:
+        watchdog_called = False
+
+        def schedule(self):
+            raise RuntimeError("allocation failed")
+
+        def watchdog(self):
+            self.watchdog_called = True
+
+    worker = WorkerStub()
+    scheduler_iteration(worker)
+    assert worker.watchdog_called
+    assert "scheduler_allocation_failed" in caplog.text
 
 
 def test_megafon_unconfirmed_amo_call_releases_operator_and_archives(factory, tenants, prepared):
