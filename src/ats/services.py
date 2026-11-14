@@ -394,36 +394,38 @@ def drain_inbox(db):
         from ats.inbound import normalize_phone
 
         callback = row.payload or {}
-        phone = next(
-            (
-                normalize_phone(callback.get(key, ""))
-                for key in (
-                    "phone",
-                    "phone_number",
-                    "customer_phone",
-                    "client_phone",
-                    "abonent",
-                    "dst",
-                    "destination",
-                    "destination_number",
-                    "called",
-                    "called_number",
-                    "number",
-                    "callee",
-                    "callerid",
-                )
-                if normalize_phone(callback.get(key, ""))
-            ),
-            "",
+        phone_keys = (
+            "phone",
+            "telnum",
+            "phone_number",
+            "customer_phone",
+            "client_phone",
+            "abonent",
+            "dst",
+            "destination",
+            "destination_number",
+            "called",
+            "called_number",
+            "number",
+            "callee",
+            "callerid",
         )
-        query = repo.query(Attempt).where(
-            Attempt.route == row.route,
-            Attempt.status.in_(ACTIVE),
-            Attempt.created_at >= row.received_at - timedelta(minutes=10),
-        )
-        if phone:
-            query = query.where(Attempt.phone == phone)
-        candidates = list(db.scalars(query.order_by(Attempt.created_at.desc()).limit(2)).all())
+        phones = {
+            normalized
+            for key in phone_keys
+            if (normalized := normalize_phone(callback.get(key, "")))
+        }
+        candidates = []
+        if phones:
+            query = repo.query(Attempt).where(
+                Attempt.route == row.route,
+                Attempt.status.in_(ACTIVE),
+                Attempt.created_at >= row.received_at - timedelta(minutes=10),
+                Attempt.phone.in_(phones),
+            )
+            candidates = list(
+                db.scalars(query.order_by(Attempt.created_at.desc()).limit(2)).all()
+            )
         if len(candidates) == 1:
             attempt = db.scalar(
                 repo.query(Attempt).where(Attempt.id == candidates[0].id).with_for_update()

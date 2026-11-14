@@ -368,6 +368,54 @@ def test_megafon_history_leg_fallback_does_not_crash_inbox(factory, tenants, pre
         assert inbox.status == "processed"
 
 
+
+def test_megafon_history_leg_matches_telnum_when_phone_is_operator(factory, tenants, prepared):
+    Worker(factory).schedule()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        attempt.route = "megafon_vats"
+        attempt.external_id = "makecall-leg"
+        attempt.status = "accepted"
+        ingest(
+            db,
+            tenants[0],
+            "megafon_vats",
+            "history:telnum-leg",
+            "different-history-leg",
+            "failed",
+            {"phone": "+79991110000", "telnum": attempt.phone, "status": "NoAnswer"},
+        )
+    Worker(factory).inbox()
+    with factory() as db:
+        attempt = db.scalar(select(Attempt))
+        inbox = db.scalar(select(Inbox).where(Inbox.external_id == "different-history-leg"))
+        assert attempt.status == "failed"
+        assert inbox.status == "processed"
+
+
+def test_megafon_history_leg_without_matching_number_stays_orphan(factory, tenants, prepared):
+    Worker(factory).schedule()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        attempt.route = "megafon_vats"
+        attempt.external_id = "makecall-leg"
+        attempt.status = "accepted"
+        ingest(
+            db,
+            tenants[0],
+            "megafon_vats",
+            "history:no-match",
+            "other-history-leg",
+            "failed",
+            {"phone": "+79991110000", "telnum": "+79992220000"},
+        )
+    Worker(factory).inbox()
+    with factory() as db:
+        assert db.scalar(select(Attempt)).status == "accepted"
+        assert db.scalar(select(Inbox).where(Inbox.external_id == "other-history-leg")).status == "orphan"
+
+
+
 def test_unmatched_megafon_history_is_kept_for_analytics(factory, tenants):
     with factory.begin() as db:
         ingest(
