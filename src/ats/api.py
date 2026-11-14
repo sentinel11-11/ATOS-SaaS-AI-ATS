@@ -669,6 +669,25 @@ async def megafon_webhook(tenant_id: UUID, request: Request, db=Depends(session)
     return {"result": "success"}
 
 
+async def _megafon_request_payload(request: Request):
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type == "application/json" or content_type.endswith("+json"):
+        try:
+            payload = await request.json()
+        except ValueError:
+            raise Problem(400, "invalid_json") from None
+    elif content_type in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+        try:
+            payload = dict(await request.form())
+        except (ValueError, RuntimeError):
+            raise Problem(400, "invalid_form") from None
+    else:
+        raise Problem(415, "unsupported_content_type")
+    if not isinstance(payload, dict):
+        raise Problem(400, "invalid_payload")
+    return payload
+
+
 @app.post("/api/megafon/events")
 async def megafon_events(request: Request, db=Depends(session)):
     """JSON CRM webhook for MegaFon VATS -> ATS -> amoCRM history delivery."""
@@ -678,12 +697,7 @@ async def megafon_events(request: Request, db=Depends(session)):
     if not tenant_id:
         raise Problem(503, "telephony_tenant_not_bound")
     config = settings_for_tenant(db, tenant_id)
-    try:
-        payload = await request.json()
-    except ValueError:
-        raise Problem(400, "invalid_json") from None
-    if not isinstance(payload, dict):
-        raise Problem(400, "invalid_payload")
+    payload = await _megafon_request_payload(request)
     supplied = (
         request.headers.get("X-CRM-Token")
         or request.headers.get("X-Megafon-Token")
