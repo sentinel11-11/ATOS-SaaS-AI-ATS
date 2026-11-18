@@ -176,7 +176,7 @@ def enqueue_check(db, p, provider, kind=None):
 
 @router.post("/{provider}/check", status_code=202)
 def check(provider: Literal["ami", "megafon", "multicom", "amocrm"], p=Depends(admin), db=Depends(session)):
-    return enqueue_check(db, p, provider)
+    return enqueue_check(db, p, "ami" if provider == "multicom" else provider)
 
 
 @router.post("/{provider}/{action}", status_code=202)
