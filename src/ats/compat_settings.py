@@ -182,7 +182,9 @@ def check(provider: Literal["ami", "megafon", "multicom", "amocrm"], p=Depends(a
 @router.post("/{provider}/{action}", status_code=202)
 def sync(provider: Literal["megafon", "multicom", "amocrm"], action: Literal["pool-sync", "users-sync", "groups-sync"], p=Depends(admin), db=Depends(session)):
     kind = {"pool-sync": "numbers", "users-sync": "users", "groups-sync": "groups"}[action]
-    if (provider == "amocrm" and kind != "users") or (provider == "multicom" and kind != "numbers"):
+    if provider == "multicom":
+        raise Problem(409, "multicom_sip_numbers_manual")
+    if provider == "amocrm" and kind != "users":
         raise Problem(422, "provider_directory_not_supported")
     return enqueue_check(db, p, provider, kind)
 
