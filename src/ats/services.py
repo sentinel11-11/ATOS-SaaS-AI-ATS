@@ -96,7 +96,13 @@ def validate_route(tenant_id, route, db=None, *, require_megafon_user=True):
                     CallerNumber.tenant_id == tenant_id,
                     CallerNumber.enabled,
                     CallerNumber.verified,
+                    CallerNumber.enabled_outgoing,
                     ~CallerNumber.quarantined,
+                    *(
+                        [CallerNumber.provider == "multicom_ami"]
+                        if config.ami_cli_endpoint_prefix
+                        else []
+                    ),
                 )
                 .limit(1)
             )
