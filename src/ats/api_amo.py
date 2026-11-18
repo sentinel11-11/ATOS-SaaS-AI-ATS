@@ -180,7 +180,7 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
     ]
     if len(extensions) != 1:
         raise Problem(409, "amo_user_operator_mapping_missing")
-    operator = db.scalar(
+    matches = db.scalars(
         repo.query(Operator)
         .join(User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id))
         .where(
@@ -190,10 +190,10 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
             User.active,
         )
         .with_for_update()
-        .limit(1)
-    )
-    if operator is None:
-        raise Problem(409, "operator_unavailable")
+    ).all()
+    if len(matches) != 1:
+        raise Problem(409, "operator_selection_required")
+    operator = matches[0]
     command = CampaignCreate(name=f"CRM call {contact.name or contact.phone}", route=route, contact_ids=[contact.id], max_channels=1, window_start=0, window_end=24, mode="operator", retry_max=0)
     key = f"amo-widget:{data.request_id or uuid4()}"
     campaign, _ = create_campaign(db, Principal(tenant_id, operator.user_id, "operator", "amo-widget"), command, key)
