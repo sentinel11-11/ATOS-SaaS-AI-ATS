@@ -9,7 +9,6 @@ from ats.adapters import AMI, Rejected
 from ats.connections import _validate
 from ats.domain import Problem
 
-
 MODULE = runpy.run_path(str(Path(__file__).parents[1] / "deploy" / "asterisk" / "build_mcm_cli_endpoints.py"))
 
 
