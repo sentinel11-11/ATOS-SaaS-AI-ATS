@@ -26,6 +26,7 @@ from ats.models import (
     LoginBucket,
     Operator,
     Outbox,
+    User,
     WorkspaceSettings,
     now,
 )
@@ -172,18 +173,25 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
     profile = db.scalar(select(ConnectionProfile).where(ConnectionProfile.tenant_id == tenant_id, ConnectionProfile.provider == "amocrm"))
     if profile:
         mapping = {**mapping, **(profile.public_values or {}).get("operator_user_map", {})}
-    mapped_extension = next((ext for ext, amo_id in mapping.items() if str(amo_id) == str(data.amo_user_id)), None) if data.amo_user_id else None
-    operator_query = repo.query(Operator).where(Operator.status == "free")
-    if route == "multicom_ami":
-        operator_query = operator_query.where(Operator.extension != "")
-    if mapped_extension:
-        operator_query = operator_query.where(Operator.extension == str(mapped_extension))
-    free_operators = db.scalars(operator_query.with_for_update()).all()
-    if len(free_operators) != 1:
-        if data.amo_user_id and not mapped_extension:
-            raise Problem(409, "amo_user_operator_mapping_missing")
-        raise Problem(409, "operator_selection_required")
-    operator = free_operators[0]
+    if not data.amo_user_id:
+        raise Problem(409, "amo_user_operator_mapping_missing")
+    extensions = [
+        str(ext) for ext, amo_id in mapping.items() if str(amo_id) == str(data.amo_user_id)
+    ]
+    if len(extensions) != 1:
+        raise Problem(409, "amo_user_operator_mapping_missing")
+    operator = db.scalar(
+        repo.query(Operator)
+        .join(User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id))
+        .where(
+            Operator.status == "free",
+            Operator.extension == extensions[0],
+            User.role == "operator",
+            User.active,
+        )
+        .with_for_update()
+        .limit(1)
+    )
     if operator is None:
         raise Problem(409, "operator_unavailable")
     command = CampaignCreate(name=f"CRM call {contact.name or contact.phone}", route=route, contact_ids=[contact.id], max_channels=1, window_start=0, window_end=24, mode="operator", retry_max=0)
@@ -216,7 +224,17 @@ def click_to_call(data: AmoClickToCall, p=Depends(principal), db=Depends(session
         mode="operator",
         retry_max=0,
     )
+    if route == "multicom_ami":
+        operator = db.scalar(
+            repo.query(Operator)
+            .where(Operator.user_id == p.user_id, Operator.extension != "", Operator.status == "free")
+            .with_for_update()
+        )
+        if operator is None:
+            raise Problem(409, "operator_selection_required")
     campaign, _ = create_campaign(db, p, command, f"amo-click:{uuid4()}")
+    if route == "multicom_ami":
+        campaign.schedule = {"operator_id": str(operator.id), "source": "amo_workspace"}
     campaign.status = "running"
     db.commit()
     return {"ok": True, "campaign_id": str(campaign.id), "contact_id": str(contact.id), "status": "queued"}
