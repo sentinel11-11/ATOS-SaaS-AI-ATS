@@ -4,17 +4,23 @@ let currentUser = null;
 const pendingReads = new Map();
 const readCache = new Map();
 const READ_CACHE_TTL_MS = 60000;
+let readCacheEpoch = 0;
 
 // Page components are mounted again when the user changes tabs. Keep recent
 // successful GET responses in memory so a tab switch is instant while still
 // refreshing after mutations or the short freshness window.
 export function invalidateApiCache(prefix = '') {
+  readCacheEpoch += 1;
   if (!prefix) {
     readCache.clear();
+    pendingReads.clear();
     return;
   }
   for (const key of readCache.keys()) {
-    if (key.startsWith(prefix)) readCache.delete(key);
+    if (key.includes(prefix)) readCache.delete(key);
+  }
+  for (const key of pendingReads.keys()) {
+    if (key.includes(prefix)) pendingReads.delete(key);
   }
 }
 
@@ -66,7 +72,7 @@ export function api(path, options = {}) {
   const method = options.method || (options.body ? 'POST' : 'GET');
   const url = path.startsWith('/api/') ? path : `/api/v2${path.startsWith('/') ? path : '/' + path}`;
   const readOnlyPost = method === 'POST' && options.readOnly === true;
-  const key = (method === 'GET' || readOnlyPost) && !options.signal
+  const key = (method === 'GET' || readOnlyPost) && !options.signal && options.cache !== false
     ? `${method}:${url}:${readOnlyPost ? JSON.stringify(options.body || {}) : ''}`
     : null;
   const useCache = key && options.cache !== false && !url.includes('/auth/') && !url.includes('/jobs/');
@@ -77,6 +83,7 @@ export function api(path, options = {}) {
   }
   if (key && pendingReads.has(key)) return pendingReads.get(key);
 
+  const requestEpoch = readCacheEpoch;
   const request = (async () => {
     const headers = { ...options.headers };
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) headers['X-CSRF-Token'] = csrfToken();
@@ -97,7 +104,7 @@ export function api(path, options = {}) {
         window.dispatchEvent(new CustomEvent('ats_unauthorized'));
       }
       const normalized = { ...result, ok: result.ok ?? response.ok };
-      if (useCache && normalized.ok !== false) {
+      if (useCache && normalized.ok !== false && requestEpoch === readCacheEpoch) {
         readCache.set(key, { value: normalized, expiresAt: Date.now() + READ_CACHE_TTL_MS });
       }
       return normalized;
@@ -113,7 +120,9 @@ export function api(path, options = {}) {
 
   if (key) {
     pendingReads.set(key, request);
-    request.finally(() => pendingReads.delete(key));
+    request.finally(() => {
+      if (pendingReads.get(key) === request) pendingReads.delete(key);
+    });
   }
   return request;
 }
