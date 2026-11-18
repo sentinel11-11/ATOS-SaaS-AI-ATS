@@ -243,7 +243,7 @@ def schedule_one(db, tenant_id):
         from ats.workspace_service import event, select_caller
 
         try:
-            caller_number = select_caller(db, tenant, campaign.route, config)
+            caller_number = select_caller(db, tenant, campaign.route, config, operator)
         except Problem as exc:
             if exc.code == "caller_pool_exhausted":
                 return False
