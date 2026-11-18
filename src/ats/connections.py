@@ -32,7 +32,7 @@ SECRETS = {
 FIELDS = {
     "ami": {"host", "port", "user", "secret", "tls", "trunk", "tech", "number_format",
             "caller_id_format", "context", "answer_context", "inbound_contexts", "record_calls", "play_message",
-            "inbound_enabled", "dial_prefix", "caller_id", "cli_endpoint_prefix"},
+            "inbound_enabled", "dial_prefix", "caller_id", "cli_endpoint_prefix", "operator_number_map"},
     "megafon_vats": {"base_url", "api_key", "crm_token", "api_key_env", "crm_token_env",
                      "default_user", "default_group", "timeout_sec"},
     "multicom": {"api_url", "api_key", "api_key_env", "account_id", "sip_host", "sip_user",
@@ -127,6 +127,21 @@ def _public_url(value, suffixes=None):
 def _validate(provider, field, value):
     if field in BOOLEAN_FIELDS:
         return truthy(value)
+    if field == "operator_number_map":
+        if not isinstance(value, dict) or len(value) > 500:
+            raise Problem(422, "invalid_operator_number_map")
+        result = {}
+        for extension, phones in value.items():
+            if not isinstance(extension, str) or not re.fullmatch(r"[0-9]{1,20}", extension):
+                raise Problem(422, "invalid_operator_number_map")
+            if not isinstance(phones, list) or not 1 <= len(phones) <= 100:
+                raise Problem(422, "invalid_operator_number_map")
+            if any(not isinstance(phone, str) or not re.fullmatch(r"[0-9]{10}", phone) for phone in phones):
+                raise Problem(422, "invalid_operator_number_map")
+            if len(set(phones)) != len(phones):
+                raise Problem(422, "invalid_operator_number_map")
+            result[extension] = phones
+        return result
     if field == "operator_user_map":
         if not isinstance(value, dict) or len(value) > 1000:
             raise Problem(422, "invalid_operator_user_map")
@@ -200,7 +215,7 @@ def _defaults(config, tenant_id):
                 "port": config.ami_port if phone_bound else 5038,
                 "user": config.ami_user if phone_bound else "ats-beta", "tls": config.ami_tls if phone_bound else False,
                 "secret": MASK if phone_bound and config.ami_secret.get_secret_value() else "",
-                "trunk": getattr(config, "ami_trunk", "mcm"), "tech": "PJSIP", "number_format": "ru8", "cli_endpoint_prefix": config.ami_cli_endpoint_prefix,
+                "trunk": getattr(config, "ami_trunk", "mcm"), "tech": "PJSIP", "number_format": "ru8", "cli_endpoint_prefix": config.ami_cli_endpoint_prefix, "operator_number_map": config.ami_operator_number_map,
                 "caller_id_format": "d10", "context": getattr(config, "ami_context", "ats-beta"),
                 "answer_context": getattr(config, "ami_answer_context", "ats-beta-answer"),
                 "inbound_contexts": config.inbound_contexts, "record_calls": True, "play_message": True,
@@ -289,7 +304,7 @@ def settings_for_tenant(db, tenant_id):
                 "tls": "ami_tls", "caller_id": "ami_caller_id", "trunk": "ami_trunk", "context": "ami_context",
                 "answer_context": "ami_answer_context",
                 "tech": "ami_tech", "number_format": "ami_number_format", "caller_id_format": "ami_caller_id_format",
-                "dial_prefix": "ami_dial_prefix", "cli_endpoint_prefix": "ami_cli_endpoint_prefix", "play_message": "ami_play_message", "record_calls": "ami_record_calls",
+                "dial_prefix": "ami_dial_prefix", "cli_endpoint_prefix": "ami_cli_endpoint_prefix", "operator_number_map": "ami_operator_number_map", "play_message": "ami_play_message", "record_calls": "ami_record_calls",
                 "inbound_contexts": "inbound_contexts", "inbound_enabled": "inbound_enabled"},
         "megafon_vats": {"base_url": "megafon_url", "api_key": "megafon_api_key", "crm_token": "megafon_crm_token", "default_user": "megafon_user"},
         "amocrm": {"access_token": "amo_access_token", "webhook_token": "amo_webhook_token"},
