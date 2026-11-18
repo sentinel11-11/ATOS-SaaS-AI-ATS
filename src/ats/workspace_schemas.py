@@ -133,8 +133,8 @@ class MulticomNumberImport(Input):
         for value in values:
             if not isinstance(value, str):
                 raise ValueError("Invalid number")
-            digits = re.sub(r"[\\s()-]", "", value.strip())
-            if re.fullmatch(r"(?:\\+7|7|8)[0-9]{10}", digits):
+            digits = re.sub(r"[\s()-]", "", value.strip())
+            if re.fullmatch(r"(?:\+7|7|8)[0-9]{10}", digits):
                 digits = digits[-10:]
             if not re.fullmatch(r"[0-9]{10}", digits):
                 raise ValueError("Use ten-digit Russian DIDs")
