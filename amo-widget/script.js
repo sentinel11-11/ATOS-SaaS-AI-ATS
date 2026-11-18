@@ -61,9 +61,10 @@ define(['jquery'], function ($) {
     }
 
     function route() {
-      return String(getSettings().route || '').trim().toLowerCase() === 'multicom_ami'
-        ? 'multicom_ami'
-        : 'megafon_vats';
+      var selected = String(getSettings().route || '').trim().toLowerCase();
+      return selected === 'multicom_ami' || selected === 'megafon_vats'
+        ? selected
+        : null;
     }
 
     function getSystem() {
@@ -354,6 +355,8 @@ define(['jquery'], function ($) {
         live_calls_disabled_for_tenant: 'Живые звонки отключены для этого контура',
         megafon_not_configured: 'МегаФон ВАТС не настроен',
         ami_not_configured: 'Multicom/AMI не настроен',
+        telephony_route_mismatch: 'Маршрут виджета не совпадает с выбранным провайдером ATOS',
+        telephony_provider_not_supported: 'Выберите поддерживаемого провайдера телефонии в ATOS',
         contact_phone_mismatch: 'Номер карточки не совпадает с номером в ATS'
       };
       return messages[code] || code || text.generic;
@@ -365,7 +368,7 @@ define(['jquery'], function ($) {
         setStatus(text.noPhone, true);
         return;
       }
-      var amoUserId = card.responsible_user_id || currentUserId();
+      var amoUserId = currentUserId() || card.responsible_user_id;
       element.setAttribute('data-call-state', 'busy');
       if (button) {
         button.disabled = true;
@@ -409,7 +412,7 @@ define(['jquery'], function ($) {
       element.className = 'atos-ats-widget-root';
       element.setAttribute('data-atos-ats-version', version);
       element.innerHTML =
-        '<div class="atos-ats-card-header"><div><div class="atos-ats-brand">' + text.brand + '</div><div class="atos-ats-title">' + text.title + '</div></div><span class="atos-ats-route">' + route() + '</span></div>' +
+        '<div class="atos-ats-card-header"><div><div class="atos-ats-brand">' + text.brand + '</div><div class="atos-ats-title">' + text.title + '</div></div><span class="atos-ats-route">' + (route() || 'AUTO') + '</span></div>' +
         '<div class="atos-ats-card-body"><div class="atos-ats-field"><span>' + text.phone + '</span><strong class="atos-ats-phone-value">—</strong></div><div class="atos-ats-field"><span>' + text.responsible + '</span><strong class="atos-ats-responsible-value">' + text.currentUser + '</strong></div><div class="atos-ats-actions"><button type="button" class="atos-ats-submit" disabled>' + text.call + '</button><button type="button" class="atos-ats-refresh" title="' + text.refresh + '" aria-label="' + text.refresh + '">↻</button></div><div class="atos-ats-status" role="status" aria-live="polite"></div></div>';
       document.body.appendChild(element);
       syncCard(true);

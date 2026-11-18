@@ -103,6 +103,28 @@ def widget_card(data: AmoWidgetCard, request: Request, db=Depends(session)):
     }
 
 
+def _call_route(workspace_values, requested=None):
+    legacy = workspace_values.get("_legacy_basic") or {}
+    provider = (
+        legacy.get("provider")
+        or workspace_values.get("provider")
+        or workspace_values.get("route")
+        or "megafon_vats"
+    )
+    routes = {
+        "ami": "multicom_ami",
+        "multicom": "multicom_ami",
+        "multicom_ami": "multicom_ami",
+        "megafon_vats": "megafon_vats",
+    }
+    route = routes.get(provider)
+    if route is None:
+        raise Problem(409, "telephony_provider_not_supported")
+    if requested is not None and requested != route:
+        raise Problem(409, "telephony_route_mismatch")
+    return route
+
+
 @public_router.post("/api/v1/amo/widget/click-to-call")
 def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depends(session)):
     """CORS entry point used by the amoCRM widget for a single operator call."""
@@ -145,8 +167,7 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
         raise Problem(409, "contact_phone_mismatch")
     provider = db.scalar(repo.query(WorkspaceSettings))
     values = provider.values if provider else {}
-    configured_route = values.get("provider") or values.get("route") or "megafon_vats"
-    route = data.route or {"multicom": "multicom_ami", "multicom_ami": "multicom_ami", "megafon_vats": "megafon_vats"}.get(configured_route, "megafon_vats")
+    route = _call_route(values, data.route)
     mapping = (provider.values if provider else {}).get("operator_user_map", {})
     profile = db.scalar(select(ConnectionProfile).where(ConnectionProfile.tenant_id == tenant_id, ConnectionProfile.provider == "amocrm"))
     if profile:
@@ -183,9 +204,11 @@ def click_to_call(data: AmoClickToCall, p=Depends(principal), db=Depends(session
         raise Problem(404, "crm_contact_not_synced")
     if data.phone and _phone(data.phone) != contact.phone:
         raise Problem(409, "contact_phone_mismatch")
+    workspace = db.scalar(repo.query(WorkspaceSettings))
+    route = _call_route(workspace.values if workspace else {})
     command = CampaignCreate(
         name=f"CRM call {contact.name or contact.phone}",
-        route="megafon_vats",
+        route=route,
         contact_ids=[contact.id],
         max_channels=1,
         window_start=0,
