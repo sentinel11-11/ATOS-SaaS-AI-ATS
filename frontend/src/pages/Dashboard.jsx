@@ -17,11 +17,7 @@ export default function Dashboard({ onNavigate, refreshKey }) {
     }
 
     fetchDashboard();
-    const interval = setInterval(() => { if (!document.hidden) fetchDashboard(); }, 15000);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
+    return () => { isMounted = false; };
   }, [refreshKey]);
 
   if (loading && !data) {

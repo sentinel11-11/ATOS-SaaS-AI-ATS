@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useLiveUpdates } from './useLiveUpdates';
 import { api, getToken, getUser, invalidateApiCache, setSession } from './api';
 import { useSSE } from './useSSE';
 import Sidebar from './components/Sidebar';
@@ -89,13 +90,16 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // SSE Realtime Event Handler. Track call IDs instead of incrementing for
-  // every phase event, otherwise dialing → ringing → talk is counted 3 times.
+  const refreshVisibleData = useCallback(() => {
+    setRefreshKey((previous) => previous + 1);
+  }, []);
+  const notifyLiveChange = useLiveUpdates(!!token, activeTab, refreshVisibleData);
+
+  // Reconcile read-only operational pages when workers publish changes.
+  // The backend currently sends a generic 'campaign' invalidation event.
+  // Track call IDs separately so call phase changes do not inflate the counter.
   const handleSSEEvent = useCallback((evType, data) => {
-    // Keep the SSE channel for active-call state, but do not refetch every
-    // page on each provider event. Pages refresh after their own mutations or
-    // when the user reopens them, so background workers cannot replace the
-    // current view while it is being edited.
+    notifyLiveChange();
     if (evType !== 'call') return;
     const callId = data?.id ?? data?.call_id;
     if (callId === undefined || callId === null) return;
@@ -111,7 +115,7 @@ export default function App() {
       else next.add(key);
       return next;
     });
-  }, []);
+  }, [notifyLiveChange]);
 
   useSSE(handleSSEEvent, !!token);
 
