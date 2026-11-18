@@ -80,6 +80,47 @@ def numbers(p=Depends(principal), db=Depends(session)):
     ).all()
 
 
+@router.post("/numbers/import-multicom")
+def numbers_import_multicom(data: commands.MulticomNumberImport, p=Depends(admin), db=Depends(session)):
+    db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
+    repo = TenantRepository(db, p.tenant_id)
+    existing = {
+        row.phone: row
+        for row in db.scalars(
+            repo.query(CallerNumber).where(CallerNumber.phone.in_(data.numbers)).with_for_update()
+        )
+    }
+    from ats.domain import Problem
+
+    conflicts = [
+        phone for phone, row in existing.items() if row.provider != "multicom_ami"
+    ]
+    if conflicts:
+        raise Problem(409, "caller_number_provider_conflict")
+    created = 0
+    for phone in data.numbers:
+        if phone in existing:
+            continue
+        row = repo.add(
+            CallerNumber,
+            phone=phone,
+            label="Multicom",
+            provider="multicom_ami",
+            kind="mobile",
+            enabled=False,
+            verified=False,
+            enabled_outgoing=False,
+            quarantined=False,
+            daily_limit=30,
+            cooldown_seconds=60,
+        )
+        db.flush()
+        audit(db, p, "multicom_number.imported_pending_verification", row.id)
+        created += 1
+    db.commit()
+    return {"created": created, "already_present": len(data.numbers) - created, "pending_verification": created}
+
+
 @router.post("/numbers", status_code=201)
 def number_create(data: commands.NumberSave, p=Depends(admin), db=Depends(session)):
     row = TenantRepository(db, p.tenant_id).add(CallerNumber, **data.model_dump())
