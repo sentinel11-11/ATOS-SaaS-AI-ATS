@@ -710,7 +710,7 @@ export default function Settings({ addToast, refreshKey }) {
             disabled={!multicomImportText.trim() || actionLoading}
             className="px-3 py-2 rounded-xl bg-line/60 text-white text-xs font-semibold disabled:opacity-40"
             onClick={async () => {
-              const numbers = multicomImportText.split(/[\\s,;]+/).map((v) => v.trim()).filter(Boolean);
+              const numbers = multicomImportText.split(/[\s,;]+/).map((v) => v.trim()).filter(Boolean);
               setActionLoading(true);
               try {
                 const result = await api('/api/v1/workspace/numbers/import-multicom', {
