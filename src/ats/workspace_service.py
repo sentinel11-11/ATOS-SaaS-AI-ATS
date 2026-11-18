@@ -186,10 +186,16 @@ def retry_failed(db, p, campaign):
     return len(items)
 
 
-def select_caller(db, tenant, route, config=None):
+def select_caller(db, tenant, route, config=None, operator=None):
     """Caller selection shares the tenant allocation lock; counts persisted attempts, no reset races."""
     if route not in {"multicom_ami", "megafon_vats"}:
         return ""
+    rules = getattr(config, "ami_operator_number_map", {}) if route == "multicom_ami" else {}
+    allowed = None
+    if rules and operator is not None:
+        allowed = rules.get(str(operator.extension))
+        if not allowed:
+            raise Problem(409, "operator_caller_mapping_missing")
     numbers = db.scalars(
         select(CallerNumber)
         .where(CallerNumber.tenant_id == tenant.id)
@@ -199,7 +205,10 @@ def select_caller(db, tenant, route, config=None):
     if not numbers:
         from ats.config import settings
 
-        return (config or settings()).ami_caller_id
+        fallback = (config or settings()).ami_caller_id
+        if allowed is not None and fallback not in allowed:
+            raise Problem(409, "operator_caller_mapping_missing")
+        return fallback
     day_start = (
         now()
         .astimezone(ZoneInfo(tenant.timezone))
@@ -207,6 +216,8 @@ def select_caller(db, tenant, route, config=None):
     )
     for number in numbers:
         if not number.enabled or not number.verified or number.quarantined:
+            continue
+        if not number.enabled_outgoing or (allowed is not None and number.phone not in allowed):
             continue
         if (
             number.last_used_at
