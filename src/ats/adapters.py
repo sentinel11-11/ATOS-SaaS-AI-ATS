@@ -1,5 +1,6 @@
 import ipaddress
 import queue
+import re
 import socket
 import ssl
 import threading
@@ -548,6 +549,11 @@ class AMI:
         context = getattr(self.config, "ami_context", "ats-beta")
         answer_context = getattr(self.config, "ami_answer_context", "ats-beta-answer")
         trunk = getattr(self.config, "ami_trunk", "mcm")
+        prefix = getattr(self.config, "ami_cli_endpoint_prefix", "")
+        if prefix:
+            if prefix != "mcm-cli-" or not re.fullmatch(r"[0-9]{10}", str(caller_id or "")):
+                raise Rejected("ami_caller_identity_not_verified")
+            trunk = f"{prefix}{caller_id}"
         tech = getattr(self.config, "ami_tech", "PJSIP")
         self.connect()
         self.action(

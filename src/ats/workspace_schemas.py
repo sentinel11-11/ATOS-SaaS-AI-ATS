@@ -120,6 +120,30 @@ class NumberSave(Input):
     cooldown_seconds: int = Field(default=60, ge=0, le=86400)
 
 
+
+class MulticomNumberImport(Input):
+    numbers: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("numbers")
+    @classmethod
+    def normalize_numbers(cls, values):
+        import re
+
+        result = []
+        for value in values:
+            if not isinstance(value, str):
+                raise ValueError("Invalid number")
+            digits = re.sub(r"[\s()-]", "", value.strip())
+            if re.fullmatch(r"(?:\+7|7|8)[0-9]{10}", digits):
+                digits = digits[-10:]
+            if not re.fullmatch(r"[0-9]{10}", digits):
+                raise ValueError("Use ten-digit Russian DIDs")
+            result.append(digits)
+        if len(set(result)) != len(result):
+            raise ValueError("Duplicate DIDs")
+        return result
+
+
 class BlockSave(Input):
     phone: str
     reason: str = Field(min_length=1, max_length=500)
