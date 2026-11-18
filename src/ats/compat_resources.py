@@ -73,6 +73,7 @@ class NumberCommand(LegacyInput):
     provider: Literal["ami", "megafon_vats", "multicom", "uis", "multicom_ami"] | None = None
     kind: str | None = Field(default=None, min_length=1, max_length=50)
     active: bool | None = None
+    verified: bool | None = None
     enabled_outgoing: bool | None = None
     quarantined: bool | None = None
     daily_limit: int | None = Field(default=None, ge=1, le=100000)
@@ -251,12 +252,16 @@ def number_save(data: NumberCommand, p=Depends(admin), db=Depends(session)):
     values = data.model_dump(exclude_unset=True, exclude_none=True)
     if "active" in values:
         row.enabled = values.pop("active")
+    if "verified" in values:
+        row.verified = values.pop("verified")
     for key in (
         "label", "provider", "kind", "enabled_outgoing", "quarantined", "daily_limit",
         "weight", "cooldown_seconds", "carrier", "provider_ref",
     ):
         if key in values:
             setattr(row, key, values[key])
+    if row.provider == "multicom_ami" and row.enabled and not row.verified:
+        raise Problem(409, "caller_number_not_verified")
     db.flush()
     audit(db, p, "number.updated" if data.id else "number.created", row.id)
     db.commit()

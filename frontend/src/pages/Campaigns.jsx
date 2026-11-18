@@ -102,7 +102,7 @@ export default function Campaigns({ addToast, refreshKey }) {
     setEditingCamp({
       id: 0,
       name: 'Новая кампания',
-      template_id: templates[0]?.id || null,
+      template_id: null,
       flow: 'operator',
       work_time: '08:00-20:00',
       retry_delay_min: 15,
@@ -120,7 +120,7 @@ export default function Campaigns({ addToast, refreshKey }) {
     setEditingCamp({
       id: c.id,
       name: c.name || '',
-      template_id: c.template_id || templates[0]?.id || null,
+      template_id: c.template_id || null,
       flow: c.flow || 'operator',
       work_time: wt,
       retry_delay_min: c.retry_delay_min || 15,
@@ -149,7 +149,7 @@ export default function Campaigns({ addToast, refreshKey }) {
       flow: editingCamp.flow || 'operator',
       route: editingCamp.route || 'megafon_vats',
       retry_delay_min: parseInt(editingCamp.retry_delay_min) || 15,
-      retry_max: parseInt(editingCamp.retry_max) || 2,
+      retry_max: Number.isInteger(Number(editingCamp.retry_max)) ? Number(editingCamp.retry_max) : 2,
       schedule: {
         start,
         end,
@@ -613,9 +613,10 @@ export default function Campaigns({ addToast, refreshKey }) {
                 <label className="font-semibold text-muted block mb-1">Шаблон / Голосовое сообщение</label>
                 <select
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
-                  value={editingCamp.template_id || 1}
+                  value={editingCamp.template_id || ''}
                   onChange={(e) => setEditingCamp({ ...editingCamp, template_id: e.target.value || null })}
                 >
+                  <option value="">Без шаблона — стандартный тест hello-world</option>
                   {templatesList.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
@@ -638,6 +639,13 @@ export default function Campaigns({ addToast, refreshKey }) {
                   <option value="message">Информатор (Прослушать сообщение)</option>
                 </select>
               </div>
+
+              {editingCamp.flow === 'message' && editingCamp.route === 'multicom_ami' && (
+                <p className="md:col-span-4 text-xs text-muted">
+                  Для первого тестового звонка при выключенном медиарежиме выберите «Без шаблона».
+                  Asterisk воспроизведёт hello-world после ответа. Это не соединение с оператором.
+                </p>
+              )}
 
               <div>
                 <label className="font-semibold text-muted block mb-1">Провайдер телефонии</label>
@@ -667,8 +675,8 @@ export default function Campaigns({ addToast, refreshKey }) {
                   type="number"
                   min="1"
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
-                  value={editingCamp.retry_max || 2}
-                  onChange={(e) => setEditingCamp({ ...editingCamp, retry_max: parseInt(e.target.value) || 1 })}
+                  value={editingCamp.retry_max ?? 2}
+                  onChange={(e) => setEditingCamp({ ...editingCamp, retry_max: Math.max(0, parseInt(e.target.value, 10) || 0) })}
                 />
               </div>
             </div>
