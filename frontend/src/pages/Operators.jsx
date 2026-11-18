@@ -22,8 +22,6 @@ export default function Operators({ addToast, refreshKey, isAdmin }) {
 
   useEffect(() => {
     loadAcdData();
-    const interval = setInterval(() => { if (!document.hidden) loadAcdData(); }, 15000);
-    return () => clearInterval(interval);
   }, [refreshKey]);
 
   const operatorsList = Array.isArray(operators) ? operators : [];
