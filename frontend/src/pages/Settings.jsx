@@ -175,7 +175,6 @@ export default function Settings({ addToast, refreshKey }) {
   };
 
   // единый запуск provider-действий: сохранить конфиг → POST → тост и (опционально) отчёт
-  const runMulticomAction = async (endpoint, name) => runProviderAction(endpoint, name, 'multicom');
 
   const runAmoCrmAction = async (endpoint, name) => {
     setActionLoading(true);
@@ -675,21 +674,22 @@ export default function Settings({ addToast, refreshKey }) {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={() => runMulticomAction('/multicom/check', 'Проверка связи с Мультиком')}
+              onClick={() => runProviderAction('/ami/check', 'Проверка AMI Asterisk', 'ami')}
               className="px-3 py-1.5 rounded-xl bg-line/60 hover:bg-line text-white text-xs font-semibold flex items-center gap-1.5"
             >
-              <CheckCircle className="w-3.5 h-3.5 text-ok" /> Проверить связь
+              <CheckCircle className="w-3.5 h-3.5 text-ok" /> Проверить AMI
             </button>
-            <button
-              type="button"
-              onClick={() => runMulticomAction('/multicom/pool-sync', 'Синхронизация номеров')}
-              className="px-3 py-1.5 rounded-xl bg-line/60 hover:bg-line text-white text-xs font-semibold flex items-center gap-1.5"
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-acc2" /> Синк номеров
-            </button>
+            <span className="text-xs text-muted">
+              Номера SIP добавляются в пул ATOS вручную
+            </span>
           </div>
         </div>
 
+        <p className="text-xs text-muted">
+          Для маршрута multicom_ami SIP-регистрация и RTP настраиваются в Asterisk.
+          Кнопка проверяет только AMI, а не SIP-регистрацию или передачу звука.
+          Параметры API ниже не настраивают SIP-транк.
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
           <div>
             <label className="text-muted block mb-1 font-semibold">API URL</label>
