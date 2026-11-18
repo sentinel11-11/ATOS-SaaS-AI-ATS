@@ -217,6 +217,8 @@ def select_caller(db, tenant, route, config=None, operator=None):
     for number in numbers:
         if not number.enabled or not number.verified or number.quarantined:
             continue
+        if route == "multicom_ami" and getattr(config, "ami_cli_endpoint_prefix", "") and number.provider != "multicom_ami":
+            continue
         if not number.enabled_outgoing or (allowed is not None and number.phone not in allowed):
             continue
         if (
