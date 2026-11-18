@@ -11,7 +11,7 @@ def normalize_number(raw: str) -> str:
     value = raw.strip()
     if re.fullmatch(r"[0-9]{10}", value):
         return value
-    if re.fullmatch(r"(?:\\+7|7|8)[0-9]{10}", value):
+    if re.fullmatch(r"(?:\+7|7|8)[0-9]{10}", value):
         return value[-10:]
     raise ValueError("Expected a Russian DID in 10-digit, 7, +7 or 8 format")
 
@@ -31,7 +31,7 @@ def render(numbers: list[str], host: str = "95.128.224.47") -> str:
         if not re.fullmatch(r"[0-9]{10}", number):
             raise ValueError("Invalid DID")
         blocks.append(
-            "\\n".join(
+            "\n".join(
                 (
                     f"[mcm-cli-{number}]",
                     "type=endpoint",
@@ -50,7 +50,7 @@ def render(numbers: list[str], host: str = "95.128.224.47") -> str:
                 )
             )
         )
-    return "\\n\\n".join(blocks) + "\\n"
+    return "\n\n".join(blocks) + "\n"
 
 
 def main() -> None:
