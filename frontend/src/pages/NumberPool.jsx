@@ -33,7 +33,11 @@ export default function NumberPool({ addToast, refreshKey }) {
     loadNumbers();
   }, [refreshKey]);
 
-  const handleToggleActive = async (id, currentActive) => {
+  const handleToggleActive = async (id, currentActive, verified) => {
+    if (!currentActive && !verified) {
+      addToast('Сначала подтвердите А-номер в настройках карточки после проверки с Мультикомом', 'warn');
+      return;
+    }
     const res = await api('/numbers/save', {
       body: { id, active: !currentActive },
     });
@@ -95,6 +99,9 @@ export default function NumberPool({ addToast, refreshKey }) {
 
   const handleSaveEditedNumber = async () => {
     if (!editingNumber) return;
+    if (editingNumber.active && !editingNumber.verified) {
+      return addToast('Неподтверждённый номер нельзя включить в ротацию', 'warn');
+    }
 
     const res = await api('/numbers/save', {
       body: {
@@ -105,6 +112,7 @@ export default function NumberPool({ addToast, refreshKey }) {
         daily_limit: editingNumber.daily_limit,
         weight: editingNumber.weight,
         active: editingNumber.active,
+        verified: editingNumber.verified,
         enabled_outgoing: editingNumber.enabled_outgoing,
         quarantined: editingNumber.quarantined,
       },
@@ -137,7 +145,10 @@ export default function NumberPool({ addToast, refreshKey }) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-white">Пул номеров Caller ID (Ротация & Антиспам)</h1>
-          <p className="text-xs text-muted">Всего номеров в ротации: {numbersList.length}</p>
+          <p className="text-xs text-muted">
+            Всего номеров в пуле: {numbersList.length}; подтверждены: {numbersList.filter((n) => n.verified).length};
+            активны: {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false).length}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -191,6 +202,12 @@ export default function NumberPool({ addToast, refreshKey }) {
                       >
                         {n.active ? 'Активен' : 'Отключен'}
                       </span>
+
+                      {!n.verified && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold border border-warn/30 bg-warn/10 text-warn">
+                          Не подтверждён
+                        </span>
+                      )}
 
                       {n.quarantined && (
                         <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-bad text-white flex items-center gap-1">
@@ -262,7 +279,7 @@ export default function NumberPool({ addToast, refreshKey }) {
                 {/* Quick Action Buttons */}
                 <div className="pt-3 border-t border-line grid grid-cols-2 gap-2">
                   <button
-                    onClick={() => handleToggleActive(n.id, n.active)}
+                    onClick={() => handleToggleActive(n.id, n.active, n.verified)}
                     className={`py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
                       n.active ? 'bg-warn/20 hover:bg-warn/30 text-warn' : 'bg-ok/20 hover:bg-ok/30 text-ok'
                     }`}
@@ -319,12 +336,12 @@ export default function NumberPool({ addToast, refreshKey }) {
                 <option value="megafon_vats">МегаФон ВАТС</option>
                 <option value="uis">UIS / Comagic</option>
                 <option value="ami">Asterisk AMI</option>
-                <option value="multicom">Мультиком (MultiCom API / SIP)</option>
+                <option value="multicom">Мультиком (старый формат)</option>
+                <option value="multicom_ami">Мультиком SIP / Asterisk (multicom_ami)</option>
               </select>
               <p className="text-[11px] text-muted mt-1 leading-relaxed">
-                Движок берёт номер строго из пула своего провайдера (поле provider). Для обзвона
-                через SIP-транк и Asterisk нужен «Asterisk AMI»: импорт из Мультикома помечает
-                номера как «multicom», и провайдер ami их не возьмёт.
+                Для ротации Мультикома через Аsterisk используйте «Мультиком SIP / Asterisk (multicom_ami)».
+                Номер необходимо подтвердить и включить после проверки у оператора.
               </p>
             </div>
 
@@ -407,7 +424,8 @@ export default function NumberPool({ addToast, refreshKey }) {
                   <option value="megafon_vats">МегаФон ВАТС</option>
                   <option value="uis">UIS / Comagic</option>
                   <option value="ami">Asterisk AMI</option>
-                  <option value="multicom">Мультиком (MultiCom API / SIP)</option>
+                  <option value="multicom">Мультиком (старый формат)</option>
+                <option value="multicom_ami">Мультиком SIP / Asterisk (multicom_ami)</option>
                 </select>
               </div>
 
@@ -451,6 +469,21 @@ export default function NumberPool({ addToast, refreshKey }) {
             </div>
 
             <div className="flex flex-col gap-2 pt-2 border-t border-line">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!editingNumber.verified}
+                  onChange={(e) => {
+                    if (e.target.checked && !window.confirm(
+                      'Подтвердите: этот А-номер закреплён за вашим SIP-транком Мультикома, разрешён как исходящий Caller ID и уже проверен.'
+                    )) return;
+                    setEditingNumber({ ...editingNumber, verified: e.target.checked, active: e.target.checked ? editingNumber.active : false });
+                  }}
+                  className="accent-acc w-4 h-4"
+                />
+                <span className="text-white font-medium">А-номер подтверждён у оператора (verified)</span>
+              </label>
+
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
