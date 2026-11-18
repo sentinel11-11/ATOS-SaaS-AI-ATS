@@ -1,5 +1,5 @@
+import runpy
 from pathlib import Path
-from runpy import run_path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -7,9 +7,10 @@ import pytest
 
 from ats.adapters import AMI, Rejected
 from ats.connections import _validate
+from ats.domain import Problem
 
 
-MODULE = run_path(str(Path(__file__).parents[1] / "deploy" / "asterisk" / "build_mcm_cli_endpoints.py"))
+MODULE = runpy.run_path(str(Path(__file__).parents[1] / "deploy" / "asterisk" / "build_mcm_cli_endpoints.py"))
 
 
 def test_generates_per_number_endpoint_aliases():
@@ -70,8 +71,6 @@ def test_operator_allowlist_validation():
     assert _validate("ami", "operator_number_map", {"101": ["9690229926"]}) == {
         "101": ["9690229926"]
     }
-    from ats.domain import Problem
-
     for invalid in ({"101": ["9690229926", "9690229926"]}, {"bad": ["9690229926"]}, {"101": ["+79690229926"]}):
         with pytest.raises(Problem):
             _validate("ami", "operator_number_map", invalid)
