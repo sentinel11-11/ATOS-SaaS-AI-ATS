@@ -790,6 +790,8 @@ class Worker:
 
             with self.factory() as config_db:
                 config = settings_for_tenant(config_db, tenant_id)
+            if provider == "multicom":
+                raise Rejected("multicom_use_ami_check")
             if provider == "ami":
                 if (
                     tenant_id != config.telephony_tenant_id
