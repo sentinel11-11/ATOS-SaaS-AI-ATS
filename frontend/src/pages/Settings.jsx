@@ -22,6 +22,7 @@ export default function Settings({ addToast, refreshKey }) {
   const [showRawEditor, setShowRawEditor] = useState(false);
   const [amoUsers, setAmoUsers] = useState([]);
   const [amiReport, setAmiReport] = useState(null);
+  const [multicomImportText, setMulticomImportText] = useState('');
   const [newOpKey, setNewOpKey] = useState('');
   const [newAmoId, setNewAmoId] = useState('');
   const [amoPipelines, setAmoPipelines] = useState([]);
@@ -690,6 +691,48 @@ export default function Settings({ addToast, refreshKey }) {
           Кнопка проверяет только AMI, а не SIP-регистрацию или передачу звука.
           Параметры API ниже не настраивают SIP-транк.
         </p>
+        <div className="rounded-xl border border-line2 p-3 flex flex-col gap-2">
+          <h3 className="text-xs font-bold text-white">Импорт подтверждённого списка номеров SIP-транка</h3>
+          <p className="text-xs text-muted">
+            Вставьте номера из реестра Мультикома, по одному в строке.
+            Импорт не включает номера для звонков автоматически: после сверки с провайдером
+            подтвердите их в пуле ATOS. Автосинхронизация через кабинет MCM
+            потребует документированного API списка номеров транка.
+          </p>
+          <textarea
+            className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white text-xs min-h-20"
+            value={multicomImportText}
+            onChange={(e) => setMulticomImportText(e.target.value)}
+            placeholder="9690229926&#10;9690229930"
+          />
+          <button
+            type="button"
+            disabled={!multicomImportText.trim() || actionLoading}
+            className="px-3 py-2 rounded-xl bg-line/60 text-white text-xs font-semibold disabled:opacity-40"
+            onClick={async () => {
+              const numbers = multicomImportText.split(/[\\s,;]+/).map((v) => v.trim()).filter(Boolean);
+              setActionLoading(true);
+              try {
+                const result = await api('/api/v1/workspace/numbers/import-multicom', {
+                  method: 'POST', body: { numbers },
+                });
+                if (typeof result?.created === 'number') {
+                  addToast(`Импортировано: ${result.created}, уже в пуле: ${result.already_present}. Нужна проверка номеров.`, 'ok');
+                  setMulticomImportText('');
+                } else {
+                  addToast(`Импорт отклонён: ${result?.error || 'проверьте номера и их провайдера'}`, 'err');
+                }
+              } catch (err) {
+                addToast('Ошибка импорта номеров', 'err');
+              } finally {
+                setActionLoading(false);
+              }
+            }}
+          >
+            Импортировать номера в пул ATOS
+          </button>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
           <div>
             <label className="text-muted block mb-1 font-semibold">API URL</label>
