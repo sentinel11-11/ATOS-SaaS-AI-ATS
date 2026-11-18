@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     ami_caller_id: str = Field(default="", pattern=r"^(|[0-9]{10})$")
     ami_trunk: str = Field(default="mcm", pattern=r"^[a-zA-Z0-9_.-]{1,80}$")
     ami_cli_endpoint_prefix: str = Field(default="", pattern=r"^(|mcm-cli-)$")
+    ami_operator_number_map: dict[str, list[str]] = Field(default_factory=dict)
     ami_tech: str = Field(default="PJSIP", pattern=r"^(PJSIP|SIP)$")
     ami_context: str = Field(default="ats-beta", pattern=r"^[a-zA-Z0-9_.-]{1,80}$")
     ami_answer_context: str = Field(
