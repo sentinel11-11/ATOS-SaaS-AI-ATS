@@ -50,8 +50,8 @@ jobs:
         run: |
           npm --prefix ../amo-widget ci
           npm --prefix ../amo-widget run build
-          python ../scripts/build-amo-widget.py
-          git diff --exit-code -- ../widget.zip ../amo-widget/vendor/jssip.min.js
+          python ../scripts/build-amo-widget.py --check
+          git diff --exit-code -- ../amo-widget/vendor/jssip.min.js
           npm --prefix ../amo-widget audit --audit-level=moderate
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=moderate
