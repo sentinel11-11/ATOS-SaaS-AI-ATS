@@ -194,3 +194,12 @@ it('shows manager and customer legs separately in the timeline', async () => {
   expect(screen.getByText('+79990001000')).toBeTruthy();
   expect(screen.getByText('+79990000101')).toBeTruthy();
 });
+
+it('distinguishes a missing confirmation sound from a missing manager keypress', async () => {
+  api.mockResolvedValue({
+    call: { id: 'missing-prompt', status: 'failed', detail: 'callback_prompt_unavailable' }, events: [],
+  });
+  render(<TimelineModal callId="missing-prompt" onClose={vi.fn()} />);
+  expect((await screen.findByRole('alert')).textContent).toContain('не нашёл файл сигнала');
+  expect(screen.getByRole('alert').textContent).not.toContain('Менеджер не подтвердил');
+});

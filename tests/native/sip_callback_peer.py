@@ -18,7 +18,7 @@ class Peer:
         self.dialogs = {}
         self.mode = os.environ.get("CALLBACK_PEER_MODE", "bridge")
         self.lock = threading.RLock()
-        self.state = {"invites": [], "media_received": {"operator": False, "customer": False}}
+        self.state = {"mode": self.mode, "invites": [], "media_received": {"operator": False, "customer": False}}
 
     def save(self):
         with self.lock:
@@ -64,7 +64,7 @@ class Peer:
         while time.monotonic() - started < 35 and not dialog.get("ended"):
             send(bytes([payload_byte]) * 160)
             elapsed = time.monotonic() - started
-            if role == "operator" and self.mode != "no_confirmation" and elapsed > 1 and not dtmf_sent:
+            if role == "operator" and self.mode not in {"no_confirmation", "confirmation_timeout"} and elapsed > 1 and not dtmf_sent:
                 event_stamp = timestamp
                 for index, duration in enumerate([160, 320, 480, 800, 800, 800]):
                     send(struct.pack("!BBH", 1, 10 | (0x80 if index >= 3 else 0), duration),

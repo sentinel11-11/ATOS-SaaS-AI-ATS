@@ -24,9 +24,11 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
     root = Path(__file__).parents[2]
     folder = tmp_path / "native"
     folder.mkdir()
+    mode = getattr(request, "param", "bridge")
+    data_dir = "/usr/share/asterisk" if mode == "vps_sound_layout" else "/var/lib/asterisk"
     (folder / "asterisk.conf").write_text(
         "[directories]\nastetcdir=/input\nastmoddir=/usr/lib/asterisk/modules\n"
-        "astvarlibdir=/var/lib/asterisk\nastdatadir=/var/lib/asterisk\nastdbdir=/tmp\nastlogdir=/tmp\n"
+        f"astvarlibdir=/var/lib/asterisk\nastdatadir={data_dir}\nastdbdir=/tmp\nastlogdir=/tmp\n"
         "astrundir=/tmp\nastspooldir=/var/spool/asterisk\n[options]\nverbose=5\n"
     )
     (folder / "modules.conf").write_text("[modules]\nautoload=yes\n")
@@ -54,6 +56,7 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
         "docker", "run", "-d", "--name", name,
         "-p", "127.0.0.1::5038", "--mount", f"type=bind,src={folder},dst=/input,readonly",
         "--entrypoint", "sh", IMAGE, "-c",
+        "mkdir -p /usr/share/asterisk; cp -a /var/lib/asterisk/. /usr/share/asterisk/; "
         "mkdir -p /var/spool/asterisk/monitor/ats-beta /var/lib/asterisk/sounds/ats-beta; "
         "cp /input/sounds/ats-beta/* /var/lib/asterisk/sounds/ats-beta/; "
         "exec asterisk -f -n -C /input/asterisk.conf",
@@ -92,6 +95,7 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
+@pytest.mark.parametrize("native_asterisk", ["bridge", "vps_sound_layout"], indirect=True)
 def test_real_asterisk_callback_sip_dtmf_bridge_and_bidirectional_rtp(factory, callback, native_asterisk):
     worker, attempt_id = start(factory, callback)
     deadline = time.monotonic() + 20
@@ -121,8 +125,15 @@ def test_real_asterisk_callback_sip_dtmf_bridge_and_bidirectional_rtp(factory, c
     ("operator_busy", "operator_busy", ["operator"]),
     ("customer_busy", "customer_busy", ["operator", "customer"]),
     ("no_confirmation", "operator_not_confirmed", ["operator"]),
+    ("missing_prompt", "callback_prompt_unavailable", ["operator"]),
+    ("confirmation_timeout", "operator_not_confirmed", ["operator"]),
 ], indirect=["native_asterisk"])
 def test_real_asterisk_failures_do_not_become_success(factory, callback, native_asterisk, reason, roles):
+    if reason == "callback_prompt_unavailable":
+        subprocess.run([
+            "docker", "exec", native_asterisk, "rm", "/var/lib/asterisk/sounds/ats-beta/callback-ready.wav",
+        ], check=True)
+    started = time.monotonic()
     worker, attempt_id = start(factory, callback)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
@@ -142,3 +153,5 @@ def test_real_asterisk_failures_do_not_become_success(factory, callback, native_
         "docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json",
     ], text=True))
     assert [row["role"] for row in state["invites"]] == roles
+    if state["mode"] == "confirmation_timeout":
+        assert time.monotonic() - started >= 14

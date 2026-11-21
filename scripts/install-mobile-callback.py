@@ -2,6 +2,7 @@
 
 import argparse
 import grp
+import hashlib
 import io
 import math
 import os
@@ -18,6 +19,8 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 SOURCE = Path(__file__).parents[1] / "deploy/asterisk/extensions-ats-beta-callback.conf"
+V1_SHA256 = "9185c0a06a6d639e0c8ba91e27025236067f61396e716e77d40f8179fb03e11a"
+BLOCK_START = "; Mobile operator-first callback. The manager must press 1 before customer authorization."
 
 
 class InstallationError(ValueError):
@@ -27,7 +30,7 @@ class InstallationError(ValueError):
 def check_asterisk_support():
     required = [("application", name) for name in (
         "Dial", "Read", "Gosub", "Return", "UserEvent", "Wait", "MixMonitor", "StopMixMonitor",
-    )] + [("function", name) for name in ("REGEX", "TIMEOUT")]
+    )] + [("function", name) for name in ("REGEX", "TIMEOUT", "STAT")]
     for kind, name in required:
         result = subprocess.run(
             ["asterisk", "-n", "-rx", f"core show {kind} {name}"],
@@ -44,8 +47,13 @@ def dialplan_bytes(original, block):
     if not {"ats-beta", "ats-beta-answer"}.issubset(headers):
         raise InstallationError("Expected the existing ats-beta and ats-beta-answer contexts")
     if required.intersection(headers):
-        if all(headers.count(name) == 1 for name in required) and block in contents:
-            return original
+        if all(headers.count(name) == 1 for name in required):
+            if block in contents:
+                return original
+            start = contents.find(BLOCK_START)
+            # Upgrade only the exact, previously shipped suffix. Keep custom contexts intact.
+            if start >= 0 and hashlib.sha256(contents[start:].rstrip().encode()).hexdigest() == V1_SHA256:
+                return contents[:start].encode() + block.encode() + b"\n"
         raise InstallationError("Existing callback contexts differ; review them before replacement")
     return original.rstrip() + b"\n\n" + block.encode() + b"\n"
 

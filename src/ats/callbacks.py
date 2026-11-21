@@ -28,6 +28,7 @@ REASONS = {
     "operator_unavailable", "operator_busy", "operator_no_answer", "operator_not_confirmed",
     "customer_unavailable", "customer_busy", "customer_no_answer", "operator_cancelled",
     "callback_gate_denied", "callback_authorization_timeout", "callback_originate_failed",
+    "callback_prompt_unavailable", "callback_confirmation_failed", "callback_parameters_invalid",
 }
 
 
