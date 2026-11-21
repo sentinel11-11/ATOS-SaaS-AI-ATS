@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import Campaigns from './pages/Campaigns';
 import NumberPool from './pages/NumberPool';
 import Settings from './pages/Settings';
+import TimelineModal from './components/TimelineModal';
 import { api } from './api';
 
 vi.mock('./api', () => ({ api: vi.fn(), waitForJob: vi.fn(async (result) => result) }));
@@ -88,4 +89,15 @@ it('reports successful AMI connectivity with a blocked ATOS route as a warning',
   fireEvent.click(await screen.findByRole('button', { name: 'Проверить AMI и допуск маршрута' }));
   await waitFor(() => expect(addToast).toHaveBeenCalledWith('AMI подключён. ' + detail, 'warn'));
   expect(await screen.findByText(detail)).toBeTruthy();
+});
+
+it('shows a stored failure reason for an existing call in the timeline', async () => {
+  api.mockResolvedValue({
+    call: { id: 'failed-call', status: 'failed', caller_id: '9690229926', detail: 'ami_endpoint_unavailable' },
+    events: [{ event_type: 'failed', fingerprint: 'event-1', received_at: '2026-11-21T12:17:02', hangup_cause: 21 }],
+  });
+  render(<TimelineModal callId="failed-call" onClose={vi.fn()} />);
+  expect(await screen.findByText('ami_endpoint_unavailable')).toBeTruthy();
+  expect(screen.getByRole('alert').textContent).toContain('PJSIP endpoint');
+  expect(screen.getByText('Код завершения Asterisk 21')).toBeTruthy();
 });

@@ -3,6 +3,18 @@ import { Clock, Phone, Radio, Shield } from 'lucide-react';
 import { api } from '../api';
 import Modal from './Modal';
 
+const REASON_MESSAGES = {
+  ami_endpoint_unavailable: 'Asterisk отклонил проверку PJSIP endpoint выбранного А-номера. Проверьте alias mcm-cli и право AMI system.',
+  ami_permission_denied: 'Asterisk отказал AMI-аккаунту в выполнении действия. Проверьте права выделенного аккаунта ATOS.',
+  ami_authentication_failed: 'Asterisk отклонил вход AMI-аккаунта. Проверьте пользователя и сохранённый пароль AMI.',
+  ami_action_rejected: 'Asterisk отклонил действие AMI. Проверьте настройки аккаунта и журнал Asterisk для этой попытки.',
+  media_directory_missing: 'Подготовьте настроенный каталог медиарежима и права доступа пользователя ats-beta.',
+  enable_media_before_dialing_template: 'Для выбранного шаблона требуется подготовленный медиарежим Asterisk.',
+  playback_failed: 'Asterisk сообщил об ошибке воспроизведения сообщения.',
+  media_failed: 'Asterisk сообщил об ошибке выполнения медиасценария AGI.',
+  ami_hangup_fallback: 'Asterisk сообщил о завершении канала. Подробности уточняются по коду завершения и диалплану.',
+};
+
 export default function TimelineModal({ callId, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -24,6 +36,8 @@ export default function TimelineModal({ callId, onClose }) {
 
   const { call = {}, events = [], acd = [] } = data || {};
   const eventsList = Array.isArray(events) ? events : [];
+  const failureReason = call.detail || call.reason || '';
+  const failed = ['failed', 'unknown'].includes(call.status);
 
   return (
     <Modal isOpen={!!callId} onClose={onClose} title={`Таймлайн и Хронология ВАТС: Звонок #${callId}`} wide={true}>
@@ -53,6 +67,16 @@ export default function TimelineModal({ callId, onClose }) {
             </div>
           </div>
 
+          {failureReason && (
+            <div className={`p-4 rounded-xl bg-[#081221] border ${failed ? 'border-bad/40' : 'border-line'}`} role={failed ? 'alert' : 'status'}>
+              <span className="text-dim block mb-1">Причина завершения</span>
+              <code className="font-mono text-white break-all">{failureReason}</code>
+              {REASON_MESSAGES[failureReason] && (
+                <p className="text-white mt-2">{REASON_MESSAGES[failureReason]}</p>
+              )}
+            </div>
+          )}
+
           {/* Timeline Events List */}
           <div className="flex flex-col gap-2">
             <span className="font-bold text-white text-sm mb-1">События ВАТС и Вектор вебхуков ({eventsList.length})</span>
@@ -69,6 +93,14 @@ export default function TimelineModal({ callId, onClose }) {
                     </span>
                     <div>
                       <span className="font-bold text-white block">{ev.event_type || 'event'}</span>
+                      {ev.detail && <span className="text-white block break-all">{ev.detail}</span>}
+                      {Number.isInteger(ev.hangup_cause) && (
+                        <span className="text-white block">Код завершения Asterisk {ev.hangup_cause}</span>
+                      )}
+                      {Number.isInteger(ev.originate_reason) && (
+                        <span className="text-white block">Код ответа Originate {ev.originate_reason}</span>
+                      )}
+                      {ev.dial_status && <span className="text-white block">Результат Dial {ev.dial_status}</span>}
                       <span className="text-[11px] text-dim">
                         Fingerprint: {ev.fingerprint?.slice(0, 16) || '—'}...
                       </span>

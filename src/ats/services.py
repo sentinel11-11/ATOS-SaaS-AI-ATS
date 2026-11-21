@@ -337,7 +337,7 @@ def finish_attempt(db, attempt, event, reason=""):
     from ats.workspace_service import event as log_event
 
     if old != attempt.status:
-        log_event(db, attempt, attempt.status)
+        log_event(db, attempt, attempt.status, attempt.reason)
     if attempt.status == "answered" and attempt.answered_at is None:
         attempt.answered_at = now()
     if attempt.status not in {"completed", "failed"} or old == attempt.status:

@@ -13,7 +13,7 @@ from ats.adapters import AMI, AmoCRM, DeliveryUnknown, Megafon, Rejected, Retrya
 from ats.amo_context import contact_context, reference_data
 from ats.config import settings
 from ats.db import session_factory
-from ats.domain import ACTIVE, Problem, next_state
+from ats.domain import ACTIVE, DIAL_STATUSES, Problem, next_state
 from ats.models import (
     AmoSyncJob,
     Attempt,
@@ -171,6 +171,10 @@ class Worker:
                         )
                         if attempt:
                             event = "completed" if attempt.status == "answered" else "failed"
+                            payload = {"reason": "ami_hangup_fallback"}
+                            cause = frame.get("Cause", "")
+                            if cause.isascii() and cause.isdigit() and 0 <= int(cause) <= 127:
+                                payload["hangup_cause"] = int(cause)
                             ingest(
                                 db,
                                 attempt.tenant_id,
@@ -178,7 +182,7 @@ class Worker:
                                 f"{attempt.id}:hangup:{frame.get('Uniqueid', '')}",
                                 str(attempt.id),
                                 event,
-                                {"reason": "ami_hangup_fallback"},
+                                payload,
                             )
                     return
                 except (ValueError, TypeError):
@@ -195,6 +199,12 @@ class Worker:
         except ValueError:
             return
         payload = {}
+        if frame.get("DialStatus") in DIAL_STATUSES:
+            payload["dial_status"] = frame["DialStatus"]
+        if frame.get("Event") == "OriginateResponse":
+            reason = frame.get("Reason", "")
+            if reason.isascii() and reason.isdigit() and 0 <= int(reason) <= 255:
+                payload["originate_reason"] = int(reason)
         if frame.get("ReasonCode") in {"media_failed", "playback_failed", "operator_unavailable"}:
             payload["reason"] = frame["ReasonCode"]
         if frame.get("Event") == "OriginateResponse" and frame.get("Reason") == "5":

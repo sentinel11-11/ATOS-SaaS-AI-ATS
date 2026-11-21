@@ -32,7 +32,7 @@ from sqlalchemy import (
 
 from ats import api_calls
 from ats.db import session
-from ats.domain import ACTIVE, Problem
+from ats.domain import ACTIVE, DIAL_STATUSES, Problem
 from ats.models import (
     Attempt,
     Audit,
@@ -341,11 +341,19 @@ def timeline(call_id: UUID, p=Depends(principal), db=Depends(session)):
         ):
             # Provider payloads can contain tokens and personal metadata. The
             # timeline exposes only the normalized event envelope.
-            events.append({
+            envelope = {
                 "fingerprint": event.event_key, "event_type": event.event,
                 "external_call_id": event.external_id, "received_at": event.received_at,
                 "status": event.status, "payload": {},
-            })
+            }
+            for key in ("hangup_cause", "originate_reason"):
+                value = (event.payload or {}).get(key)
+                if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255:
+                    envelope[key] = value
+            dial_status = (event.payload or {}).get("dial_status")
+            if isinstance(dial_status, str) and dial_status in DIAL_STATUSES:
+                envelope["dial_status"] = dial_status
+            events.append(envelope)
     events.sort(key=lambda e: (e["received_at"], e["fingerprint"]))
     recordings = db.scalars(
         repo.query(Recording).where(Recording.attempt_id == call_id)

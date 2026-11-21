@@ -7,6 +7,10 @@ class Problem(Exception):
 
 ACTIVE = {"prepared", "dispatching", "accepted", "answered", "unknown"}
 TERMINAL = {"completed", "failed"}
+DIAL_STATUSES = {
+    "ANSWER", "BUSY", "NOANSWER", "CHANUNAVAIL", "CONGESTION",
+    "CANCEL", "DONTCALL", "TORTURE", "INVALIDARGS",
+}
 
 
 def next_state(current: str, event: str) -> str:

@@ -108,7 +108,7 @@ def test_ui_campaign_default_route_and_zero_retries(logged, factory):
 
 
 def test_missing_multicom_endpoint_blocks_originate(
-    prepared, provider_config, factory, monkeypatch
+    prepared, provider_config, factory, monkeypatch, logged
 ):
     monkeypatch.setenv("ATS_AMI_CLI_ENDPOINT_PREFIX", "mcm-cli-")
     settings.cache_clear()
@@ -120,6 +120,11 @@ def test_missing_multicom_endpoint_blocks_originate(
         attempt = db.scalar(select(Attempt))
         assert attempt.status == "failed" and attempt.reason == "ami_endpoint_unavailable"
         assert db.scalar(select(Outbox).where(Outbox.kind == "telephony")).status == "done"
+        attempt_id = str(attempt.id)
+    timeline = logged.get(f"/api/v2/calls/{attempt_id}/timeline").json()
+    assert timeline["call"]["detail"] == "ami_endpoint_unavailable"
+    failure = next(event for event in timeline["events"] if event["event_type"] == "failed")
+    assert failure["detail"] == "ami_endpoint_unavailable"
     assert provider_config.endpoint_checks == ["mcm-cli-9990000101"]
     assert provider_config.originates == []
 
@@ -213,3 +218,33 @@ def test_campaign_reports_missing_ami_secret_and_caller_pool_separately(
     assert response.json()["detail"]
     assert "fixture-secret" not in response.text
     assert provider_config.originates == []
+
+
+def test_ami_hangup_cause_is_preserved_in_timeline_without_raw_payload(
+    prepared, factory, logged
+):
+    worker = Worker(factory)
+    worker.schedule()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        attempt.status = "accepted"
+        attempt.external_id = str(attempt.id)
+        attempt.channel = "Local/fixture-channel;1"
+        attempt_id = str(attempt.id)
+    worker.ami_event({
+        "Event": "Hangup", "Channel": "Local/fixture-channel;1",
+        "Uniqueid": "fixture-unique-id", "Cause": "21", "PrivateToken": "do-not-echo",
+    })
+    worker.ami_event({
+        "Event": "UserEvent", "UserEvent": "ATSCall", "AttemptID": attempt_id,
+        "State": "failed", "DialStatus": "CHANUNAVAIL", "PrivateToken": "do-not-echo",
+    })
+    worker.inbox()
+    response = logged.get(f"/api/v2/calls/{attempt_id}/timeline")
+    assert response.status_code == 200, response.text
+    timeline = response.json()
+    assert timeline["call"]["detail"] == "ami_hangup_fallback"
+    hangup = next(event for event in timeline["events"] if event.get("hangup_cause") == 21)
+    assert hangup["payload"] == {}
+    assert any(event.get("dial_status") == "CHANUNAVAIL" for event in timeline["events"])
+    assert "do-not-echo" not in response.text
