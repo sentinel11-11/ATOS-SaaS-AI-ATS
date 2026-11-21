@@ -14,9 +14,9 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
 from ats import schemas
+from ats.amo_widget_v2_auth import router as amo_widget_v2_router
 from ats.api_amo import public_router as amo_public_router
 from ats.api_amo import router as amo_router
-from ats.amo_widget_v2_auth import router as amo_widget_v2_router
 from ats.api_recording_links import router as recording_links_router
 from ats.compat_auth import router as compat_auth_router
 from ats.compat_campaigns import router as compat_campaigns_router
