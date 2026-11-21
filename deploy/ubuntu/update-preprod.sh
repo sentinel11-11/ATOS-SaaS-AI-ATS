@@ -41,7 +41,7 @@ if [[ "$missing_identity" == 1 ]]; then
   ensure_key ATS_MEDIA_ENABLED false
   ensure_key ATS_RECORDINGS_DIR /var/lib/ats-beta/recordings
   if [[ -z "$encryption_key_value" ]]; then
-    encryption_key="$(/opt/ats-beta/.venv/bin/python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode("ascii"))')"
+    encryption_key="$(runuser -u ats-beta -- env PYTHONDONTWRITEBYTECODE=1 /opt/ats-beta/.venv/bin/python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode("ascii"))')"
     if grep -q '^ATS_CONNECTION_ENCRYPTION_KEY=' "$env_file"; then
       sed -i "s|^ATS_CONNECTION_ENCRYPTION_KEY=.*$|ATS_CONNECTION_ENCRYPTION_KEY=$encryption_key|" "$env_file"
     else

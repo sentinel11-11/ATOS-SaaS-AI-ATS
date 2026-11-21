@@ -146,7 +146,7 @@ run_beta nice -n 10 "$node_dir/bin/npm" --prefix frontend run build
 run_beta "$project_dir/.venv/bin/python" -m alembic upgrade head
 
 if [[ ! -e /etc/ats-beta/ats.env ]]; then
-  encryption_key="$($project_dir/.venv/bin/python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode("ascii"))')"
+  encryption_key="$(run_beta "$project_dir/.venv/bin/python" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode("ascii"))')"
   (umask 0027; set -o noclobber; {
     expected_env
     printf 'ATS_CONNECTION_ENCRYPTION_KEY=%s\n' "$encryption_key"
