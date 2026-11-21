@@ -77,7 +77,9 @@ def create_campaign(db, principal, data, key):
     return campaign, True
 
 
-def validate_route(tenant_id, route, db=None, *, require_megafon_user=True):
+def validate_route(
+    tenant_id, route, db=None, *, require_megafon_user=True, mode=None, template_id=None
+):
     if route not in {"multicom_ami", "megafon_vats"}:
         raise Problem(422, "unsupported_route")
     if db is not None:
@@ -89,28 +91,50 @@ def validate_route(tenant_id, route, db=None, *, require_megafon_user=True):
     if not config.live_calls_enabled or tenant_id != config.telephony_tenant_id:
         raise Problem(409, "live_calls_disabled_for_tenant")
     if route == "multicom_ami":
-        pool = (
-            db.scalar(
-                select(CallerNumber.id)
-                .where(
-                    CallerNumber.tenant_id == tenant_id,
-                    CallerNumber.enabled,
-                    CallerNumber.verified,
-                    CallerNumber.enabled_outgoing,
-                    ~CallerNumber.quarantined,
-                    *(
-                        [CallerNumber.provider == "multicom_ami"]
-                        if config.ami_cli_endpoint_prefix
-                        else []
-                    ),
-                )
-                .limit(1)
+        if not config.ami_secret.get_secret_value():
+            raise Problem(
+                409, "ami_secret_required",
+                "Сохраните пароль выделенного AMI-аккаунта в настройках Asterisk ATOS.",
             )
+        numbers = (
+            db.scalars(select(CallerNumber).where(CallerNumber.tenant_id == tenant_id)).all()
             if db is not None
-            else None
+            else []
         )
-        if not config.ami_secret.get_secret_value() or not (config.ami_caller_id or pool):
-            raise Problem(409, "ami_not_configured")
+        compatible = [
+            number for number in numbers
+            if not config.ami_cli_endpoint_prefix or number.provider == "multicom_ami"
+        ]
+        if numbers and not compatible:
+            raise Problem(
+                409, "caller_number_provider_mismatch",
+                "Выберите для А-номера провайдера «Мультиком SIP / Asterisk» и подтвердите номер.",
+            )
+        eligible = any(
+            number.enabled and number.verified and number.enabled_outgoing and not number.quarantined
+            for number in compatible
+        )
+        if numbers and not eligible:
+            if any(number.enabled and not number.verified for number in compatible):
+                raise Problem(
+                    409, "caller_number_not_verified",
+                    "Подтвердите активный А-номер в его карточке в пуле после проверки у Мультикома.",
+                )
+            raise Problem(
+                409, "caller_pool_unavailable",
+                "Включите подтверждённый А-номер, разрешите исходящие вызовы и проверьте карантин.",
+            )
+        if not numbers and not config.ami_caller_id:
+            raise Problem(
+                409, "caller_pool_empty",
+                "Добавьте и подтвердите А-номер Мультикома в пуле либо настройте разрешённый Caller ID.",
+            )
+        if mode is not None and (mode != "message" or template_id) and not config.media_enabled:
+            raise Problem(
+                409, "media_not_configured",
+                "Для перевода на операторов, ИИ-сценария и шаблона требуется медиарежим Asterisk. "
+                "Для одиночной проверки выберите «Информатор» и «Без шаблона».",
+            )
     if route == "megafon_vats" and not all(
         (
             config.megafon_url,
@@ -219,13 +243,9 @@ def schedule_one(db, tenant_id):
             require_megafon_user=not (
                 campaign.route == "megafon_vats" and campaign.mode == "operator"
             ),
+            mode=campaign.mode,
+            template_id=campaign.template_id,
         )
-        if (
-            campaign.route == "multicom_ami"
-            and (campaign.mode != "message" or campaign.template_id)
-            and not config.media_enabled
-        ):
-            raise Problem(409, "media_not_configured")
         operator = None
         if campaign.route in {"multicom_ami", "megafon_vats"} and (
             campaign.mode == "operator"

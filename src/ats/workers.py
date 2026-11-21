@@ -367,6 +367,8 @@ class Worker:
                     route,
                     db,
                     require_megafon_user=not bool(megafon_operator_user),
+                    mode=campaign.mode,
+                    template_id=campaign.template_id,
                 )
                 if route == "multicom_ami":
                     number = db.scalar(

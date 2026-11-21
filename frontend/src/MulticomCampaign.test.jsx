@@ -3,9 +3,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Campaigns from './pages/Campaigns';
 import NumberPool from './pages/NumberPool';
+import Settings from './pages/Settings';
 import { api } from './api';
 
-vi.mock('./api', () => ({ api: vi.fn() }));
+vi.mock('./api', () => ({ api: vi.fn(), waitForJob: vi.fn(async (result) => result) }));
 afterEach(cleanup);
 afterEach(() => vi.restoreAllMocks());
 
@@ -53,4 +54,38 @@ it('requires confirmation before activating an imported Multicom caller number',
   await waitFor(() => expect(api).toHaveBeenCalledWith('/numbers/save', {
     body: expect.objectContaining({ id: number.id, provider: 'multicom_ami', active: true, verified: true }),
   }));
+});
+
+it('shows the reason ATOS blocks campaign start', async () => {
+  const detail = 'Подтвердите активный А-номер в его карточке в пуле после проверки у Мультикома.';
+  api.mockImplementation(async (path) => {
+    if (path === '/campaigns') return { campaigns: [{ id: 'campaign-1', name: 'Test', status: 'paused', flow: 'message' }] };
+    if (path === '/campaigns/campaign-1/start') return { ok: false, error: 'caller_number_not_verified', detail };
+    return { templates: [], contacts: [], databases: [] };
+  });
+  const addToast = vi.fn();
+  render(<Campaigns addToast={addToast} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Запустить' }));
+  await waitFor(() => expect(addToast).toHaveBeenCalledWith(detail, 'err'));
+});
+
+it('reports successful AMI connectivity with a blocked ATOS route as a warning', async () => {
+  const detail = 'Подтвердите активный А-номер в его карточке в пуле после проверки у Мультикома.';
+  api.mockImplementation(async (path, options) => {
+    if (path === '/settings/raw' && !options?.body) return { provider_config: { ami: {} } };
+    if (path === '/settings') return { settings: { provider: 'multicom_ami' } };
+    if (path === '/ami/check') return {
+      ok: true, connected: true,
+      report: {
+        route_ready: false, blocked_reason: 'caller_number_not_verified',
+        checks: [{ name: 'Допуск маршрута', ok: false, critical: true, detail }],
+      },
+    };
+    return { ok: true, users: [], pipelines: [] };
+  });
+  const addToast = vi.fn();
+  render(<Settings addToast={addToast} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Проверить AMI и допуск маршрута' }));
+  await waitFor(() => expect(addToast).toHaveBeenCalledWith('AMI подключён. ' + detail, 'warn'));
+  expect(await screen.findByText(detail)).toBeTruthy();
 });

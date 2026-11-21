@@ -179,7 +179,7 @@ export default function Campaigns({ addToast, refreshKey }) {
       loadAll();
       if (expandedCampId === cid) loadCampDetail(cid);
     } else {
-      addToast('Ошибка управления: ' + (res?.error || '?'), 'err');
+      addToast(res?.detail || ('Ошибка управления ' + (res?.error || '?')), 'err');
     }
   };
 

@@ -195,7 +195,35 @@ def job(job_id: UUID, p=Depends(admin), db=Depends(session)):
     if row.kind != "diagnostic":
         raise Problem(404, "not_found")
     queued = row.status in {"pending", "leased"}
-    return {"ok": queued or row.status == "done", "queued": queued, "job_id": row.id, "status": row.status, "connected": row.status == "done", "error": row.last_error or None, "report": {"ok": row.status == "done", "failed_stage": row.last_error or None}}
+    connected = row.status == "done"
+    report = {"ok": connected, "failed_stage": row.last_error or None}
+    if connected and row.payload.get("provider") == "ami":
+        from ats.services import validate_route
+
+        checks = [{
+            "name": "AMI Login и Ping", "ok": True, "critical": True,
+            "detail": "Подключение к Asterisk успешно.",
+        }]
+        try:
+            validate_route(p.tenant_id, "multicom_ami", db)
+            report["route_ready"] = True
+            checks.append({
+                "name": "Допуск маршрута", "ok": True, "critical": True,
+                "detail": "Настройки маршрута и исходящего Caller ID приняты.",
+            })
+        except Problem as exc:
+            report["route_ready"] = False
+            report["blocked_reason"] = exc.code
+            checks.append({
+                "name": "Допуск маршрута", "ok": False, "critical": True,
+                "detail": exc.detail or exc.code,
+            })
+        report["checks"] = checks
+    return {
+        "ok": queued or connected, "queued": queued, "job_id": row.id,
+        "status": row.status, "connected": connected, "error": row.last_error or None,
+        "report": report,
+    }
 
 
 @router.get("/amocrm/users")

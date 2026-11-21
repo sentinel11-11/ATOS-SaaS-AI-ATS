@@ -1,7 +1,8 @@
+import pytest
 from sqlalchemy import select
 
 from ats.config import settings
-from ats.models import Attempt, Campaign, Outbox
+from ats.models import Attempt, CallerNumber, Campaign, Outbox
 from ats.workers import Worker
 
 
@@ -135,4 +136,80 @@ def test_bad_ami_secret_blocks_multicom_originate(
         attempt = db.scalar(select(Attempt))
         assert attempt.status == "failed" and attempt.reason == "ami_action_rejected"
     assert provider_config.endpoint_checks == []
+    assert provider_config.originates == []
+
+
+def test_ami_connection_succeeds_but_unverified_active_number_blocks_campaign(
+    logged, prepared, provider_config, factory, tenants, monkeypatch
+):
+    monkeypatch.setenv("ATS_AMI_CALLER_ID", "")
+    monkeypatch.setenv("ATS_AMI_CLI_ENDPOINT_PREFIX", "mcm-cli-")
+    settings.cache_clear()
+    assert logged.post(f"/api/v2/campaigns/{prepared[0]}/pause").status_code == 200
+    with factory.begin() as db:
+        db.add(CallerNumber(
+            tenant_id=tenants[0], phone="9990000101", provider="multicom_ami",
+            enabled=True, verified=False,
+        ))
+    result = logged.post("/api/v2/multicom/check")
+    assert result.status_code == 202
+    Worker(factory).diagnostic_job()
+    diagnostic = logged.get("/api/v2/jobs/" + result.json()["job_id"]).json()
+    assert diagnostic["connected"] is True
+    response = logged.post(f"/api/v2/campaigns/{prepared[0]}/start")
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == "caller_number_not_verified"
+    assert "Подтвердите" in response.json()["detail"]
+    assert diagnostic["report"]["route_ready"] is False
+    assert diagnostic["report"]["blocked_reason"] == "caller_number_not_verified"
+    assert provider_config.originates == []
+    with factory() as db:
+        number_id = str(db.scalar(select(CallerNumber.id)))
+        assert db.scalar(select(Campaign)).status == "paused"
+    confirm = logged.post("/api/v2/numbers/save", json={"id": number_id, "verified": True})
+    assert confirm.status_code == 200, confirm.text
+    response = logged.post(f"/api/v2/campaigns/{prepared[0]}/start")
+    assert response.status_code == 200, response.text
+    worker = Worker(factory)
+    worker.schedule()
+    assert worker.telephony()
+    assert len(provider_config.originates) == 1
+    assert provider_config.endpoint_checks == ["mcm-cli-9990000101"]
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_operator_campaign_reports_media_requirement_before_running(
+    logged, prepared, factory, version
+):
+    with factory.begin() as db:
+        campaign = db.scalar(select(Campaign))
+        campaign.mode, campaign.status = "operator", "paused"
+    if version == "v1":
+        response = logged.post(
+            f"/api/v1/campaigns/{prepared[0]}/state", json={"status": "running"}
+        )
+    else:
+        response = logged.post(f"/api/v2/campaigns/{prepared[0]}/start")
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == "media_not_configured"
+    assert "Информатор" in response.json()["detail"]
+    with factory() as db:
+        assert db.scalar(select(Campaign)).status == "paused"
+        assert db.scalar(select(Attempt)) is None
+
+
+@pytest.mark.parametrize(
+    "setting,expected",
+    [("ATS_AMI_SECRET", "ami_secret_required"), ("ATS_AMI_CALLER_ID", "caller_pool_empty")],
+)
+def test_campaign_reports_missing_ami_secret_and_caller_pool_separately(
+    logged, prepared, provider_config, monkeypatch, setting, expected
+):
+    monkeypatch.setenv(setting, "")
+    settings.cache_clear()
+    response = logged.post(f"/api/v2/campaigns/{prepared[0]}/start")
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == expected
+    assert response.json()["detail"]
+    assert "fixture-secret" not in response.text
     assert provider_config.originates == []

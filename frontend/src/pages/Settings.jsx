@@ -167,6 +167,10 @@ export default function Settings({ addToast, refreshKey }) {
     }));
     setActionLoading(false);
     if (onReport) onReport(res || null);
+    if (res?.connected && res?.report?.route_ready === false) {
+      const blocked = res.report.checks?.find((check) => !check.ok);
+      return addToast('AMI подключён. ' + (blocked?.detail || res.report.blocked_reason), 'warn');
+    }
     if (res && (res.ok || res.connected || res.status === 'ok')) {
       addToast(`Успешно: ${name}`, 'ok');
     } else {
@@ -676,7 +680,7 @@ export default function Settings({ addToast, refreshKey }) {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={() => runProviderAction('/ami/check', 'Проверка AMI Asterisk', 'ami')}
+              onClick={() => runProviderAction('/ami/check', 'Проверка AMI Asterisk', 'ami', setAmiReport)}
               className="px-3 py-1.5 rounded-xl bg-line/60 hover:bg-line text-white text-xs font-semibold flex items-center gap-1.5"
             >
               <CheckCircle className="w-3.5 h-3.5 text-ok" /> Проверить AMI
@@ -896,11 +900,10 @@ export default function Settings({ addToast, refreshKey }) {
             onClick={() => runProviderAction('/ami/check', 'Проверка связи с Asterisk', 'ami', setAmiReport)}
             className="px-3 py-1.5 rounded-xl bg-line/60 hover:bg-line text-white text-xs font-semibold flex items-center gap-1.5"
           >
-            <CheckCircle className="w-3.5 h-3.5 text-ok" /> Проверить Asterisk и транк
+            <CheckCircle className="w-3.5 h-3.5 text-ok" /> Проверить AMI и допуск маршрута
           </button>
           <span className="text-muted">
-            Чек-лист: логин AMI, версия, регистрация у оператора, диалплан, кодеки, пул номеров.
-            Звонков не совершается.
+            Проверяются подключение AMI, разрешение маршрута и допуск А-номера.
           </span>
         </div>
         {amiReport && amiReport.report && amiReport.report.checks && (

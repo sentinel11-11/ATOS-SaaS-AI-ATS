@@ -305,9 +305,10 @@ async def request_guard(request: Request, call_next):
 @app.exception_handler(Problem)
 async def problem_handler(request, exc):
     request.state.error_code = exc.code
-    return JSONResponse(
-        {"error": exc.code, "request_id": request.state.request_id}, status_code=exc.status
-    )
+    body = {"error": exc.code, "request_id": request.state.request_id}
+    if exc.detail:
+        body["detail"] = exc.detail
+    return JSONResponse(body, status_code=exc.status)
 
 
 @app.exception_handler(RequestValidationError)
@@ -501,6 +502,8 @@ def campaign_state(
             row.route,
             db,
             require_megafon_user=not (row.route == "megafon_vats" and row.mode == "operator"),
+            mode=row.mode,
+            template_id=row.template_id,
         )
     row.status = data.status
     repo.add(Audit, actor_id=p.user_id, action=f"campaign.{data.status}", entity_id=row.id)
