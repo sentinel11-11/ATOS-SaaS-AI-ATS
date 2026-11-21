@@ -49,6 +49,11 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         validation_alias=AliasChoices("ATS_AMOCRM_TOKEN", "ATS_AMO_ACCESS_TOKEN"),
     )
+    # amoCRM SDK X-Auth-Token (HS256). Never serve this secret to the widget.
+    amo_widget_signing_secret: SecretStr = SecretStr("")
+    amo_widget_account_id: int = 0
+    amo_widget_client_uuid: str = ""
+    amo_widget_audience: str = ""
     amo_webhook_token: SecretStr = Field(
         default=SecretStr(""),
         validation_alias=AliasChoices("ATS_AMOCRM_WEBHOOK_TOKEN", "ATS_AMO_WEBHOOK_TOKEN"),
