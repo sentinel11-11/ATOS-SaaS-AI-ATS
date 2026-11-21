@@ -1,9 +1,10 @@
 import os
+import runpy
 import subprocess
 import sys
+from pathlib import Path
 from uuid import uuid4
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -92,29 +93,40 @@ def logged(client, tenants):
 
 @pytest.fixture
 def provider_config(tenants, monkeypatch):
-    """Configure a real route, replacing only the provider's HTTP transport."""
-    from ats.adapters import Megafon
+    """Exercise the Multicom route through a loopback AMI TCP fixture."""
+    from ats.adapters import AMI
 
+    fixture_class = runpy.run_path(str(Path("scripts/ami_fixture.py")))["AMIFixture"]
+    fixture = fixture_class("fixture-secret", states=())
     destinations = ["+79990000101", *(f"+79990001{i:03d}" for i in range(10))]
     for name, value in {
         "ATS_LIVE_CALLS_ENABLED": "true",
         "ATS_TELEPHONY_TENANT_ID": str(tenants[0]),
         "ATS_TEST_DESTINATIONS": ",".join(destinations),
-        "ATS_MEGAFON_URL": "https://fixture.megafon.ru",
-        "ATS_MEGAFON_USER": "fixture-operator",
-        "ATS_MEGAFON_API_KEY": "fixture-api-key",
-        "ATS_MEGAFON_CRM_TOKEN": "fixture-crm-token",
+        "ATS_AMI_HOST": "127.0.0.1",
+        "ATS_AMI_PORT": str(fixture.port),
+        "ATS_AMI_TLS": "false",
+        "ATS_AMI_SECRET": "fixture-secret",
+        "ATS_AMI_CALLER_ID": "9990000101",
+        "ATS_MEDIA_ENABLED": "false",
     }.items():
         monkeypatch.setenv(name, value)
     settings.cache_clear()
 
-    def makecall(request):
-        assert request.url == "https://fixture.megafon.ru/crmapi/v1/makecall"
-        return httpx.Response(200, json={"callid": str(uuid4())})
+    drivers = []
 
-    with httpx.Client(transport=httpx.MockTransport(makecall)) as client:
-        monkeypatch.setattr("ats.workers.Megafon", lambda config: Megafon(config, client))
-        yield
+    def driver(config, on_event):
+        instance = AMI(config, on_event)
+        drivers.append(instance)
+        return instance
+
+    monkeypatch.setattr("ats.workers.AMI", driver)
+    with fixture:
+        try:
+            yield fixture
+        finally:
+            for instance in drivers:
+                instance.close()
 
 
 @pytest.fixture
@@ -132,7 +144,7 @@ def prepared(logged, provider_config):
     assert contact.status_code == 201
     data = {
         "name": "Beta",
-        "route": "megafon_vats",
+        "route": "multicom_ami",
         "contact_ids": [contact.json()["id"]],
         "window_start": 0,
         "window_end": 24,

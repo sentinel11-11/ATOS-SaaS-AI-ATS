@@ -105,6 +105,22 @@ def run(ami):
             )
             response.raise_for_status()
             client.headers["X-CSRF-Token"] = client.cookies["ats_csrf"]
+            client.post(
+                "/api/v1/workspace/numbers/import-multicom",
+                json={"numbers": ["9990000101"]},
+            ).raise_for_status()
+            number = client.get("/api/v2/numbers").raise_for_status().json()["numbers"][0]
+            assert number["provider"] == "multicom_ami"
+            assert number["active"] is False and number["verified"] is False
+            blocked = client.post(
+                "/api/v2/numbers/save", json={"id": number["id"], "active": True}
+            )
+            assert blocked.status_code == 409
+            assert blocked.json()["error"] == "caller_number_not_verified"
+            client.post(
+                "/api/v2/numbers/save",
+                json={"id": number["id"], "verified": True, "active": True},
+            ).raise_for_status()
             contact = client.post(
                 "/api/v1/contacts",
                 json={
@@ -142,6 +158,7 @@ def run(ami):
                 raise RuntimeError("Separate workers did not complete the AMI fixture call")
             attempt_id = attempts[0]["id"]
             assert len(ami.originates) == 1
+            assert ami.endpoint_checks == ["mcm-cli-9990000101"]
             frame = ami.originates[0]
             assert frame["ActionID"] == [attempt_id]
             assert frame["CallerID"] == ["9990000101"]
@@ -196,6 +213,8 @@ def run(ami):
                 "call": "ami_fixture_completed",
                 "originate_count": len(ami.originates),
                 "duplicate_events_deduplicated": True,
+                "endpoint_checked_before_originate": True,
+                "verified_pool_number": True,
                 "separate_processes": len(processes),
                 "live_telephony_tested": False,
             }

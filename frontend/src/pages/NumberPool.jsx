@@ -14,8 +14,8 @@ export default function NumberPool({ addToast, refreshKey }) {
   const [newNumber, setNewContactNumber] = useState({
     phone: '',
     label: '',
-    provider: 'megafon_vats',
-    kind: 'mobile',
+    provider: 'multicom_ami',
+    kind: 'sip',
     daily_limit: 100,
     weight: 1,
   });
@@ -33,8 +33,8 @@ export default function NumberPool({ addToast, refreshKey }) {
     loadNumbers();
   }, [refreshKey]);
 
-  const handleToggleActive = async (id, currentActive, verified) => {
-    if (!currentActive && !verified) {
+  const handleToggleActive = async (id, currentActive, verified, provider) => {
+    if (provider === 'multicom_ami' && !currentActive && !verified) {
       addToast('Сначала подтвердите А-номер в настройках карточки после проверки с Мультикомом', 'warn');
       return;
     }
@@ -90,7 +90,7 @@ export default function NumberPool({ addToast, refreshKey }) {
     if (res && res.ok) {
       addToast('Номер добавлен в пул', 'ok');
       setShowAddModal(false);
-      setNewContactNumber({ phone: '', label: '', provider: 'megafon_vats', kind: 'mobile', daily_limit: 100, weight: 1 });
+      setNewContactNumber({ phone: '', label: '', provider: 'multicom_ami', kind: 'sip', daily_limit: 100, weight: 1 });
       loadNumbers();
     } else {
       addToast('Ошибка добавления: ' + (res?.error || '?'), 'err');
@@ -99,7 +99,7 @@ export default function NumberPool({ addToast, refreshKey }) {
 
   const handleSaveEditedNumber = async () => {
     if (!editingNumber) return;
-    if (editingNumber.active && !editingNumber.verified) {
+    if (editingNumber.provider === 'multicom_ami' && editingNumber.active && !editingNumber.verified) {
       return addToast('Неподтверждённый номер нельзя включить в ротацию', 'warn');
     }
 
@@ -144,10 +144,10 @@ export default function NumberPool({ addToast, refreshKey }) {
     <div className="flex flex-col gap-6 animate-in fade-in duration-200 pb-12">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-white">Пул номеров Caller ID (Ротация & Антиспам)</h1>
+          <h1 className="text-xl font-bold text-white">Пул исходящих А-номеров</h1>
           <p className="text-xs text-muted">
-            Всего номеров в пуле: {numbersList.length}; подтверждены: {numbersList.filter((n) => n.verified).length};
-            активны: {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false).length}
+            В пуле {numbersList.length} · подтверждены {numbersList.filter((n) => n.verified).length} ·
+            активны {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false).length}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -279,7 +279,7 @@ export default function NumberPool({ addToast, refreshKey }) {
                 {/* Quick Action Buttons */}
                 <div className="pt-3 border-t border-line grid grid-cols-2 gap-2">
                   <button
-                    onClick={() => handleToggleActive(n.id, n.active, n.verified)}
+                    onClick={() => handleToggleActive(n.id, n.active, n.verified, n.provider)}
                     className={`py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all ${
                       n.active ? 'bg-warn/20 hover:bg-warn/30 text-warn' : 'bg-ok/20 hover:bg-ok/30 text-ok'
                     }`}
@@ -321,7 +321,7 @@ export default function NumberPool({ addToast, refreshKey }) {
               className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
               value={newNumber.label}
               onChange={(e) => setNewContactNumber({ ...newNumber, label: e.target.value })}
-              placeholder="Сим-1 МегаФон Москва"
+              placeholder="Мультиком — основной номер"
             />
           </div>
 
@@ -418,14 +418,14 @@ export default function NumberPool({ addToast, refreshKey }) {
                 <label className="font-semibold text-muted block mb-1">Провайдер телефонии</label>
                 <select
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc font-semibold"
-                  value={editingNumber.provider || 'megafon_vats'}
+                  value={editingNumber.provider || 'multicom_ami'}
                   onChange={(e) => setEditingNumber({ ...editingNumber, provider: e.target.value })}
                 >
                   <option value="megafon_vats">МегаФон ВАТС</option>
                   <option value="uis">UIS / Comagic</option>
                   <option value="ami">Asterisk AMI</option>
                   <option value="multicom">Мультиком (старый формат)</option>
-                <option value="multicom_ami">Мультиком SIP / Asterisk (multicom_ami)</option>
+                  <option value="multicom_ami">Мультиком SIP / Asterisk (multicom_ami)</option>
                 </select>
               </div>
 
@@ -475,13 +475,13 @@ export default function NumberPool({ addToast, refreshKey }) {
                   checked={!!editingNumber.verified}
                   onChange={(e) => {
                     if (e.target.checked && !window.confirm(
-                      'Подтвердите: этот А-номер закреплён за вашим SIP-транком Мультикома, разрешён как исходящий Caller ID и уже проверен.'
+                      'Этот А-номер закреплён за вашим SIP-транком Мультикома и разрешён как исходящий Caller ID. Подтвердить проверку?'
                     )) return;
                     setEditingNumber({ ...editingNumber, verified: e.target.checked, active: e.target.checked ? editingNumber.active : false });
                   }}
                   className="accent-acc w-4 h-4"
                 />
-                <span className="text-white font-medium">А-номер подтверждён у оператора (verified)</span>
+                <span className="text-white font-medium">А-номер подтверждён у оператора</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer">

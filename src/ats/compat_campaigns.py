@@ -202,8 +202,8 @@ def campaign_save(data: CampaignSave, p=Depends(admin), db=Depends(session)):
         template = db.scalar(repo.query(Template).where(~Template.archived).order_by(Template.created_at).limit(1))
         template_id = template.id if template else None
     schedule, start, end = _schedule(data.schedule, defaults)
-    provider = defaults.get("provider") or "megafon_vats"
-    route = data.route or (row.route if row else {"ami": "multicom_ami", "multicom": "multicom_ami", "megafon_vats": "megafon_vats"}.get(provider, "megafon_vats"))
+    provider = defaults.get("provider") or "multicom_ami"
+    route = data.route or (row.route if row else {"ami": "multicom_ami", "multicom": "multicom_ami", "multicom_ami": "multicom_ami", "megafon_vats": "megafon_vats"}.get(provider, "multicom_ami"))
     command = CampaignEdit(name=data.name, route=route, template_id=template_id, mode=data.flow,
         max_channels=data.max_channels or int(defaults.get("max_channels", 1)),
         window_start=start, window_end=end, weekdays=schedule["days"],
@@ -274,7 +274,7 @@ def campaign_create_by_crm_filter(data: AddContacts, p=Depends(admin), db=Depend
     )
     command = CampaignCreate(
         name=f"Обзвон amoCRM: {label}"[:120],
-        route="megafon_vats",
+        route="multicom_ami",
         contact_ids=identities,
         max_channels=1,
         window_start=0,

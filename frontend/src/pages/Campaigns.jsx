@@ -103,11 +103,12 @@ export default function Campaigns({ addToast, refreshKey }) {
       id: 0,
       name: 'Новая кампания',
       template_id: null,
-      flow: 'operator',
+      flow: 'message',
+      max_channels: 1,
       work_time: '08:00-20:00',
       retry_delay_min: 15,
-      retry_max: 2,
-      route: 'megafon_vats',
+      retry_max: 0,
+      route: 'multicom_ami',
     });
   };
 
@@ -122,10 +123,11 @@ export default function Campaigns({ addToast, refreshKey }) {
       name: c.name || '',
       template_id: c.template_id || null,
       flow: c.flow || 'operator',
+      max_channels: c.max_channels ?? 1,
       work_time: wt,
       retry_delay_min: c.retry_delay_min || 15,
-      retry_max: c.retry_max || 2,
-      route: c.route || 'megafon_vats',
+      retry_max: c.retry_max ?? 0,
+      route: c.route || 'multicom_ami',
       scenario: c.scenario || {},
     });
   };
@@ -147,9 +149,10 @@ export default function Campaigns({ addToast, refreshKey }) {
       name: editingCamp.name,
       template_id: editingCamp.template_id || null,
       flow: editingCamp.flow || 'operator',
-      route: editingCamp.route || 'megafon_vats',
+      route: editingCamp.route || 'multicom_ami',
+      max_channels: parseInt(editingCamp.max_channels, 10) || 1,
       retry_delay_min: parseInt(editingCamp.retry_delay_min) || 15,
-      retry_max: Number.isInteger(Number(editingCamp.retry_max)) ? Number(editingCamp.retry_max) : 2,
+      retry_max: Number.isInteger(Number(editingCamp.retry_max)) ? Number(editingCamp.retry_max) : 0,
       schedule: {
         start,
         end,
@@ -610,8 +613,9 @@ export default function Campaigns({ addToast, refreshKey }) {
               </div>
 
               <div>
-                <label className="font-semibold text-muted block mb-1">Шаблон / Голосовое сообщение</label>
+                <label htmlFor="campaign-template" className="font-semibold text-muted block mb-1">Шаблон / Голосовое сообщение</label>
                 <select
+                  id="campaign-template"
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
                   value={editingCamp.template_id || ''}
                   onChange={(e) => setEditingCamp({ ...editingCamp, template_id: e.target.value || null })}
@@ -628,8 +632,9 @@ export default function Campaigns({ addToast, refreshKey }) {
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
-                <label className="font-semibold text-muted block mb-1">Тип сценария</label>
+                <label htmlFor="campaign-flow" className="font-semibold text-muted block mb-1">Тип сценария</label>
                 <select
+                  id="campaign-flow"
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc font-semibold"
                   value={editingCamp.flow || 'operator'}
                   onChange={(e) => setEditingCamp({ ...editingCamp, flow: e.target.value })}
@@ -642,20 +647,21 @@ export default function Campaigns({ addToast, refreshKey }) {
 
               {editingCamp.flow === 'message' && editingCamp.route === 'multicom_ami' && (
                 <p className="md:col-span-4 text-xs text-muted">
-                  Для первого тестового звонка при выключенном медиарежиме выберите «Без шаблона».
-                  Asterisk воспроизведёт hello-world после ответа. Это не соединение с оператором.
+                  Для первого тестового звонка выберите «Без шаблона».
+                  После ответа Asterisk воспроизведёт стандартное сообщение hello-world.
                 </p>
               )}
 
               <div>
-                <label className="font-semibold text-muted block mb-1">Провайдер телефонии</label>
+                <label htmlFor="campaign-route" className="font-semibold text-muted block mb-1">Провайдер телефонии</label>
                 <select
+                  id="campaign-route"
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc font-semibold"
-                  value={editingCamp.route || 'megafon_vats'}
+                  value={editingCamp.route || 'multicom_ami'}
                   onChange={(e) => setEditingCamp({ ...editingCamp, route: e.target.value })}
                 >
-                  <option value="megafon_vats">МегаФон ВАТС</option>
                   <option value="multicom_ami">Asterisk / Multicom AMI</option>
+                  <option value="megafon_vats">МегаФон ВАТС</option>
                 </select>
               </div>
 
@@ -670,13 +676,27 @@ export default function Campaigns({ addToast, refreshKey }) {
               </div>
 
               <div>
-                <label className="font-semibold text-muted block mb-1">Макс. попыток на контакт</label>
+                <label htmlFor="campaign-retries" className="font-semibold text-muted block mb-1">Повторных попыток</label>
                 <input
+                  id="campaign-retries"
+                  type="number"
+                  min="0"
+                  className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
+                  value={editingCamp.retry_max ?? 0}
+                  onChange={(e) => setEditingCamp({ ...editingCamp, retry_max: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="campaign-channels" className="font-semibold text-muted block mb-1">Одновременных каналов</label>
+                <input
+                  id="campaign-channels"
                   type="number"
                   min="1"
+                  max="100"
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
-                  value={editingCamp.retry_max ?? 2}
-                  onChange={(e) => setEditingCamp({ ...editingCamp, retry_max: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                  value={editingCamp.max_channels ?? 1}
+                  onChange={(e) => setEditingCamp({ ...editingCamp, max_channels: parseInt(e.target.value, 10) || 1 })}
                 />
               </div>
             </div>

@@ -18,6 +18,7 @@
 10. [Предпродакшен через SSH](docs/PREPROD_SSH_RU.md) — изолированная выкладка рядом с legacy ATS и безопасное обновление.
 11. [Проверка preprod-кандидата](docs/PREPROD_VALIDATION_RU.md) — актуальные backend/frontend/browser/smoke результаты и границы live UAT.
 12. [Текущее состояние по ТЗ 1.0](docs/CURRENT_STATE_RU.md) — проверки фазы 0 от 21.11.2026, воспроизводимые команды и открытые условия приёмки.
+13. [Настройка Мультикома](docs/MULTICOM_SETUP_RU.md) — профиль AMI, права проверки PJSIP endpoint, подтверждение пула и одиночный тест из ATOS.
 
 ## Быстрый старт
 

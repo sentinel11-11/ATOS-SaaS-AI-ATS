@@ -433,6 +433,7 @@ export default function Settings({ addToast, refreshKey }) {
               onChange={(e) => updateBasic('provider', e.target.value)}
             >
               <option value="">Не выбран (Fail-closed)</option>
+              <option value="multicom_ami">Мультиком SIP / Asterisk</option>
               <option value="megafon_vats">МегаФон ВАТС REST API</option>
               <option value="multicom">Мультиком (MultiCom API / SIP)</option>
               <option value="uis">UIS / Comagic API</option>

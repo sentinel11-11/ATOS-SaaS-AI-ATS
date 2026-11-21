@@ -246,9 +246,11 @@ def number_save(data: NumberCommand, p=Depends(admin), db=Depends(session)):
         phone = caller_phone(data.number or data.phone)
         if db.scalar(repo.query(CallerNumber).where(CallerNumber.phone == phone)):
             raise Problem(409, "number_exists")
-        # An explicit administrator pool registration confirms the caller ID.
-        # Passive provider imports remain unverified in their separate workflow.
-        row = repo.add(CallerNumber, phone=phone, verified=True, provider="megafon_vats")
+        provider = data.provider or "multicom_ami"
+        row = repo.add(
+            CallerNumber, phone=phone, provider=provider,
+            verified=provider != "multicom_ami", enabled=provider != "multicom_ami",
+        )
     values = data.model_dump(exclude_unset=True, exclude_none=True)
     if "active" in values:
         row.enabled = values.pop("active")

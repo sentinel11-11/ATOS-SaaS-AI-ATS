@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from ats import workspace_schemas as commands
 from ats.db import session
+from ats.domain import Problem
 from ats.models import (
     BlacklistEntry,
     CallerNumber,
@@ -123,7 +124,12 @@ def numbers_import_multicom(data: commands.MulticomNumberImport, p=Depends(admin
 
 @router.post("/numbers", status_code=201)
 def number_create(data: commands.NumberSave, p=Depends(admin), db=Depends(session)):
-    row = TenantRepository(db, p.tenant_id).add(CallerNumber, **data.model_dump())
+    if data.enabled and not data.verified:
+        raise Problem(409, "caller_number_not_verified")
+    db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
+    row = TenantRepository(db, p.tenant_id).add(
+        CallerNumber, provider="multicom_ami", kind="sip", **data.model_dump()
+    )
     db.flush()
     audit(db, p, "number.created", row.id)
     db.commit()
@@ -136,6 +142,8 @@ def number_update(
 ):
     db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
     row = TenantRepository(db, p.tenant_id).get(CallerNumber, number_id, lock=True)
+    if row.provider == "multicom_ami" and data.enabled and not data.verified:
+        raise Problem(409, "caller_number_not_verified")
     for key, value in data.model_dump().items():
         setattr(row, key, value)
     audit(db, p, "number.updated", row.id)

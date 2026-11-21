@@ -5,9 +5,11 @@ import threading
 
 
 class AMIFixture:
-    def __init__(self, secret):
+    def __init__(self, secret, states=("answered", "completed", "completed", "answered")):
         self.secret = secret
         self.originates = []
+        self.endpoint_checks = []
+        self.endpoints = {"mcm-cli-9990000101"}
         fixture = self
 
         class Handler(socketserver.StreamRequestHandler):
@@ -25,13 +27,17 @@ class AMIFixture:
                     if action == "Login":
                         authenticated = frame.get("Secret") == [fixture.secret]
                     success = authenticated and action in {"Login", "Ping", "Originate"}
+                    if authenticated and action == "PJSIPShowEndpoint":
+                        endpoint = frame.get("Endpoint", [""])[0]
+                        fixture.endpoint_checks.append(endpoint)
+                        success = endpoint in fixture.endpoints
                     response = "Success" if success else "Error"
                     reply = f"Response: {response}\r\nActionID: {action_id}\r\n\r\n"
                     if success and action == "Originate":
                         fixture.originates.append(frame)
                         # Duplicated terminal events and a late answer exercise
                         # inbox idempotency and monotonic terminal state.
-                        for state in ("answered", "completed", "completed", "answered"):
+                        for state in states:
                             reply += (
                                 "Event: UserEvent\r\nUserEvent: ATSCall\r\n"
                                 f"AttemptID: {action_id}\r\nState: {state}\r\n\r\n"
@@ -43,7 +49,9 @@ class AMIFixture:
         self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
         self.port = self.server.server_address[1]
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
 
     def __enter__(self):
         self.thread.start()

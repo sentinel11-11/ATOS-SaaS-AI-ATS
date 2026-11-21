@@ -53,9 +53,10 @@ def test_ami_uses_selected_did_endpoint_when_enabled():
     ami.action = lambda name, params, action_id=None: commands.append((name, params))
     attempt_id = uuid4()
     assert ami.originate(attempt_id, "+79255497254", caller_id="9690229926") == str(attempt_id)
-    assert len(commands) == 1
-    assert ("Variable", "__ATS_TRUNK=mcm-cli-9690229926") in commands[0][1]
-    assert ("CallerID", "9690229926") in commands[0][1]
+    assert commands[0] == ("PJSIPShowEndpoint", [("Endpoint", "mcm-cli-9690229926")])
+    assert len(commands) == 2 and commands[1][0] == "Originate"
+    assert ("Variable", "__ATS_TRUNK=mcm-cli-9690229926") in commands[1][1]
+    assert ("CallerID", "9690229926") in commands[1][1]
 
 
 def test_ami_rejects_missing_caller_identity_in_rotation_mode():

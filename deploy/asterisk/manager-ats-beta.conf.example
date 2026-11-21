@@ -6,5 +6,6 @@ secret = REPLACE_SECURELY_ON_PBX
 deny = 0.0.0.0/0.0.0.0
 permit = 127.0.0.1/255.255.255.255
 read = call,user
-write = originate,call
-; Do not grant system,command,config. Use a dedicated PBX in the beta.
+; PJSIPShowEndpoint requires the system class to verify the selected CLI alias.
+write = originate,call,system
+; Review the system-class actions on the installed release. Keep loopback ACLs.

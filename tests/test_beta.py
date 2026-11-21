@@ -337,7 +337,7 @@ def test_inbox_duplicate_and_out_of_order(factory, tenants, prepared):
         a.external_id = "external-test"
         a.status = "accepted"
         for event in ("completed", "completed", "answered"):
-            ingest(db, tenants[0], "megafon_vats", f"ext:{event}", "external-test", event)
+            ingest(db, tenants[0], a.route, f"ext:{event}", "external-test", event)
     Worker(factory).inbox()
     with factory() as db:
         assert db.scalar(select(Attempt)).status == "completed"

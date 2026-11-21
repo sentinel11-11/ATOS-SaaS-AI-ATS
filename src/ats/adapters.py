@@ -556,6 +556,13 @@ class AMI:
             trunk = f"{prefix}{caller_id}"
         tech = getattr(self.config, "ami_tech", "PJSIP")
         self.connect()
+        if prefix:
+            if tech != "PJSIP":
+                raise Rejected("ami_cli_requires_pjsip")
+            try:
+                self.action("PJSIPShowEndpoint", [("Endpoint", trunk)])
+            except Rejected as exc:
+                raise Rejected("ami_endpoint_unavailable") from exc
         self.action(
             "Originate",
             [
