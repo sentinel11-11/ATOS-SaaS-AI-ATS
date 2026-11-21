@@ -455,6 +455,16 @@ class AMI:
         self.lock = threading.RLock()
         self.write_lock = threading.Lock()
 
+    def update_config(self, config):
+        connection_fields = ("ami_host", "ami_port", "ami_tls", "ami_user", "ami_secret")
+        with self.lock:
+            if any(
+                getattr(self.config, field, None) != getattr(config, field, None)
+                for field in connection_fields
+            ):
+                self.close()
+            self.config = config
+
     def connect(self):
         if self.sock is not None:
             return
@@ -546,15 +556,16 @@ class AMI:
         from ats.schemas import phone_e164
 
         phone = phone_e164(phone)
-        context = getattr(self.config, "ami_context", "ats-beta")
-        answer_context = getattr(self.config, "ami_answer_context", "ats-beta-answer")
-        trunk = getattr(self.config, "ami_trunk", "mcm")
-        prefix = getattr(self.config, "ami_cli_endpoint_prefix", "")
+        config = self.config
+        context = getattr(config, "ami_context", "ats-beta")
+        answer_context = getattr(config, "ami_answer_context", "ats-beta-answer")
+        trunk = getattr(config, "ami_trunk", "mcm")
+        prefix = getattr(config, "ami_cli_endpoint_prefix", "")
         if prefix:
             if prefix != "mcm-cli-" or not re.fullmatch(r"[0-9]{10}", str(caller_id or "")):
                 raise Rejected("ami_caller_identity_not_verified")
             trunk = f"{prefix}{caller_id}"
-        tech = getattr(self.config, "ami_tech", "PJSIP")
+        tech = getattr(config, "ami_tech", "PJSIP")
         self.connect()
         if prefix:
             if tech != "PJSIP":
@@ -572,7 +583,7 @@ class AMI:
                 ("Priority", "1"),
                 ("Timeout", "30000"),
                 ("Async", "true"),
-                ("CallerID", caller_id or self.config.ami_caller_id),
+                ("CallerID", caller_id or config.ami_caller_id),
                 ("Variable", f"__ATS_ATTEMPT_ID={attempt_id}"),
                 ("Variable", f"__ATS_MEDIA={int(media)}"),
                 ("Variable", f"__ATS_OPERATOR_EXT={operator_ext}"),

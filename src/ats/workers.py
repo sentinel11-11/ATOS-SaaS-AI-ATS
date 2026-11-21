@@ -268,6 +268,8 @@ class Worker:
                 self.drivers[key] = AMI(config, self.ami_event)
             elif route == "megafon_vats":
                 self.drivers[key] = Megafon(config)
+        elif route == "multicom_ami" and hasattr(self.drivers[key], "update_config"):
+            self.drivers[key].update_config(config or settings())
         return self.drivers[key]
 
     def schedule(self):

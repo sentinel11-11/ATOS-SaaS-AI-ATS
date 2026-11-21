@@ -1008,13 +1008,20 @@ export default function Settings({ addToast, refreshKey }) {
             </select>
           </div>
           <div>
-            <label className="text-muted block mb-1 font-semibold">Префикс endpoint А-номера (ротация)</label>
+            <label htmlFor="ami-cli-endpoint-prefix" className="text-muted block mb-1 font-semibold">Префикс endpoint А-номера (ротация)</label>
             <input
+              id="ami-cli-endpoint-prefix"
               className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
               value={ami.cli_endpoint_prefix || ''}
               onChange={(e) => updateProvider('ami', 'cli_endpoint_prefix', e.target.value)}
               placeholder="mcm-cli- (после установки всех endpoint)"
             />
+            {!ami.cli_endpoint_prefix && (
+              <p className="text-xs text-muted mt-1">
+                Пустой префикс использует фиксированный endpoint {ami.trunk || 'mcm'}.
+                Для выбора endpoint по А-номеру укажите mcm-cli- после установки aliases.
+              </p>
+            )}
           </div>
           <div>
             <label className="text-muted block mb-1 font-semibold">Контекст исходящих (диалплан)</label>

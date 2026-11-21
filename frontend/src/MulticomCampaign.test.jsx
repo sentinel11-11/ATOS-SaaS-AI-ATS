@@ -101,3 +101,21 @@ it('shows a stored failure reason for an existing call in the timeline', async (
   expect(screen.getByRole('alert').textContent).toContain('PJSIP endpoint');
   expect(screen.getByText('Код завершения Asterisk 21')).toBeTruthy();
 });
+
+it('saves the Multicom endpoint prefix through the settings form', async () => {
+  api.mockImplementation(async (path, options) => {
+    if (path === '/settings/raw' && !options?.body) return {
+      provider_config: { ami: { trunk: 'mcm', cli_endpoint_prefix: '' } },
+    };
+    if (path === '/settings') return { settings: { provider: 'multicom_ami' } };
+    return { ok: true, users: [], pipelines: [] };
+  });
+  render(<Settings addToast={vi.fn()} />);
+  const prefix = await screen.findByLabelText('Префикс endpoint А-номера (ротация)');
+  expect(screen.getByText(/Пустой префикс использует фиксированный endpoint mcm/)).toBeTruthy();
+  fireEvent.change(prefix, { target: { value: 'mcm-cli-' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить все настройки' }));
+  await waitFor(() => expect(api).toHaveBeenCalledWith('/settings/raw', {
+    body: { provider_config: { ami: { trunk: 'mcm', cli_endpoint_prefix: 'mcm-cli-' } } },
+  }));
+});
