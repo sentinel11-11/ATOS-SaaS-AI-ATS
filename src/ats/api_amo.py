@@ -46,10 +46,10 @@ router = APIRouter(prefix="/api/v1/workspace/amo", tags=["amocrm"])
 public_router = APIRouter(tags=["amocrm"])
 
 
-def _check_widget_origin(request: Request):
-    origin = request.headers.get("origin", "")
-    if not origin.endswith(".amocrm.ru") and origin != "https://amocrm.ru":
-        raise Problem(403, "amo_widget_origin_rejected")
+def _check_widget_origin(request: Request, db):
+    from ats.widget_auth import widget_principal
+
+    return widget_principal(request, db)
 
 
 def _widget_phone(raw):
@@ -68,7 +68,7 @@ def _widget_phone(raw):
 @public_router.post("/api/v1/amo/widget/card")
 def widget_card(data: AmoWidgetCard, request: Request, db=Depends(session)):
     """Resolve an amoCRM card server-side for shells without ``crm_get``."""
-    _check_widget_origin(request)
+    _check_widget_origin(request, db)
     tenant_id = settings().amo_tenant_id
     if not tenant_id:
         raise Problem(503, "crm_tenant_not_bound")
@@ -129,7 +129,10 @@ def _call_route(workspace_values, requested=None):
 @public_router.post("/api/v1/amo/widget/click-to-call")
 def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depends(session)):
     """CORS entry point used by the amoCRM widget for a single operator call."""
-    _check_widget_origin(request)
+    auth = _check_widget_origin(request, db)
+    if data.amo_user_id and data.amo_user_id != auth.amo_user_id:
+        raise Problem(403, "amo_widget_user_mismatch")
+    data.amo_user_id = auth.amo_user_id
     base = settings()
     tenant_id = base.amo_tenant_id
     if not tenant_id:
@@ -147,23 +150,7 @@ def widget_click_to_call(data: AmoWidgetClickToCall, request: Request, db=Depend
     if contact is None and data.phone:
         contact = db.scalar(repo.query(Contact).where(Contact.phone == _phone(data.phone), ~Contact.archived))
     if contact is None:
-        try:
-            raw = AmoCRM(config).read(f"/api/v4/contacts/{data.crm_contact_id}")
-        except (Rejected, Retryable) as exc:
-            raise Problem(502, getattr(exc, "code", "crm_read_failed")) from exc
-        phone = _widget_phone(raw) or _phone(data.phone)
-        if not phone:
-            raise Problem(404, "amo_contact_phone_missing")
-        contact = repo.add(
-            Contact,
-            name=str(raw.get("name") or "Новый контакт")[:120],
-            phone=phone,
-            source="amoCRM",
-            consent=True,
-            consent_source="amoCRM widget",
-            crm_contact_id=data.crm_contact_id,
-        )
-        db.flush()
+        raise Problem(409, "crm_contact_not_synced")
     if data.phone and _phone(data.phone) != contact.phone:
         raise Problem(409, "contact_phone_mismatch")
     provider = db.scalar(repo.query(WorkspaceSettings))

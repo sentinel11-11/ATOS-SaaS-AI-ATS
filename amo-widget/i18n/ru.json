@@ -1,21 +1,14 @@
 {
   "widget": {
-    "name": "ATOS-ATS-Solo",
-    "description": "Запуск одиночного звонка из карточки amoCRM через ATOS-ATS.",
-    "short_description": "Одиночные звонки через ATS и MegaFon VATS",
-    "support": {
-      "link": "https://axiomats.ru",
-      "email": "support@axiomats.ru"
-    }
-  },
-  "buttons": {"call": "Позвонить через ATOS-ATS"},
-  "messages": {
-    "loading": "Запуск звонка…",
-    "queued": "Звонок поставлен в очередь",
-    "error": "Не удалось запустить звонок"
+    "name": "RATS — телефония amoCRM",
+    "description": "Телефония через RATS, Asterisk и Мультиком: звонок в браузере или на привязанный телефон менеджера.",
+    "short_description": "Звонки через браузер и телефон сотрудника",
+    "support": {"link": "https://axiomats.ru", "email": "support@axiomats.ru"},
+    "call_action": "Позвонить через RATS"
   },
   "settings": {
-    "atsUrl": "Адрес ATS",
-    "route": "Маршрут (megafon_vats или multicom_ami)"
-  }
+    "ratsUrl": "HTTPS-адрес сервера RATS (без завершающего /)"
+  },
+  "buttons": {"call": "Позвонить через RATS"},
+  "messages": {"loading": "Подключение к RATS…", "error": "Звонок не запущен"}
 }

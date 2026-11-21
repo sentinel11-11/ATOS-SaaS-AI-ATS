@@ -269,7 +269,7 @@ def reconcile_stale_calls(p=Depends(admin), db=Depends(session)):
     rows = db.scalars(select(Attempt).where(Attempt.tenant_id == p.tenant_id, Attempt.status.in_(ACTIVE), Attempt.updated_at < cutoff).with_for_update()).all()
     requires_evidence = 0
     for row in rows:
-        if row.reason in EVIDENCE_REQUIRED or (row.call_flow == "mobile_callback" and row.status != "prepared"):
+        if row.reason in EVIDENCE_REQUIRED or (row.call_flow in {"mobile_callback", "browser_callback"} and row.status != "prepared"):
             if row.reason not in EVIDENCE_REQUIRED:
                 from ats.workspace_service import event
 

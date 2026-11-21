@@ -1,7 +1,7 @@
 import hashlib
 import json
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -31,6 +31,7 @@ from ats.models import (
     QueueEntry,
     Tenant,
     User,
+    WidgetCall,
     now,
 )
 from ats.repositories import TenantRepository
@@ -87,7 +88,7 @@ def create_campaign(db, principal, data, key):
 
 def validate_route(
     tenant_id, route, db=None, *, require_megafon_user=True, mode=None, template_id=None,
-    operator_id=None,
+    operator_id=None, connection_method=None,
 ):
     if route not in {"multicom_ami", "megafon_vats"}:
         raise Problem(422, "unsupported_route")
@@ -152,9 +153,11 @@ def validate_route(
             operator_id or (config.callback_enabled and not template_id)
         ):
             query = select(Operator).join(User, User.id == Operator.user_id).where(
-                Operator.tenant_id == tenant_id, Operator.connection_method == "mobile",
+                Operator.tenant_id == tenant_id,
                 User.active, User.role == "operator",
             )
+            if connection_method not in {"mobile", "browser"}:
+                query = query.where(Operator.connection_method == "mobile")
             if operator_id:
                 query = query.where(Operator.id == operator_id)
             mobile = db.scalar(query.order_by(Operator.id).limit(1))
@@ -163,10 +166,17 @@ def validate_route(
 
             if template_id:
                 raise Problem(409, "callback_template_unsupported", "Для соединения через личный телефон выберите «Без шаблона».")
-            validate_mobile(config, mobile)
+            if connection_method == "browser":
+                from ats.webrtc import check_device
+
+                if not config.callback_enabled:
+                    raise Problem(409, "callback_disabled")
+                check_device(db, config, mobile)
+            else:
+                validate_mobile(config, mobile)
             if not eligible:
                 raise Problem(409, "callback_requires_verified_pool", "Для телефонного соединения включите подтверждённый А-номер в пуле.")
-            if db.get(Tenant, tenant_id).max_channels < 2:
+            if connection_method != "browser" and db.get(Tenant, tenant_id).max_channels < 2:
                 raise Problem(409, "callback_needs_two_channels", "Телефонному соединению нужны два внешних канала в общих лимитах ATOS.")
         if mode is not None and (mode != "message" or template_id) and not config.media_enabled and not mobile:
             raise Problem(
@@ -221,6 +231,24 @@ def schedule_one(db, tenant_id):
         .where(Campaign.status == "running", ~Campaign.archived)
         .order_by(Campaign.created_at)
     ).all():
+        schedule = campaign.schedule or {}
+        widget_call = db.get(WidgetCall, UUID(schedule["widget_call_id"])) if schedule.get("widget_call_id") else None
+        if widget_call and (widget_call.cancel_requested or widget_call.expires_at <= now()):
+            dispatched = db.scalar(repo.query(Attempt).join(CampaignItem, CampaignItem.id == Attempt.item_id).where(
+                CampaignItem.campaign_id == campaign.id, Attempt.status.in_(ACTIVE - {"prepared"}),
+            ).limit(1))
+            if dispatched:
+                continue  # The queue deadline never expires a live conversation.
+            prepared = db.scalars(repo.query(Attempt).join(CampaignItem, CampaignItem.id == Attempt.item_id).where(
+                CampaignItem.campaign_id == campaign.id, Attempt.status == "prepared",
+            )).all()
+            for call in prepared:
+                finish_attempt(db, call, "failed", "widget_queue_timeout" if not widget_call.cancel_requested else "cancelled_by_user")
+            if not prepared:
+                campaign.status, campaign.archived = "completed", True
+                for member in db.scalars(repo.query(CampaignItem).where(CampaignItem.campaign_id == campaign.id, CampaignItem.status == "queued")):
+                    member.status = "cancelled"
+            continue
         if (
             not campaign.window_start <= hour < campaign.window_end
             or now().astimezone(ZoneInfo(tenant.timezone)).weekday() not in campaign.weekdays
@@ -285,6 +313,7 @@ def schedule_one(db, tenant_id):
             mode=campaign.mode,
             template_id=campaign.template_id,
             operator_id=(campaign.schedule or {}).get("operator_id"),
+            connection_method=schedule.get("connection_method"),
         )
         operator = None
         if campaign.route in {"multicom_ami", "megafon_vats"} and (
@@ -298,7 +327,11 @@ def schedule_one(db, tenant_id):
             if requested_operator_id:
                 operator_query = operator_query.where(Operator.id == requested_operator_id)
             if campaign.route == "multicom_ami":
-                if campaign.mode != "operator" or campaign.template_id or not config.callback_enabled:
+                if schedule.get("connection_method") == "browser":
+                    pass  # The signed widget pins the operator and separately validates its device.
+                elif schedule.get("connection_method") == "mobile":
+                    operator_query = operator_query.where(Operator.mobile_phone != "")
+                elif campaign.mode != "operator" or campaign.template_id or not config.callback_enabled:
                     operator_query = operator_query.where(Operator.connection_method == "sip")
                 elif not config.media_enabled:
                     operator_query = operator_query.where(Operator.connection_method == "mobile")
@@ -308,9 +341,16 @@ def schedule_one(db, tenant_id):
             operator = db.scalar(operator_query.with_for_update(skip_locked=True).limit(1))
             if not operator:
                 return False
+        browser_callback = bool(campaign.route == "multicom_ami" and operator and schedule.get("connection_method") == "browser")
         mobile_callback = bool(
-            campaign.route == "multicom_ami" and operator and operator.connection_method == "mobile"
+            campaign.route == "multicom_ami" and operator and not browser_callback
+            and (operator.connection_method == "mobile" or schedule.get("connection_method") == "mobile")
         )
+        browser_device = None
+        if browser_callback:
+            from ats.webrtc import check_device
+
+            browser_device = check_device(db, config, operator)
         if mobile_callback:
             from ats.callbacks import validate_mobile
 
@@ -348,15 +388,19 @@ def schedule_one(db, tenant_id):
             caller_number=caller_number,
             phone=contact.phone,
             contact_name=contact.name,
-            call_flow="mobile_callback" if mobile_callback else "standard",
+            call_flow="browser_callback" if browser_callback else "mobile_callback" if mobile_callback else "standard",
             channel_units=2 if mobile_callback else 1,
-            route_snapshot={"endpoint": config.ami_cli_endpoint_prefix + caller_number}
-            if mobile_callback else {},
+            route_snapshot={"endpoint": config.ami_cli_endpoint_prefix + caller_number,
+                            "operator_endpoint": browser_device.endpoint if browser_device else "",
+                            "operator_id": str(operator.id),
+                            "widget_call_id": str(widget_call.id) if widget_call else "",
+                            "operator_call_token": widget_call.operator_token if widget_call else ""}
+            if mobile_callback or browser_callback else {},
         )
         item.status = "active"
         db.flush()
-        if mobile_callback:
-            for role, destination in [("operator", operator.mobile_phone), ("customer", contact.phone)]:
+        if mobile_callback or browser_callback:
+            for role, destination in [("operator", operator.mobile_phone if mobile_callback else ""), ("customer", contact.phone)]:
                 repo.add(CallLeg, attempt_id=attempt.id, role=role, phone=destination)
         event(db, attempt, "prepared")
         if operator:
@@ -457,7 +501,8 @@ def finish_attempt(db, attempt, event, reason=""):
         dedupe_key=f"crm:{attempt.id}",
         payload={
             "attempt_id": str(attempt.id),
-            "amo_responsible_user_id": attempt.agent_result.get("amo_responsible_user_id"),
+            "amo_responsible_user_id": (campaign.schedule or {}).get("amo_responsible_user_id")
+            or attempt.agent_result.get("amo_responsible_user_id"),
             "recording_url": attempt.agent_result.get("recording_url"),
         },
     )
@@ -577,7 +622,7 @@ def drain_inbox(db):
             log_event(db, attempt, "unknown", attempt.reason)
         row.status = "processed"
         return True
-    if attempt.call_flow == "mobile_callback":
+    if attempt.call_flow in {"mobile_callback", "browser_callback"}:
         # Provider/legacy events describe one leg; callback aggregation owns the result.
         row.status = "processed"
         return True

@@ -91,6 +91,8 @@ class AmoCRM:
         if not httpx.URL(self.url).host.endswith(".amocrm.ru"):
             raise Rejected("amo_domain_required")
         self.token = config.amo_access_token.get_secret_value()
+        if not self.token:
+            raise Rejected("crm_access_token_missing")
         self.client = client or httpx.Client(
             timeout=httpx.Timeout(10, connect=3), follow_redirects=False
         )
@@ -622,6 +624,39 @@ class AMI:
             ("Variable", f"__ATS_TRUNK={endpoint}"),
             ("Variable", f"__ATS_CALLBACK_MAX_SECONDS={config.callback_max_seconds}"),
             ("Variable", f"__ATS_RECORD_CALLBACK={int(config.ami_record_calls)}"),
+        ], action_id=str(attempt_id))
+        return str(attempt_id)
+
+    def originate_browser(self, attempt_id, operator_id, customer_phone, caller_id, endpoint, device, token):
+        from ats.schemas import phone_e164
+
+        customer_phone = phone_e164(customer_phone)
+        if (
+            not re.fullmatch(r"\+7[0-9]{10}", customer_phone)
+            or not re.fullmatch(r"[0-9]{10}", caller_id)
+            or not re.fullmatch(r"ats-web-[a-f0-9]{12,32}", device)
+            or not re.fullmatch(r"[a-f0-9]{48}", token)
+            or endpoint != "mcm-cli-" + caller_id
+            or self.config.ami_tech != "PJSIP" or self.config.ami_cli_endpoint_prefix != "mcm-cli-"
+        ):
+            raise Rejected("callback_route_invalid")
+        self.connect()
+        for target in (endpoint, device):
+            try:
+                self.action("PJSIPShowEndpoint", [("Endpoint", target)])
+            except Rejected as exc:
+                raise Rejected("ami_endpoint_unavailable") from exc
+        self.action("Originate", [
+            ("Channel", f"Local/{operator_id}@ats-beta-callback-browser/n"),
+            ("Context", "ats-beta-callback-customer"), ("Exten", "s"), ("Priority", "1"),
+            ("Timeout", "30000"), ("Async", "true"), ("CallerID", caller_id),
+            ("Variable", f"__ATS_ATTEMPT_ID={attempt_id}"),
+            ("Variable", f"__ATS_CUSTOMER_PHONE={customer_phone}"),
+            ("Variable", f"__ATS_TRUNK={endpoint}"), ("Variable", "__ATS_BROWSER_CALL=1"),
+            ("Variable", f"__ATS_OPERATOR_ENDPOINT={device}"),
+            ("Variable", f"__ATS_OPERATOR_CALL_TOKEN={token}"),
+            ("Variable", f"__ATS_CALLBACK_MAX_SECONDS={self.config.callback_max_seconds}"),
+            ("Variable", f"__ATS_RECORD_CALLBACK={int(self.config.ami_record_calls)}"),
         ], action_id=str(attempt_id))
         return str(attempt_id)
 

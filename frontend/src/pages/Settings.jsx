@@ -1299,6 +1299,18 @@ export default function Settings({ addToast, refreshKey }) {
                     placeholder={isMaskedValue(amocrm.access_token) ? 'Сохранён (нажмите, чтобы изменить)' : 'Bearer токен amoCRM'}
                   />
                 </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="text-muted">ID аккаунта amoCRM
+                    <input type="number" min="1" className="block w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white mt-1" value={amocrm.account_id || ''} onChange={(e) => updateProvider('amocrm', 'account_id', Number(e.target.value) || 1)} />
+                  </label>
+                  <label className="text-muted">ID приватной интеграции виджета (client_id)
+                    <input className="block w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white mt-1" value={amocrm.client_id || ''} onChange={(e) => updateProvider('amocrm', 'client_id', e.target.value)} placeholder="UUID интеграции в amoCRM" />
+                  </label>
+                </div>
+                <label className="text-muted">Секретный ключ интеграции виджета (client_secret)
+                  <input type="password" className="block w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white mt-1" value={amocrm.client_secret || ''} onFocus={(e) => { if (isMaskedValue(e.target.value)) updateProvider('amocrm', 'client_secret', ''); }} onChange={(e) => updateProvider('amocrm', 'client_secret', e.target.value)} placeholder="Ключ из той интеграции, в которой установлен виджет" />
+                </label>
+                <p className="text-dim">Эти три поля проверяют подписанные запросы виджета. Секрет интеграции отличается от долгосрочного API-токена. Пользователь amoCRM сопоставляется с оператором в таблице ниже.</p>
                 <div>
                   <label className="text-muted block mb-1 font-semibold">ID Ответственного пользователя в amoCRM</label>
                   <input

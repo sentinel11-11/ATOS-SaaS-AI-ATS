@@ -14,7 +14,7 @@ from sqlalchemy import select
 from test_mobile_callback import start
 
 from ats.config import settings
-from ats.models import Attempt, CallLeg
+from ats.models import Attempt, CallLeg, Contact
 
 IMAGE = "andrius/asterisk:20@sha256:05391d46660b1dcadd193e265758fb06a785ad484b7add2a0cb0ba5e50a76929"
 
@@ -44,6 +44,24 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
         "disallow=all\nallow=alaw,ulaw\nfrom_user=9990000101\nfrom_domain=127.0.0.1\n"
         "direct_media=no\ndtmf_mode=rfc4733\n"
     )
+    if mode == "browser":
+        from ats.models import Operator
+        from ats.webrtc import save_device
+
+        widget = request.getfixturevalue("widget")
+        factory = request.getfixturevalue("factory")
+        with factory.begin() as db:
+            operator = db.get(Operator, widget["operator_id"])
+            endpoint = "ats-web-" + operator.id.hex
+            save_device(db, operator, endpoint, endpoint, "browser-fixture-private-password-32-chars")
+        import runpy
+
+        render = runpy.run_path(str(root / "scripts/install-widget-webrtc.py"))["render_devices"]
+        with (folder / "pjsip.conf").open("a") as output:
+            output.write(render([{"endpoint": endpoint, "username": endpoint,
+                                  "password": "browser-fixture-private-password-32-chars"}], "localhost"))
+        (folder / "http.conf").write_text('[general]\nenabled=no\n#include "http-widget.conf"\n')
+        (folder / "http-widget.conf").write_text("[general](+)\nenabled=yes\nbindaddr=0.0.0.0\nbindport=8088\n")
     shutil.copy(root / "deploy/asterisk/extensions-ats-beta-callback.conf", folder / "extensions.conf")
     shutil.copy(Path(__file__).with_name("sip_callback_peer.py"), folder / "sip_peer.py")
     sounds = folder / "sounds/ats-beta"
@@ -54,7 +72,7 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
     name = "atos-native-callback-" + uuid4().hex[:10]
     subprocess.run([
         "docker", "run", "-d", "--name", name,
-        "-p", "127.0.0.1::5038", "--mount", f"type=bind,src={folder},dst=/input,readonly",
+        "-p", "127.0.0.1::5038", "-p", "127.0.0.1::8088", "--mount", f"type=bind,src={folder},dst=/input,readonly",
         "--entrypoint", "sh", IMAGE, "-c",
         "mkdir -p /usr/share/asterisk; cp -a /var/lib/asterisk/. /usr/share/asterisk/; "
         "mkdir -p /var/spool/asterisk/monitor/ats-beta /var/lib/asterisk/sounds/ats-beta; "
@@ -95,8 +113,11 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
-@pytest.mark.parametrize("native_asterisk", ["bridge", "vps_sound_layout"], indirect=True)
-def test_real_asterisk_callback_sip_dtmf_bridge_and_bidirectional_rtp(factory, callback, native_asterisk):
+@pytest.mark.parametrize("native_asterisk", ["bridge", "vps_sound_layout", "no_dtmf", "missing_prompt"], indirect=True)
+def test_real_asterisk_callback_without_keypress_and_bidirectional_rtp(factory, callback, native_asterisk):
+    initial = json.loads(subprocess.check_output(["docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json"], text=True))
+    if initial["mode"] == "missing_prompt":
+        subprocess.run(["docker", "exec", native_asterisk, "rm", "/var/lib/asterisk/sounds/ats-beta/callback-ready.wav"], check=True)
     worker, attempt_id = start(factory, callback)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
@@ -124,17 +145,13 @@ def test_real_asterisk_callback_sip_dtmf_bridge_and_bidirectional_rtp(factory, c
 @pytest.mark.parametrize("native_asterisk,reason,roles", [
     ("operator_busy", "operator_busy", ["operator"]),
     ("customer_busy", "customer_busy", ["operator", "customer"]),
-    ("no_confirmation", "operator_not_confirmed", ["operator"]),
-    ("missing_prompt", "callback_prompt_unavailable", ["operator"]),
-    ("confirmation_timeout", "operator_not_confirmed", ["operator"]),
+    ("gate_denied", "callback_gate_denied", ["operator"]),
 ], indirect=["native_asterisk"])
 def test_real_asterisk_failures_do_not_become_success(factory, callback, native_asterisk, reason, roles):
-    if reason == "callback_prompt_unavailable":
-        subprocess.run([
-            "docker", "exec", native_asterisk, "rm", "/var/lib/asterisk/sounds/ats-beta/callback-ready.wav",
-        ], check=True)
-    started = time.monotonic()
     worker, attempt_id = start(factory, callback)
+    if reason == "callback_gate_denied":
+        with factory.begin() as db:
+            db.get(Contact, callback["contact_id"]).consent = False
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         worker.call_control()
@@ -153,5 +170,3 @@ def test_real_asterisk_failures_do_not_become_success(factory, callback, native_
         "docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json",
     ], text=True))
     assert [row["role"] for row in state["invites"]] == roles
-    if state["mode"] == "confirmation_timeout":
-        assert time.monotonic() - started >= 14

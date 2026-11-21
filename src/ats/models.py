@@ -351,6 +351,42 @@ class CallLeg(Owned, Base):
     )
 
 
+class OperatorDevice(Owned, Base):
+    __tablename__ = "operator_devices"
+    operator_id: Mapped[UUID]
+    endpoint: Mapped[str] = mapped_column(String(80))
+    username: Mapped[str] = mapped_column(String(80))
+    encrypted_secret: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, server_default=func.now())
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id", "operator_id"], ["operators.tenant_id", "operators.id"]),
+        UniqueConstraint("operator_id"), UniqueConstraint("endpoint"),
+    )
+
+
+class WidgetCall(Owned, Base):
+    __tablename__ = "widget_calls"
+    operator_id: Mapped[UUID]
+    campaign_id: Mapped[UUID]
+    client_request_id: Mapped[UUID]
+    request_hash: Mapped[str] = mapped_column(String(64))
+    mode: Mapped[str] = mapped_column(String(16))
+    operator_token: Mapped[str] = mapped_column(String(64))
+    crm_context: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    media_ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_requested: Mapped[bool] = mapped_column(default=False, server_default="false")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "operator_id", "client_request_id"),
+        UniqueConstraint("campaign_id"),
+        ForeignKeyConstraint(["tenant_id", "operator_id"], ["operators.tenant_id", "operators.id"]),
+        ForeignKeyConstraint(["tenant_id", "campaign_id"], ["campaigns.tenant_id", "campaigns.id"]),
+        CheckConstraint("mode IN ('forward','browser')", name="ck_widget_call_mode"),
+    )
+
+
 class CallEvent(Owned, Base):
     __tablename__ = "call_events"
     attempt_id: Mapped[UUID]

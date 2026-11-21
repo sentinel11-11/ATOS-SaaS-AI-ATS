@@ -4,15 +4,12 @@ import argparse
 import grp
 import hashlib
 import io
-import math
 import os
 import pwd
 import re
 import stat
-import struct
 import subprocess
 import tempfile
-import wave
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -20,6 +17,7 @@ from dotenv import dotenv_values
 
 SOURCE = Path(__file__).parents[1] / "deploy/asterisk/extensions-ats-beta-callback.conf"
 V1_SHA256 = "9185c0a06a6d639e0c8ba91e27025236067f61396e716e77d40f8179fb03e11a"
+V2_SHA256 = "0ee1d597fa3734943521fb7d60f6f5daef3a12df4594d5ca18e48ddc3ec8e9a1"
 BLOCK_START = "; Mobile operator-first callback. The manager must press 1 before customer authorization."
 
 
@@ -29,8 +27,8 @@ class InstallationError(ValueError):
 
 def check_asterisk_support():
     required = [("application", name) for name in (
-        "Dial", "Read", "Gosub", "Return", "UserEvent", "Wait", "MixMonitor", "StopMixMonitor",
-    )] + [("function", name) for name in ("REGEX", "TIMEOUT", "STAT")]
+        "Dial", "Gosub", "Return", "UserEvent", "Wait", "MixMonitor", "StopMixMonitor",
+    )] + [("function", name) for name in ("REGEX", "TIMEOUT")]
     for kind, name in required:
         result = subprocess.run(
             ["asterisk", "-n", "-rx", f"core show {kind} {name}"],
@@ -47,13 +45,16 @@ def dialplan_bytes(original, block):
     if not {"ats-beta", "ats-beta-answer"}.issubset(headers):
         raise InstallationError("Expected the existing ats-beta and ats-beta-answer contexts")
     if required.intersection(headers):
-        if all(headers.count(name) == 1 for name in required):
-            if block in contents:
-                return original
-            start = contents.find(BLOCK_START)
-            # Upgrade only the exact, previously shipped suffix. Keep custom contexts intact.
-            if start >= 0 and hashlib.sha256(contents[start:].rstrip().encode()).hexdigest() == V1_SHA256:
-                return contents[:start].encode() + block.encode() + b"\n"
+        if all(headers.count(name) == 1 for name in required) and block in contents:
+            return original
+        old_contexts = {"ats-beta-callback-operator", "ats-beta-callback-created",
+                        "ats-beta-callback-answered", "ats-beta-callback-customer"}
+        start = contents.find(BLOCK_START)
+        # Only exact shipped versions may be upgraded; preserve custom prefixes/contexts.
+        if (start >= 0 and set(headers).intersection(required) == old_contexts
+            and all(headers.count(name) == 1 for name in old_contexts)
+            and hashlib.sha256(contents[start:].rstrip().encode()).hexdigest() in {V1_SHA256, V2_SHA256}):
+            return contents[:start].encode() + block.encode() + b"\n"
         raise InstallationError("Existing callback contexts differ; review them before replacement")
     return original.rstrip() + b"\n\n" + block.encode() + b"\n"
 
@@ -132,20 +133,13 @@ def install_audio():
     account = pwd.getpwnam("asterisk")
     group = grp.getgrnam("asterisk")
     pwd.getpwnam("ats-beta")
-    sound_dir = Path("/var/lib/asterisk/sounds/ats-beta")
     recording_dir = Path("/var/spool/asterisk/monitor/ats-beta")
-    for folder in (sound_dir, recording_dir):
+    for folder in (recording_dir,):
         if folder.is_symlink():
             raise InstallationError("Asterisk callback directories must not be symbolic links")
         folder.mkdir(parents=True, exist_ok=True)
         os.chown(folder, account.pw_uid, group.gr_gid)
         os.chmod(folder, 0o750)
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as output:
-        output.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
-        output.writeframes(b"".join(struct.pack("<h", int(5000 * math.sin(2 * math.pi * 440 * i / 8000)))
-                                    for i in range(1600)))
-    atomic_write(sound_dir / "callback-ready.wav", buffer.getvalue(), account.pw_uid, group.gr_gid, 0o640)
     subprocess.run(["usermod", "-a", "-G", "asterisk", "ats-beta"], check=True)
 
 

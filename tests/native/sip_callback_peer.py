@@ -18,7 +18,7 @@ class Peer:
         self.dialogs = {}
         self.mode = os.environ.get("CALLBACK_PEER_MODE", "bridge")
         self.lock = threading.RLock()
-        self.state = {"mode": self.mode, "invites": [], "media_received": {"operator": False, "customer": False}}
+        self.state = {"mode": self.mode, "invites": [], "media_received": {"operator": False, "customer": False}, "rtp_packets": 0}
 
     def save(self):
         with self.lock:
@@ -64,14 +64,14 @@ class Peer:
         while time.monotonic() - started < 35 and not dialog.get("ended"):
             send(bytes([payload_byte]) * 160)
             elapsed = time.monotonic() - started
-            if role == "operator" and self.mode not in {"no_confirmation", "confirmation_timeout"} and elapsed > 1 and not dtmf_sent:
+            if role == "operator" and self.mode == "legacy_dtmf" and elapsed > 1 and not dtmf_sent:
                 event_stamp = timestamp
                 for index, duration in enumerate([160, 320, 480, 800, 800, 800]):
                     send(struct.pack("!BBH", 1, 10 | (0x80 if index >= 3 else 0), duration),
                          kind=dialog["dtmf"], marker=index == 0, stamp=event_stamp)
                     time.sleep(0.02)
                 dtmf_sent = True
-            if ((role == "customer" and elapsed > 2)
+            if ((role == "customer" and elapsed > (12 if self.mode == "browser" else 2))
                 or (role == "operator" and self.mode == "no_confirmation" and elapsed > 3)) and not bye_sent:
                 self.bye(dialog)
                 bye_sent = True
@@ -80,6 +80,9 @@ class Peer:
                 offset = 12 + (packet[0] & 15) * 4
                 if len(packet) > offset and (packet[1] & 127) == 8:
                     audio = packet[offset:]
+                    if self.mode == "browser":
+                        self.state["rtp_packets"] += 1
+                        self.save()
                     if audio and all(value == expected for value in audio):
                         if not self.state["media_received"][role]:
                             self.state["media_received"][role] = True

@@ -1,135 +1,31 @@
-.atos-ats-widget-root {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid #31516b;
-  border-radius: 10px;
-  background: #102b40;
-  color: #eaf3fa;
-  font-family: Arial, sans-serif;
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.atos-ats-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 48px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #31516b;
-  background: #0b2235;
-}
-
-.atos-ats-brand {
-  color: #74b7ff;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
-
-.atos-ats-title {
-  margin-top: 2px;
-  color: #d9e8f4;
-  font-size: 12px;
-}
-
-.atos-ats-route {
-  flex: 0 0 auto;
-  max-width: 110px;
-  overflow: hidden;
-  color: #93aabd;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.atos-ats-card-body { padding: 11px 12px 12px; }
-
-.atos-ats-field {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 5px 0;
-}
-
-.atos-ats-field > span {
-  color: #9eb3c2;
-  font-size: 11px;
-}
-
-.atos-ats-field > strong {
-  max-width: 68%;
-  overflow: hidden;
-  color: #f2f8fc;
-  font-size: 12px;
-  font-weight: 600;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.atos-ats-actions {
-  display: flex;
-  gap: 7px;
-  margin-top: 10px;
-}
-
-.atos-ats-actions button {
-  min-height: 34px;
-  box-sizing: border-box;
-  border: 0;
-  border-radius: 6px;
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.atos-ats-submit {
-  flex: 1;
-  padding: 0 12px;
-  background: #3e8df3;
-  color: #fff;
-}
-
-.atos-ats-submit:hover { background: #2d78d8; }
-
-.atos-ats-refresh {
-  width: 34px;
-  padding: 0;
-  background: #24445c;
-  color: #dbeaf4;
-  font-size: 18px !important;
-  line-height: 1;
-}
-
-.atos-ats-refresh:hover { background: #315a76; }
-
-.atos-ats-actions button:disabled {
-  cursor: not-allowed;
-  opacity: .45;
-}
-
-.atos-ats-status {
-  min-height: 17px;
-  margin-top: 8px;
-  color: #86d6a5;
-  font-size: 11px;
-}
-
-.atos-ats-status-error { color: #ff9e9e; }
-
-@media (max-width: 240px) {
-  .atos-ats-card-header { align-items: flex-start; flex-direction: column; gap: 3px; }
-  .atos-ats-route { max-width: 100%; }
-  .atos-ats-field { align-items: flex-start; flex-direction: column; gap: 2px; }
-  .atos-ats-field > strong { max-width: 100%; text-align: left; }
-}
+/* RATS – isolated styles. Original approved widget layout retained. */
+#rats-widget-root {--rats-accent:#ff704d;--rats-bg:#101921;--rats-line:#30404e;box-sizing:border-box;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:linear-gradient(145deg,#13202b,#0d151e);color:#f5f6f8;border:1px solid var(--rats-line);border-radius:12px;overflow:hidden;max-width:100%;}
+#rats-widget-root *,#rats-widget-root *:before,#rats-widget-root *:after{box-sizing:border-box}
+#rats-widget-root .rats-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:15px;border-bottom:1px solid var(--rats-line);background:#0c141b}
+#rats-widget-root .rats-mark{font-size:24px;letter-spacing:-1.1px;font-weight:900}
+#rats-widget-root .rats-mark span{color:var(--rats-accent);font-size:15px;margin:0 -1px}
+#rats-widget-root .rats-head-sub{font-size:9px;letter-spacing:1.2px;color:#b8bdc5}
+#rats-widget-root .rats-section{padding:12px 15px;border-bottom:1px solid #253340}
+#rats-widget-root .rats-label{font-size:11px;color:#a2afbd;margin-bottom:5px}
+#rats-widget-root .rats-label-small{margin-top:8px}
+#rats-widget-root .rats-name{font-weight:650;font-size:14px;overflow-wrap:anywhere}
+#rats-widget-root .rats-phone{color:var(--rats-accent);font-weight:700;font-size:16px}
+#rats-widget-root .rats-forward{font-size:12px;color:#ccd5da}
+#rats-widget-root .rats-radio{display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;color:#f5f6f8}
+#rats-widget-root .rats-radio input{accent-color:var(--rats-accent);margin:0}
+#rats-widget-root .rats-hint{margin:5px 0 0;color:#9baeb9;font-size:11px}
+#rats-widget-root .rats-actions{padding:13px 15px;display:grid;gap:8px}
+#rats-widget-root button{display:block;width:100%;border-radius:7px;cursor:pointer;padding:10px 8px;font-weight:700;font-size:12px;line-height:1.3;min-height:36px;transition:filter .15s ease,border-color .15s ease}
+#rats-widget-root button:disabled{opacity:.42;cursor:not-allowed}
+#rats-widget-root button:not(:disabled):hover{filter:brightness(1.10)}
+#rats-widget-root .rats-primary{border:1px solid #ff7753;background:linear-gradient(100deg,#ff6945,#ff9463);color:#1c1010}
+#rats-widget-root .rats-outline{border:1px solid #d17a62;background:#17252f;color:#ffae8c}
+#rats-widget-root .rats-danger{border:1px solid #a95b6a;background:#4a2831;color:#ffe0e0}
+#rats-widget-root .rats-answer{border:1px solid #209e84;background:#106f5b;color:#fff}
+#rats-widget-root .rats-text{border:0;background:transparent;color:#adbbc3;text-decoration:underline;padding:3px;min-height:22px}
+#rats-widget-root .rats-call{display:flex;justify-content:space-between;align-items:center;margin:0 15px;padding:9px 0;border-top:1px solid var(--rats-line);font-size:11px;color:#bac6cd}
+#rats-widget-root.rats-live .rats-call-state{color:#6ddec3;font-weight:bold}
+#rats-widget-root .rats-status{margin:5px 15px 14px;color:#a9d8cb;min-height:18px;font-size:12px;overflow-wrap:anywhere}
+#rats-widget-root.rats-error .rats-status{color:#ff9e91}
+#rats-widget-root .rats-footer{background:#0a1218;text-align:center;padding:9px 4px;font-size:9px;letter-spacing:.2px;color:#7f909d}
+#rats-widget-root [hidden]{display:none!important}

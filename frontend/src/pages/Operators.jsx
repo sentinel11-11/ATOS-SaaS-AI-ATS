@@ -152,7 +152,7 @@ export default function Operators({ addToast, refreshKey, isAdmin }) {
             <label className="text-muted">Личный номер менеджера
               <input className="block w-full bg-[#0a1628] border border-line2 rounded-xl p-2 text-white" value={editingConnection.mobile_phone || ''} placeholder="+79990000000" onChange={(e) => setEditingConnection({ ...editingConnection, mobile_phone: e.target.value })} />
             </label>
-            <p className="text-muted">После ответа нажмите 1. Затем ATOS проверит разрешение и наберёт клиента. Для разговора нужны два внешних канала. В тестовой среде оба номера должны быть в списке разрешённых направлений.</p>
+            <p className="text-muted">После ответа ATOS автоматически проверит разрешение и наберёт клиента. Для разговора нужны два внешних канала. В тестовой среде оба номера должны быть в списке разрешённых направлений.</p>
           </>}
           <button className="bg-acc text-white rounded-xl py-2" onClick={saveConnection}>Сохранить подключение</button>
         </div>}

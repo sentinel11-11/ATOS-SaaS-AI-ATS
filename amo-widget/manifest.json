@@ -3,9 +3,9 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "4.3.0",
+    "version": "5.2.0",
     "interface_version": 2,
-    "init_once": false,
+    "init_once": true,
     "locale": [
       "ru"
     ],
@@ -22,15 +22,10 @@
     "settings"
   ],
   "settings": {
-    "atsUrl": {
-      "name": "settings.atsUrl",
+    "ratsUrl": {
+      "name": "settings.ratsUrl",
       "type": "text",
       "required": true
-    },
-    "route": {
-      "name": "settings.route",
-      "type": "text",
-      "required": false
     }
   }
 }

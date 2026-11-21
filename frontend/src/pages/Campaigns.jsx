@@ -664,7 +664,7 @@ export default function Campaigns({ addToast, refreshKey }) {
                     <option value="">Любой доступный оператор</option>
                     {operators.map((op) => <option key={op.id} value={op.id}>{op.name || op.login} · {op.ext || '—'} · {op.connection_method === 'mobile' ? 'Личный телефон' : 'SIP'}</option>)}
                   </select>
-                  <span className="block mt-1">Для личного телефона менеджер отвечает первым и нажимает 1, затем начинается вызов клиенту. Один разговор резервирует два внешних канала и две единицы дневного лимита А-номера.</span>
+                  <span className="block mt-1">Для личного телефона менеджер отвечает первым, затем ATOS автоматически начинает вызов клиенту. Один разговор резервирует два внешних канала и две единицы дневного лимита А-номера.</span>
                 </label>
               )}
 

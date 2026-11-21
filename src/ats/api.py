@@ -17,6 +17,8 @@ from ats import schemas
 from ats.api_amo import public_router as amo_public_router
 from ats.api_amo import router as amo_router
 from ats.api_recording_links import router as recording_links_router
+from ats.api_widget import assets_router as widget_assets_router
+from ats.api_widget import router as widget_router
 from ats.compat_auth import router as compat_auth_router
 from ats.compat_campaigns import router as compat_campaigns_router
 from ats.compat_contacts import router as compat_contacts_router
@@ -54,8 +56,8 @@ app.add_middleware(
     allow_origins=[],
     allow_origin_regex=r"^https://[a-z0-9][a-z0-9-]{0,62}\.amocrm\.ru$",
     allow_credentials=False,
-    allow_methods=["POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Auth-Token"],
 )
 
 # MegaFon has used several spellings for the same terminal history outcome
@@ -359,7 +361,7 @@ def live():
 def ready(db=Depends(session)):
     # Verify required schema, not merely TCP/Postgres availability.
     version = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if version != "0012":
+    if version != "0013":
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
     config = settings()
@@ -753,6 +755,8 @@ app.include_router(events_router)
 app.include_router(recording_links_router)
 app.include_router(amo_public_router)
 app.include_router(amo_router)
+app.include_router(widget_router)
+app.include_router(widget_assets_router)
 
 web = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if web.is_dir():

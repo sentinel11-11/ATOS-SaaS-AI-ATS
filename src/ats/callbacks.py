@@ -19,11 +19,13 @@ from ats.models import (
     QueueEntry,
     Tenant,
     User,
+    WidgetCall,
     now,
 )
 from ats.workspace_service import event
 
 FLOW = "mobile_callback"
+FLOWS = {FLOW, "browser_callback"}
 REASONS = {
     "operator_unavailable", "operator_busy", "operator_no_answer", "operator_not_confirmed",
     "customer_unavailable", "customer_busy", "customer_no_answer", "operator_cancelled",
@@ -50,7 +52,7 @@ def validate_mobile(config, operator, customer_phone=None):
 
 def authorize_customer(db, attempt, config):
     """Called under the tenant mutex immediately before the permission Setvar."""
-    if attempt.call_flow != FLOW or attempt.status not in ACTIVE or not attempt.manager_confirmed_at:
+    if attempt.call_flow not in FLOWS or attempt.status not in (ACTIVE - {"unknown"}) or not attempt.manager_confirmed_at:
         return False
     tenant = db.get(Tenant, attempt.tenant_id)
     item = db.get(CampaignItem, attempt.item_id)
@@ -65,6 +67,20 @@ def authorize_customer(db, attempt, config):
     from zoneinfo import ZoneInfo
 
     local = now().astimezone(ZoneInfo(tenant.timezone))
+    widget_id = attempt.route_snapshot.get("widget_call_id")
+    widget = db.get(WidgetCall, UUID(widget_id)) if widget_id else None
+    browser = attempt.call_flow == "browser_callback"
+    if widget and (widget.cancel_requested or widget.expires_at <= now()):
+        return False
+    if browser:
+        from ats.webrtc import check_device
+
+        try:
+            device = check_device(db, config, operator)
+        except (Problem, AttributeError):
+            return False
+        if not widget or not widget.media_ready_at or device.endpoint != attempt.route_snapshot.get("operator_endpoint"):
+            return False
     if (
         not config.live_calls_enabled or config.telephony_tenant_id != tenant.id
         or campaign.status != "running" or campaign.archived
@@ -75,8 +91,9 @@ def authorize_customer(db, attempt, config):
             BlacklistEntry.tenant_id == tenant.id, BlacklistEntry.phone == contact.phone,
         ))
         or not operator or not user or not user.active or user.role != "operator"
-        or operator.status != "busy" or operator.connection_method != "mobile"
-        or not leg or operator.mobile_phone != leg.phone
+        or operator.status != "busy"
+        or (not browser and not widget and operator.connection_method != "mobile")
+        or not leg or not leg.answered_at or (not browser and operator.mobile_phone != leg.phone)
         or not number or not number.enabled or not number.verified
         or not number.enabled_outgoing or number.quarantined or number.provider != "multicom_ami"
         or attempt.route_snapshot.get("endpoint") != config.ami_cli_endpoint_prefix + attempt.caller_number
@@ -93,10 +110,31 @@ def authorize_customer(db, attempt, config):
     if usage > number.daily_limit:
         return False
     try:
-        validate_mobile(config, operator, contact.phone)
+        if not browser:
+            validate_mobile(config, operator, contact.phone)
+        elif not config.destination_allowed(contact.phone):
+            return False
     except Problem:
         return False
     return True
+
+
+def queue_authorization(db, attempt):
+    key = f"callback-authorize:{attempt.id}"
+    if not db.scalar(select(Outbox.id).where(Outbox.tenant_id == attempt.tenant_id, Outbox.dedupe_key == key)):
+        db.add(Outbox(tenant_id=attempt.tenant_id, kind="control", dedupe_key=key,
+                      payload={"attempt_id": str(attempt.id), "command": "callback_authorize"}))
+
+
+def queue_hangup(db, attempt):
+    """A manager can cancel while the operator is still ringing, before Local ;1 is reported."""
+    channel = attempt.channel or db.scalar(select(CallLeg.channel).where(
+        CallLeg.attempt_id == attempt.id, CallLeg.role == "operator", CallLeg.channel != "",
+    ))
+    key = f"hangup:{attempt.id}"
+    if channel and not db.scalar(select(Outbox.id).where(Outbox.tenant_id == attempt.tenant_id, Outbox.dedupe_key == key)):
+        db.add(Outbox(tenant_id=attempt.tenant_id, kind="control", dedupe_key=key,
+                      payload={"attempt_id": str(attempt.id), "command": "hangup", "channel": channel}))
 
 
 def _uncertain(db, attempt, reason):
@@ -182,14 +220,14 @@ def handle_frame(factory, tenant_id, frame):
             found = db.scalar(select(CallLeg).join(Attempt, Attempt.id == CallLeg.attempt_id).where(
                 CallLeg.tenant_id == tenant_id, CallLeg.channel == frame.get("Channel", ""),
                 CallLeg.uniqueid == _identity(frame.get("Uniqueid")),
-                Attempt.call_flow == FLOW, Attempt.status.in_(ACTIVE),
+                Attempt.call_flow.in_(FLOWS), Attempt.status.in_(ACTIVE),
             ).limit(1))
             if not found:
                 return False
             ident = found.attempt_id
         db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
         attempt = db.scalar(select(Attempt).where(
-            Attempt.id == ident, Attempt.tenant_id == tenant_id, Attempt.call_flow == FLOW,
+            Attempt.id == ident, Attempt.tenant_id == tenant_id, Attempt.call_flow.in_(FLOWS),
         ).with_for_update())
         if not attempt:
             return custom
@@ -198,7 +236,9 @@ def handle_frame(factory, tenant_id, frame):
         legs = {leg.role: leg for leg in db.scalars(select(CallLeg).where(CallLeg.attempt_id == ident))}
         if len(legs) != 2:
             return True
-        prefix = f"Local/{legs['operator'].phone}@ats-beta-callback-operator-"
+        browser = attempt.call_flow == "browser_callback"
+        prefix = (f"Local/{attempt.route_snapshot.get('operator_id')}@ats-beta-callback-browser-"
+                  if browser else f"Local/{legs['operator'].phone}@ats-beta-callback-operator-")
         channel = str(frame.get("Channel") or "")
         control = channel.startswith(prefix) and len(channel) <= 160
         state, role = frame.get("State"), frame.get("Leg")
@@ -214,6 +254,8 @@ def handle_frame(factory, tenant_id, frame):
             leg = legs[role]
             if state in {"created", "answered"}:
                 endpoint = attempt.route_snapshot.get("endpoint", "")
+                if browser and role == "operator":
+                    endpoint = attempt.route_snapshot.get("operator_endpoint", "")
                 if not endpoint or not channel.startswith(f"PJSIP/{endpoint}-") or len(channel) > 160:
                     return True
                 uniqueid = _identity(frame.get("Uniqueid"))
@@ -233,15 +275,21 @@ def handle_frame(factory, tenant_id, frame):
                     leg.answered_at = now()
                 if changed:
                     event(db, attempt, f"callback_{role}_{state}")
-            elif state == "confirmed" and role == "operator" and control and channel.endswith(";1"):
+                widget_id = attempt.route_snapshot.get("widget_call_id")
+                widget = db.get(WidgetCall, UUID(widget_id)) if widget_id else None
+                if widget and widget.cancel_requested:
+                    queue_hangup(db, attempt)
+            elif state in {"ready", "confirmed"} and role == "operator" and control and channel.endswith(";1"):
                 attempt.channel = channel
                 if not attempt.manager_confirmed_at:
                     attempt.manager_confirmed_at = now()
-                    event(db, attempt, "callback_operator_confirmed")
-                    db.add(Outbox(
-                        tenant_id=tenant_id, kind="control", dedupe_key=f"callback-authorize:{ident}",
-                        payload={"attempt_id": str(ident), "command": "callback_authorize"},
-                    ))
+                    source = "browser" if browser else "network_answer" if state == "ready" else "dtmf"
+                    attempt.route_snapshot = {**attempt.route_snapshot, "ready_source": source}
+                    event(db, attempt, "callback_operator_ready" if state == "ready" else "callback_operator_confirmed", source)
+                    widget_id = attempt.route_snapshot.get("widget_call_id")
+                    widget = db.get(WidgetCall, UUID(widget_id)) if widget_id else None
+                    if not browser or (widget and widget.media_ready_at):
+                        queue_authorization(db, attempt)
             elif state in {"completed", "failed"} and (control or response):
                 if not attempt.channel and control:
                     attempt.channel = channel

@@ -58,10 +58,11 @@ def test_installer_restores_first_file_when_second_write_fails(tmp_path, monkeyp
     assert os.stat(env).st_mode & 0o777 == 0o600
 
 
-def test_installer_upgrades_exact_published_v1_and_keeps_echo_and_private_backup(tmp_path):
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_installer_upgrades_exact_published_version_and_keeps_echo_and_private_backup(tmp_path, version):
     dialplan, env = tmp_path / "extensions.conf", tmp_path / "ats.env"
     prefix = "[ats-beta]\n[ats-beta-answer]\n[ats-beta-echo]\nexten => s,1,Echo()\n\n"
-    v1 = (Path(__file__).parent / "fixtures/mobile-callback-v1.conf").read_text()
+    v1 = (Path(__file__).parent / f"fixtures/mobile-callback-{version}.conf").read_text()
     original = prefix + v1
     dialplan.write_text(original)
     env.write_text('ATS_CALLBACK_ENABLED="true"\nATS_TEST_DESTINATIONS="+79990000002,+79990000003"\n')

@@ -40,7 +40,7 @@ FIELDS = {
     "amocrm": {"subdomain", "access_token", "access_token_env", "refresh_token", "client_id",
                "client_secret", "webhook_token", "responsible_user_id", "auto_create_contacts",
                "auto_create_tasks", "unsorted_on_new", "timeout_sec", "operator_user_map",
-               "disabled", "task_due_hours", "sync_enabled", "sync_interval_minutes"},
+               "disabled", "task_due_hours", "sync_enabled", "sync_interval_minutes", "account_id"},
     "uis": {"api_url", "api_key", "number_pool_api"},
     "llm": {"enabled", "base_url", "api_key", "api_key_env", "model"},
     "bitrix24": {"webhook_url"},
@@ -152,14 +152,14 @@ def _validate(provider, field, value):
         if any(not re.fullmatch(r"[a-zA-Z0-9_.@-]{1,120}", k) or v <= 0 for k, v in result.items()):
             raise Problem(422, "invalid_operator_user_map")
         return result
-    if field in {"port", "timeout_sec", "responsible_user_id", "link_ttl_hours", "task_due_hours", "sync_interval_minutes"}:
+    if field in {"port", "timeout_sec", "responsible_user_id", "link_ttl_hours", "task_due_hours", "sync_interval_minutes", "account_id"}:
         try:
             number = int(value)
         except (TypeError, ValueError) as exc:
             raise Problem(422, "invalid_provider_number") from exc
         low, high = {"port": (1, 65535), "timeout_sec": (1, 120),
                      "responsible_user_id": (1, 2147483647), "link_ttl_hours": (0, 8760),
-                     "task_due_hours": (1, 168), "sync_interval_minutes": (5, 10080)}[field]
+                     "task_due_hours": (1, 168), "sync_interval_minutes": (5, 10080), "account_id": (1, 2147483647)}[field]
         if not low <= number <= high:
             raise Problem(422, "invalid_provider_number")
         return number

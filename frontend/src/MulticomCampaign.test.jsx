@@ -159,7 +159,7 @@ it('saves a personal manager phone and explains confirmation before calling the 
   fireEvent.click(await screen.findByRole('button', { name: 'Настроить подключение' }));
   fireEvent.change(screen.getByLabelText('Способ разговора'), { target: { value: 'mobile' } });
   fireEvent.change(screen.getByLabelText('Личный номер менеджера'), { target: { value: '+79990001000' } });
-  expect(screen.getByText(/После ответа нажмите 1/)).toBeTruthy();
+  expect(screen.getByText(/После ответа ATOS автоматически/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить подключение' }));
   await waitFor(() => expect(api).toHaveBeenCalledWith('/operators/manager-1/connection', {
     body: { connection_method: 'mobile', mobile_phone: '+79990001000' },

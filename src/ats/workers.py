@@ -32,6 +32,7 @@ from ats.models import (
     Template,
     Tenant,
     User,
+    WidgetCall,
     WorkspaceSettings,
     now,
 )
@@ -251,7 +252,7 @@ class Worker:
                         .with_for_update()
                     )
                     if call:
-                        if call.call_flow == "mobile_callback":
+                        if call.call_flow in {"mobile_callback", "browser_callback"}:
                             return
                         call.channel = frame["Channel"]
                 ingest(
@@ -341,6 +342,12 @@ class Worker:
             item = repo.get(CampaignItem, attempt.item_id)
             contact = repo.get(Contact, item.contact_id, lock=True)
             campaign = repo.get(Campaign, item.campaign_id)
+            widget_id = (campaign.schedule or {}).get("widget_call_id")
+            widget_call = repo.get(WidgetCall, UUID(widget_id)) if widget_id else None
+            if widget_call and (widget_call.cancel_requested or widget_call.expires_at <= now()):
+                finish_attempt(db, attempt, "failed", "cancelled_by_user" if widget_call.cancel_requested else "widget_queue_timeout")
+                complete_job(db, job_id, token)
+                return True
             local = now().astimezone(ZoneInfo(tenant.timezone))
             hour = local.hour
             if campaign.status != "running" or not (
@@ -377,6 +384,7 @@ class Worker:
             operator_ext, megafon_operator_user = "", ""
             callback_operator_phone, callback_endpoint = "", ""
             mobile_callback = attempt.call_flow == "mobile_callback"
+            browser_callback = attempt.call_flow == "browser_callback"
             if queue and queue.operator_id:
                 operator = repo.get(Operator, queue.operator_id)
                 operator_ext = operator.extension
@@ -397,8 +405,9 @@ class Worker:
                     mode=campaign.mode,
                     template_id=campaign.template_id,
                     operator_id=queue.operator_id if queue else None,
+                    connection_method=(campaign.schedule or {}).get("connection_method"),
                 )
-                if mobile_callback:
+                if mobile_callback or browser_callback:
                     from ats.callbacks import validate_mobile
 
                     leg = db.scalar(repo.query(CallLeg).where(
@@ -409,10 +418,18 @@ class Worker:
                     user = repo.get(User, operator.user_id)
                     if (
                         not user.active or user.role != "operator" or operator.status != "busy"
-                        or operator.connection_method != "mobile" or operator.mobile_phone != leg.phone
+                        or (mobile_callback and (not widget_call and operator.connection_method != "mobile"))
+                        or (mobile_callback and operator.mobile_phone != leg.phone)
                     ):
                         raise Problem(409, "callback_operator_changed")
-                    validate_mobile(runtime_config, operator, phone)
+                    if mobile_callback:
+                        validate_mobile(runtime_config, operator, phone)
+                    else:
+                        from ats.webrtc import check_device
+
+                        device = check_device(db, runtime_config, operator)
+                        if device.endpoint != attempt.route_snapshot.get("operator_endpoint"):
+                            raise Problem(409, "callback_operator_changed")
                     callback_operator_phone = leg.phone
                     callback_endpoint = attempt.route_snapshot.get("endpoint", "")
                     media_inputs = None
@@ -452,6 +469,11 @@ class Worker:
             if mobile_callback:
                 external_id = driver.originate_callback(
                     attempt_id, callback_operator_phone, phone, caller_number, callback_endpoint,
+                )
+            elif browser_callback:
+                external_id = driver.originate_browser(
+                    attempt_id, queue.operator_id, phone, caller_number, callback_endpoint,
+                    attempt.route_snapshot["operator_endpoint"], attempt.route_snapshot["operator_call_token"],
                 )
             else:
                 external_id = (
@@ -503,6 +525,13 @@ class Worker:
             with self.factory() as db:
                 call = TenantRepository(db, tenant_id).get(Attempt, UUID(payload["attempt_id"]))
                 channel, status = call.channel, call.status
+                if payload.get("command") == "hangup" and payload.get("channel"):
+                    candidate = payload["channel"]
+                    if candidate != call.channel and not db.scalar(select(CallLeg.id).where(
+                        CallLeg.tenant_id == tenant_id, CallLeg.attempt_id == call.id, CallLeg.channel == candidate,
+                    )):
+                        raise Rejected("call_channel_unavailable")
+                    channel = candidate
             if status not in {"completed", "failed"}:
                 from ats.connections import settings_for_tenant
 
@@ -578,7 +607,7 @@ class Worker:
                         else 0
                     )
                 crm_id, status, attempt_id = contact.crm_contact_id, attempt.status, attempt.id
-                contact_id, phone, name = contact.id, contact.phone, contact.name
+                contact_id, phone, name = contact.id, attempt.phone or contact.phone, contact.name
                 created_at = attempt.created_at
                 provider = db.scalar(repo.query(WorkspaceSettings))
                 options = provider.values if provider else {}
@@ -823,7 +852,7 @@ class Worker:
                     .limit(100)
                 ).all()
                 for row in rows:
-                    if row.call_flow == "mobile_callback" and row.status != "prepared":
+                    if row.call_flow in {"mobile_callback", "browser_callback"} and row.status != "prepared":
                         # A timed-out observer cannot prove either external leg has ended.
                         # Keep both channel reservations until evidence/manual reconciliation.
                         row.status, row.reason = "unknown", "callback_evidence_missing"

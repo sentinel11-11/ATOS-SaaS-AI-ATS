@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     ami_record_calls: bool = True
     callback_enabled: bool = False
     callback_max_seconds: int = Field(default=3600, ge=60, le=7200)
+    webrtc_enabled: bool = False
+    webrtc_wss_url: str = ""
+    webrtc_sip_domain: str = ""
+    webrtc_ice_servers: list[dict] = Field(default_factory=list)
+    webrtc_turn_urls: list[str] = Field(default_factory=list)
+    webrtc_turn_secret: SecretStr = SecretStr("")
+    widget_call_ttl_seconds: int = Field(default=180, ge=30, le=600)
     megafon_url: str = ""
     megafon_api_key: SecretStr = SecretStr("")
     megafon_crm_token: SecretStr = SecretStr("")
@@ -77,10 +84,10 @@ class Settings(BaseSettings):
             raise ValueError("Preprod live calls require explicit test destinations")
         if not self.ami_tls and self.ami_host not in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("Remote AMI requires TLS; use a local secured tunnel otherwise")
-        if self.crm_enabled and (
-            not self.amo_tenant_id or not self.amo_access_token.get_secret_value()
-        ):
-            raise ValueError("CRM requires an explicit tenant and access token binding")
+        # The access token can also live encrypted in the tenant's ConnectionProfile.
+        # Its availability is checked after that overlay, by the CRM adapter.
+        if self.crm_enabled and not self.amo_tenant_id:
+            raise ValueError("CRM requires an explicit tenant binding")
         return self
 
     @property

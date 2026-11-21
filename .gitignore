@@ -10,6 +10,8 @@ htmlcov/
 *.db*
 frontend/node_modules/
 frontend/dist/
+amo-widget/node_modules/
+tests/native/node_modules/
 artifacts/*
 !artifacts/.gitkeep
 
