@@ -19,4 +19,4 @@ cat > /etc/systemd/system/ats-beta-worker@.service.d/media.conf <<'UNIT'
 ReadWritePaths=/var/lib/ats-beta-media
 UNIT
 systemctl daemon-reload
-printf 'Media prerequisites installed. Review extensions-ats-beta.conf, enable ATS_MEDIA_ENABLED in beta env and restart only beta workers after reviewing the live test profile.\n'
+printf 'Media prerequisites installed. Review the loaded extensions-ats-beta.conf and live test profile, enable ATS_MEDIA_ENABLED in beta env, then restart the beta API and beta workers so every process loads the media setting.\n'
