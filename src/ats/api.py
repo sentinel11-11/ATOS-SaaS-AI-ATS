@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
 from ats import schemas
+from ats.amo_widget_v2_auth import router as amo_widget_v2_router
 from ats.api_amo import public_router as amo_public_router
 from ats.api_amo import router as amo_router
 from ats.api_recording_links import router as recording_links_router
@@ -55,7 +56,7 @@ app.add_middleware(
     allow_origin_regex=r"^https://[a-z0-9][a-z0-9-]{0,62}\.amocrm\.ru$",
     allow_credentials=False,
     allow_methods=["POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Auth-Token"],
 )
 
 # MegaFon has used several spellings for the same terminal history outcome
@@ -751,6 +752,7 @@ app.include_router(compat_settings_router)
 app.include_router(events_router)
 app.include_router(recording_links_router)
 app.include_router(amo_public_router)
+app.include_router(amo_widget_v2_router)
 app.include_router(amo_router)
 
 web = Path(__file__).resolve().parents[2] / "frontend" / "dist"
