@@ -13,6 +13,7 @@ const SECTIONS = [
 
 function errOf(res) {
   if (!res) return 'нет ответа';
+  if (typeof res.detail === 'string' && res.detail) return res.detail;
   if (res.error) return String(res.error);
   if (res.ok === false) return 'ошибка';
   return 'ошибка';

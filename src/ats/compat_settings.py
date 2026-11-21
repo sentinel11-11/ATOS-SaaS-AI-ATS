@@ -197,6 +197,8 @@ def job(job_id: UUID, p=Depends(admin), db=Depends(session)):
     queued = row.status in {"pending", "leased"}
     connected = row.status == "done"
     report = {"ok": connected, "failed_stage": row.last_error or None}
+    if connected and row.payload.get("provider") == "amocrm" and row.payload.get("account_id"):
+        report["account_id"] = row.payload["account_id"]
     if connected and row.payload.get("provider") == "ami":
         from ats.services import validate_route
 

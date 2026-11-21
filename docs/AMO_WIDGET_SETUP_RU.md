@@ -48,7 +48,7 @@ asterisk -rx 'dialplan show ats-beta-callback-customer'
 | Поле | Значение |
 |---|---|
 | Поддомен | `omkr` |
-| ID аккаунта | Числовой account ID omkr из настроек amoCRM или `/api/v4/account` |
+| ID аккаунта | Можно оставить пустым при первичном сохранении: успешная «Проверить связь» или серверный установщик получит его из `/api/v4/account` |
 | ID интеграции | UUID существующей приватной интеграции с этим виджетом |
 | Секретный ключ | `client_secret` этой же интеграции; только в защищённое поле ATOS |
 | Access token | Действующий токен API omkr; другое значение, не client secret |
@@ -63,7 +63,7 @@ cd /opt/ats-beta
 .venv/bin/python scripts/configure-amo-widget.py --subdomain omkr
 ```
 
-Скрипт проверяет encrypted profile/mapping, связывает CRM с tenant телефонии, включает CRM без копирования секретов в env. Access token хранится в encrypted profile или ранее настроенном env. Полный OAuth refresh flow не добавлен: истёкший access token обновляется в защищённых настройках.
+Скрипт проверяет encrypted profile/mapping и токен запросом `/api/v4/account`, сохраняет полученный числовой ID, связывает CRM с tenant телефонии и включает CRM без копирования секретов в env. После изменения env перезапустить beta API/worker-процессы, затем обновить страницу ATOS. Ранее явно указанный другой ID не заменяется автоматически: очистить ошибочное поле и повторить проверку. Access token хранится в encrypted profile или ранее настроенном env. Полный OAuth refresh flow не добавлен: истёкший access token обновляется в защищённых настройках.
 
 Контакт синхронизирован в ATOS с тем же `crm_contact_id`/телефоном, разрешён для исходящих и не заблокирован. Виджет не выдаёт автоматическое глобальное согласие. В preprod оба телефонных участника входят в `ATS_TEST_DESTINATIONS`. В AMI нужны PJSIP, `mcm-cli-`, назначение `8XXXXXXXXXX`, CLI 10 цифр, обработка ответа «Сценарий кампании», не Echo.
 

@@ -152,16 +152,21 @@ def _validate(provider, field, value):
         if any(not re.fullmatch(r"[a-zA-Z0-9_.@-]{1,120}", k) or v <= 0 for k, v in result.items()):
             raise Problem(422, "invalid_operator_user_map")
         return result
-    if field in {"port", "timeout_sec", "responsible_user_id", "link_ttl_hours", "task_due_hours", "sync_interval_minutes", "account_id"}:
+    amo_account = provider == "amocrm" and field == "account_id"
+    if amo_account and (value is None or isinstance(value, str) and not value.strip()):
+        return ""  # Optional until the account endpoint verifies it; it never enables widget auth.
+    if amo_account and type(value) not in {int, str}:
+        raise Problem(422, "invalid_provider_number", "ID аккаунта amoCRM должен быть положительным целым числом.")
+    if amo_account or field in {"port", "timeout_sec", "responsible_user_id", "link_ttl_hours", "task_due_hours", "sync_interval_minutes"}:
         try:
             number = int(value)
         except (TypeError, ValueError) as exc:
-            raise Problem(422, "invalid_provider_number") from exc
+            raise Problem(422, "invalid_provider_number", f"Некорректное числовое поле: {provider}.{field}.") from exc
         low, high = {"port": (1, 65535), "timeout_sec": (1, 120),
                      "responsible_user_id": (1, 2147483647), "link_ttl_hours": (0, 8760),
                      "task_due_hours": (1, 168), "sync_interval_minutes": (5, 10080), "account_id": (1, 2147483647)}[field]
         if not low <= number <= high:
-            raise Problem(422, "invalid_provider_number")
+            raise Problem(422, "invalid_provider_number", f"Некорректное числовое поле: {provider}.{field}.")
         return number
     if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 for c in value):
         raise Problem(422, "invalid_provider_value")
@@ -227,7 +232,7 @@ def _defaults(config, tenant_id):
         "amocrm": {"subdomain": urlsplit(config.amo_url).hostname.split(".")[0] if crm_bound and urlsplit(config.amo_url).hostname else "",
                    "access_token": MASK if crm_bound and config.amo_access_token.get_secret_value() else "",
                    "webhook_token": MASK if crm_bound and config.amo_webhook_token.get_secret_value() else "",
-                   "access_token_env": "ATS_AMOCRM_TOKEN", "responsible_user_id": 1,
+                   "access_token_env": "ATS_AMOCRM_TOKEN", "responsible_user_id": 1, "account_id": "",
                    "auto_create_contacts": False, "auto_create_tasks": False,
                    "sync_enabled": False, "sync_interval_minutes": 15,
                    "unsorted_on_new": False, "timeout_sec": 15, "operator_user_map": {}},

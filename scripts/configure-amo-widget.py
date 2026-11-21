@@ -27,22 +27,28 @@ def environment(original, tenant_id, subdomain):
 def check_profile(args):
     from sqlalchemy import select
 
+    from ats.adapters import AmoCRM, Rejected, Retryable
+    from ats.amo_account import profile_version, store_account
     from ats.connections import decrypt_profile, settings_for_tenant
     from ats.db import session_factory
+    from ats.domain import Problem
     from ats.models import ConnectionProfile, Operator, User
 
     load_dotenv(args.env_file, override=True, interpolate=False)
     with session_factory()() as db:
         tenant_id = UUID(args.check_profile)
+        version = profile_version(db, tenant_id)
         row = db.scalar(select(ConnectionProfile).where(ConnectionProfile.tenant_id == tenant_id,
                                                         ConnectionProfile.provider == "amocrm"))
         public = row.public_values if row else {}
         secret = decrypt_profile(row) if row else {}
         config = settings_for_tenant(db, tenant_id)
-        if (not public.get("account_id") or not public.get("client_id") or not secret.get("client_secret")
+        if version != profile_version(db, tenant_id):
+            raise ValueError("amoCRM settings changed; run the setup again")
+        if (not public.get("client_id") or not secret.get("client_secret")
             or not config.amo_access_token.get_secret_value() or public.get("subdomain") != args.subdomain
             or public.get("disabled")):
-            raise ValueError("Fill account ID, integration ID/secret, access token and subdomain in ATOS Settings first")
+            raise ValueError("Fill integration ID/secret, access token and subdomain in ATOS Settings first")
         UUID(public["client_id"])
         mapping = public.get("operator_user_map", {})
         if not mapping or len(set(mapping.values())) != len(mapping):
@@ -52,6 +58,16 @@ def check_profile(args):
         )))
         if not set(mapping).issubset(extensions):
             raise ValueError("The mapping refers to missing or inactive ATOS operator extensions")
+        crm = AmoCRM(config)
+        try:
+            account = crm.read("/api/v4/account")
+            account_id = store_account(db, tenant_id, account, args.subdomain, version)
+            db.commit()
+        except (Problem, Rejected, Retryable) as exc:
+            raise ValueError(f"amoCRM account verification failed: {exc.code}") from exc
+        finally:
+            crm.close()
+        print(f"Verified amoCRM account ID: {account_id}. Saved to the ATOS profile.")
         print(f"Encrypted amoCRM profile verified: {len(mapping)} mapped operators. No secrets printed.")
 
 
@@ -84,7 +100,7 @@ def main():
 
         write = runpy.run_path(str(Path(__file__).with_name("install-widget-webrtc.py")))["write_private"]
         write(args.env_file, updated, meta.st_uid, meta.st_gid, stat.S_IMODE(meta.st_mode))
-        print("Widget CRM binding saved. Restart beta API/CRM workers to apply. No calls placed.")
+        print("Widget CRM binding saved. Restart beta API, inbox and CRM workers to apply. No calls placed.")
     except ValueError as exc:
         # All ValueErrors created here describe public identifiers/configuration fields.
         parser.exit(1, f"Widget configuration failed: {exc}\n")

@@ -205,6 +205,9 @@ export default function Settings({ addToast, refreshKey }) {
     const res = await finishJob(await api(endpoint, { method: 'POST', body: currentProviderCfg.amocrm || {} }));
     setActionLoading(false);
     if (res && (res.ok || res.connected || res.status === 'ok')) {
+      if (res.report?.account_id) {
+        updateProvider('amocrm', 'account_id', res.report.account_id);
+      }
       addToast(`Успешно: ${name}`, 'ok');
       // После users-sync обновляем справочник для редактора соответствий
       if (endpoint.includes('users-sync')) {
@@ -1301,7 +1304,7 @@ export default function Settings({ addToast, refreshKey }) {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label className="text-muted">ID аккаунта amoCRM
-                    <input type="number" min="1" className="block w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white mt-1" value={amocrm.account_id || ''} onChange={(e) => updateProvider('amocrm', 'account_id', Number(e.target.value) || 1)} />
+                    <input type="number" min="1" className="block w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white mt-1" value={amocrm.account_id ?? ''} onChange={(e) => updateProvider('amocrm', 'account_id', e.target.value)} placeholder="Определится при проверке связи" />
                   </label>
                   <label className="text-muted">ID приватной интеграции виджета (client_id)
                     <input className="block w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white mt-1" value={amocrm.client_id || ''} onChange={(e) => updateProvider('amocrm', 'client_id', e.target.value)} placeholder="UUID интеграции в amoCRM" />

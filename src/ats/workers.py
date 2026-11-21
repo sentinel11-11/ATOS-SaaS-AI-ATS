@@ -893,7 +893,13 @@ class Worker:
             from ats.connections import settings_for_tenant
 
             with self.factory() as config_db:
+                if provider == "amocrm":
+                    from ats.amo_account import profile_version
+
+                    amo_version = profile_version(config_db, tenant_id)
                 config = settings_for_tenant(config_db, tenant_id)
+                if provider == "amocrm" and profile_version(config_db, tenant_id) != amo_version:
+                    raise Problem(409, "crm_settings_changed")
             if provider == "multicom":
                 raise Rejected("multicom_use_ami_check")
             if provider == "ami":
@@ -931,6 +937,19 @@ class Worker:
                     response = client.get(url, headers=headers)
                 if response.status_code != 200:
                     raise Rejected(f"provider_http_{response.status_code}")
+                if provider == "amocrm":
+                    from urllib.parse import urlsplit
+
+                    from ats.amo_account import store_account
+
+                    try:
+                        account = response.json()
+                    except ValueError as exc:
+                        raise Rejected("crm_account_response_invalid") from exc
+                    subdomain = urlsplit(config.amo_url).hostname.split(".")[0]
+                    with self.factory.begin() as db:
+                        account_id = store_account(db, tenant_id, account, subdomain, amo_version)
+                    payload = {**payload, "account_id": account_id}
         except Problem as exc:
             status, code = "dead", exc.code
         except Retryable as exc:
@@ -941,6 +960,10 @@ class Worker:
         except (Rejected, DeliveryUnknown, httpx.HTTPError) as exc:
             status, code = "dead", getattr(exc, "code", "provider_unreachable")
         with self.factory.begin() as db:
+            if status == "done" and provider == "amocrm" and payload.get("account_id"):
+                row = TenantRepository(db, tenant_id).get(Outbox, job_id, lock=True)
+                if row.lease_token == token and row.status == "leased":
+                    row.payload = payload
             complete_job(
                 db,
                 job_id,

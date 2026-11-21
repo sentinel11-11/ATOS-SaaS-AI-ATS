@@ -225,3 +225,11 @@ def test_hangup_while_manager_ringing_targets_recorded_leg(factory, widget):
 def test_widget_rejects_wrong_origin(widget, origin):
     response = widget["client"].get("/api/v1/amo/widget/v2/me", headers={**widget["headers"], "Origin": origin})
     assert response.status_code == 403
+
+
+def test_unset_account_id_does_not_authorize_widget(factory, widget):
+    with factory.begin() as db:
+        save_provider_config(db, widget["tenant_id"], {"amocrm": {"account_id": ""}})
+    response = widget["client"].get("/api/v1/amo/widget/v2/me", headers=widget["headers"])
+    assert response.status_code == 503
+    assert response.json()["error"] == "widget_auth_not_configured"
