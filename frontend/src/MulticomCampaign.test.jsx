@@ -5,6 +5,7 @@ import Campaigns from './pages/Campaigns';
 import NumberPool from './pages/NumberPool';
 import Settings from './pages/Settings';
 import TimelineModal from './components/TimelineModal';
+import Operators from './pages/Operators';
 import { api } from './api';
 
 vi.mock('./api', () => ({ api: vi.fn(), waitForJob: vi.fn(async (result) => result) }));
@@ -23,7 +24,7 @@ it('creates a Multicom message campaign with one channel and zero retries', asyn
   expect(screen.getByLabelText('Тип сценария').value).toBe('message');
   expect(screen.getByLabelText('Шаблон / Голосовое сообщение').value).toBe('');
   expect(screen.getByLabelText('Повторных попыток').value).toBe('0');
-  expect(screen.getByLabelText('Одновременных каналов').value).toBe('1');
+  expect(screen.getByLabelText('Одновременных звонков').value).toBe('1');
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить кампанию' }));
   await waitFor(() => expect(api).toHaveBeenCalledWith('/campaigns/save', {
     body: expect.objectContaining({
@@ -147,4 +148,49 @@ it('saves the bounded Echo answer context through the settings form', async () =
   await waitFor(() => expect(api).toHaveBeenCalledWith('/settings/raw', {
     body: { provider_config: { ami: { answer_context: 'ats-beta-echo' } } },
   }));
+});
+
+it('saves a personal manager phone and explains confirmation before calling the customer', async () => {
+  api.mockImplementation(async (path) => path === '/acd' ? {
+    operators: [{ id: 'manager-1', login: 'manager', name: 'Manager', status: 'free', connection_method: 'sip' }],
+    acd: [],
+  } : { ok: true });
+  render(<Operators addToast={vi.fn()} isAdmin />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Настроить подключение' }));
+  fireEvent.change(screen.getByLabelText('Способ разговора'), { target: { value: 'mobile' } });
+  fireEvent.change(screen.getByLabelText('Личный номер менеджера'), { target: { value: '+79990001000' } });
+  expect(screen.getByText(/После ответа нажмите 1/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить подключение' }));
+  await waitFor(() => expect(api).toHaveBeenCalledWith('/operators/manager-1/connection', {
+    body: { connection_method: 'mobile', mobile_phone: '+79990001000' },
+  }));
+});
+
+it('pins an operator campaign to the selected mobile manager', async () => {
+  api.mockImplementation(async (path) => path === '/operators' ? {
+    operators: [{ id: 'manager-1', name: 'Manager', connection_method: 'mobile', ext: '704' }],
+  } : { campaigns: [], templates: [], contacts: [], databases: [], ok: true });
+  render(<Campaigns addToast={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Новая кампания' }));
+  fireEvent.change(screen.getByLabelText('Тип сценария'), { target: { value: 'operator' } });
+  fireEvent.change(screen.getByRole('combobox', { name: /Оператор для звонка/ }), { target: { value: 'manager-1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить кампанию' }));
+  await waitFor(() => expect(api).toHaveBeenCalledWith('/campaigns/save', {
+    body: expect.objectContaining({ operator_id: 'manager-1', flow: 'operator', max_channels: 1 }),
+  }));
+});
+
+it('shows manager and customer legs separately in the timeline', async () => {
+  api.mockResolvedValue({
+    call: { id: 'callback', status: 'completed', duration_sec: 20 }, events: [],
+    legs: [
+      { role: 'operator', phone: '+79990001000', status: 'ended', answered_at: '2026-11-21T10:00:00' },
+      { role: 'customer', phone: '+79990000101', status: 'ended', answered_at: '2026-11-21T10:00:05' },
+    ],
+  });
+  render(<TimelineModal callId="callback" onClose={vi.fn()} />);
+  expect(await screen.findByText('Плечо менеджера')).toBeTruthy();
+  expect(screen.getByText('Плечо клиента')).toBeTruthy();
+  expect(screen.getByText('+79990001000')).toBeTruthy();
+  expect(screen.getByText('+79990000101')).toBeTruthy();
 });

@@ -187,7 +187,7 @@ def retry_failed(db, p, campaign):
     return len(items)
 
 
-def select_caller(db, tenant, route, config=None, operator=None):
+def select_caller(db, tenant, route, config=None, operator=None, *, units=1):
     """Reserve under the tenant lock. Multicom uses daily weighted-least-used selection."""
     if route not in {"multicom_ami", "megafon_vats"}:
         return ""
@@ -217,7 +217,7 @@ def select_caller(db, tenant, route, config=None, operator=None):
         .replace(hour=0, minute=0, second=0, microsecond=0)
     )
     usage = dict(db.execute(
-        select(Attempt.caller_number, func.count(Attempt.id))
+        select(Attempt.caller_number, func.sum(Attempt.channel_units))
         .where(
             Attempt.tenant_id == tenant.id,
             Attempt.created_at >= day_start,
@@ -238,7 +238,7 @@ def select_caller(db, tenant, route, config=None, operator=None):
             and number.last_used_at + timedelta(seconds=number.cooldown_seconds) > timestamp
         ):
             continue
-        if usage.get(number.phone, 0) < number.daily_limit:
+        if usage.get(number.phone, 0) + units <= number.daily_limit:
             eligible.append(number)
     if not eligible:
         raise Problem(409, "caller_pool_exhausted")

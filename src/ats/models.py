@@ -173,6 +173,13 @@ class Attempt(Owned, Base):
     result: Mapped[str] = mapped_column(String(120), default="", server_default="")
     agent_result: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     hidden_from_journal: Mapped[bool] = mapped_column(default=False, server_default="false")
+    call_flow: Mapped[str] = mapped_column(String(24), default="standard", server_default="standard")
+    channel_units: Mapped[int] = mapped_column(default=1, server_default="1")
+    manager_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    bridged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    bridge_ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_terminal: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    route_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     __table_args__ = (
         UniqueConstraint("tenant_id", "id"),
         UniqueConstraint("item_id", "ordinal", name="uq_attempt_item_ordinal"),
@@ -183,6 +190,7 @@ class Attempt(Owned, Base):
         CheckConstraint(
             "status IN ('prepared','dispatching','accepted','answered','completed','failed','unknown')"
         ),
+        CheckConstraint("channel_units BETWEEN 1 AND 2", name="ck_attempt_channel_units"),
         Index("ix_attempts_active", "tenant_id", "status", "created_at"),
         Index("ix_attempts_caller_day", "tenant_id", "caller_number", "created_at"),
         Index("ix_attempts_analytics_period", "tenant_id", "created_at", "route"),
@@ -306,11 +314,40 @@ class Operator(Owned, Base):
     extension: Mapped[str] = mapped_column(String(20), default="")
     megafon_user: Mapped[str] = mapped_column(String(120), default="", server_default="")
     status: Mapped[str] = mapped_column(String(20), default="break")
+    connection_method: Mapped[str] = mapped_column(String(16), default="sip", server_default="sip")
+    mobile_phone: Mapped[str] = mapped_column(String(16), default="", server_default="")
     __table_args__ = (
         UniqueConstraint("tenant_id", "id"),
         UniqueConstraint("user_id"),
         ForeignKeyConstraint(["tenant_id", "user_id"], ["users.tenant_id", "users.id"]),
         CheckConstraint("status IN ('free','busy','break','offline')"),
+        CheckConstraint("connection_method IN ('sip','mobile')", name="ck_operator_connection_method"),
+    )
+
+
+class CallLeg(Owned, Base):
+    __tablename__ = "call_legs"
+    attempt_id: Mapped[UUID]
+    role: Mapped[str] = mapped_column(String(16))
+    phone: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(20), default="prepared", server_default="prepared")
+    channel: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    uniqueid: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    linkedid: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    bridge_id: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    entered_bridge_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    left_bridge_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dial_status: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    hangup_cause: Mapped[int | None]
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "attempt_id"], ["call_attempts.tenant_id", "call_attempts.id"]
+        ),
+        UniqueConstraint("attempt_id", "role"),
+        CheckConstraint("role IN ('operator','customer')", name="ck_call_leg_role"),
+        Index("ix_call_legs_tenant_channel", "tenant_id", "channel"),
     )
 
 

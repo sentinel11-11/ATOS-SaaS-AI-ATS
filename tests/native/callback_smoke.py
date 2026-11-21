@@ -1,0 +1,144 @@
+"""Opt-in native test: PYTHONPATH=tests pytest tests/native/callback_smoke.py."""
+
+import json
+import shutil
+import socket
+import subprocess
+import time
+import wave
+from pathlib import Path
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import select
+from test_mobile_callback import start
+
+from ats.config import settings
+from ats.models import Attempt, CallLeg
+
+IMAGE = "andrius/asterisk:20@sha256:05391d46660b1dcadd193e265758fb06a785ad484b7add2a0cb0ba5e50a76929"
+
+
+@pytest.fixture
+def native_asterisk(tmp_path, provider_config, monkeypatch, request):
+    root = Path(__file__).parents[2]
+    folder = tmp_path / "native"
+    folder.mkdir()
+    (folder / "asterisk.conf").write_text(
+        "[directories]\nastetcdir=/input\nastmoddir=/usr/lib/asterisk/modules\n"
+        "astvarlibdir=/var/lib/asterisk\nastdatadir=/var/lib/asterisk\nastdbdir=/tmp\nastlogdir=/tmp\n"
+        "astrundir=/tmp\nastspooldir=/var/spool/asterisk\n[options]\nverbose=5\n"
+    )
+    (folder / "modules.conf").write_text("[modules]\nautoload=yes\n")
+    (folder / "logger.conf").write_text("[logfiles]\nconsole=notice,warning,error,verbose(5)\n")
+    (folder / "manager.conf").write_text(
+        "[general]\nenabled=yes\nbindaddr=0.0.0.0\nport=5038\n"
+        "[ats-beta]\nsecret=fixture-secret\nread=call,user\nwrite=originate,call,system\n"
+    )
+    (folder / "pjsip.conf").write_text(
+        "[transport-udp]\ntype=transport\nprotocol=udp\nbind=127.0.0.1:5060\n"
+        "[fixture-aor]\ntype=aor\ncontact=sip:127.0.0.1:5070\n"
+        "[mcm-cli-9990000101]\ntype=endpoint\ntransport=transport-udp\naors=fixture-aor\n"
+        "disallow=all\nallow=alaw,ulaw\nfrom_user=9990000101\nfrom_domain=127.0.0.1\n"
+        "direct_media=no\ndtmf_mode=rfc4733\n"
+    )
+    shutil.copy(root / "deploy/asterisk/extensions-ats-beta-callback.conf", folder / "extensions.conf")
+    shutil.copy(Path(__file__).with_name("sip_callback_peer.py"), folder / "sip_peer.py")
+    sounds = folder / "sounds/ats-beta"
+    sounds.mkdir(parents=True)
+    with wave.open(str(sounds / "callback-ready.wav"), "wb") as output:
+        output.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+        output.writeframes(b"\0\0" * 1600)
+    name = "atos-native-callback-" + uuid4().hex[:10]
+    subprocess.run([
+        "docker", "run", "-d", "--name", name,
+        "-p", "127.0.0.1::5038", "--mount", f"type=bind,src={folder},dst=/input,readonly",
+        "--entrypoint", "sh", IMAGE, "-c",
+        "mkdir -p /var/spool/asterisk/monitor/ats-beta /var/lib/asterisk/sounds/ats-beta; "
+        "cp /input/sounds/ats-beta/* /var/lib/asterisk/sounds/ats-beta/; "
+        "exec asterisk -f -n -C /input/asterisk.conf",
+    ], check=True, capture_output=True)
+    try:
+        port = int(subprocess.check_output(["docker", "port", name, "5038/tcp"], text=True).strip().rsplit(":", 1)[1])
+        deadline = time.monotonic() + 20
+        while True:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2) as stream:
+                    stream.settimeout(0.2)
+                    if b"Asterisk" in stream.recv(100):
+                        break
+            except (OSError, TimeoutError):
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Native Asterisk AMI did not start")
+            running = subprocess.check_output(["docker", "inspect", "-f", "{{.State.Running}}", name], text=True)
+            if running.strip() != "true":
+                raise RuntimeError("Native Asterisk exited during startup")
+            time.sleep(0.1)
+        subprocess.run([
+            "docker", "exec", "-d", "-e", f"CALLBACK_PEER_MODE={getattr(request, 'param', 'bridge')}",
+            name, "python3", "/input/sip_peer.py",
+        ], check=True)
+        time.sleep(0.3)
+        monkeypatch.setenv("ATS_AMI_PORT", str(port))
+        settings.cache_clear()
+        yield name
+    finally:
+        logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True)
+        suffix = getattr(request, "param", "bridge")
+        Path(f".runtime/callback-native-{suffix}.log").write_text(logs.stdout + logs.stderr)
+        state = subprocess.run(["docker", "exec", name, "cat", "/tmp/peer-state.json"], capture_output=True, text=True)
+        Path(f".runtime/callback-native-{suffix}-peer.json").write_text(state.stdout)
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
+def test_real_asterisk_callback_sip_dtmf_bridge_and_bidirectional_rtp(factory, callback, native_asterisk):
+    worker, attempt_id = start(factory, callback)
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        worker.call_control()
+        worker.inbox()
+        with factory() as db:
+            call = db.get(Attempt, UUID(attempt_id))
+            if call.status in {"completed", "failed"}:
+                break
+        time.sleep(0.05)
+    with factory() as db:
+        call = db.get(Attempt, UUID(attempt_id))
+        assert call.status == "completed", (call.status, call.reason, call.pending_terminal)
+        assert call.manager_confirmed_at and call.bridged_at and call.bridge_ended_at
+        legs = db.scalars(select(CallLeg).where(CallLeg.attempt_id == call.id)).all()
+        assert all(leg.ended_at and leg.entered_bridge_at for leg in legs)
+    state = json.loads(subprocess.check_output([
+        "docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json",
+    ], text=True))
+    assert [row["role"] for row in state["invites"]] == ["operator", "customer"]
+    assert all(row["from_phone"] == "9990000101" for row in state["invites"])
+    assert state["media_received"] == {"operator": True, "customer": True}
+
+
+@pytest.mark.parametrize("native_asterisk,reason,roles", [
+    ("operator_busy", "operator_busy", ["operator"]),
+    ("customer_busy", "customer_busy", ["operator", "customer"]),
+    ("no_confirmation", "operator_not_confirmed", ["operator"]),
+], indirect=["native_asterisk"])
+def test_real_asterisk_failures_do_not_become_success(factory, callback, native_asterisk, reason, roles):
+    worker, attempt_id = start(factory, callback)
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        worker.call_control()
+        worker.inbox()
+        with factory() as db:
+            call = db.get(Attempt, UUID(attempt_id))
+            if call.status in {"completed", "failed"}:
+                break
+        time.sleep(0.05)
+    with factory() as db:
+        call = db.get(Attempt, UUID(attempt_id))
+        assert (call.status, call.reason) == ("failed", reason)
+        assert not call.bridged_at and not call.answered_at
+        assert all(leg.ended_at for leg in db.scalars(select(CallLeg)))
+    state = json.loads(subprocess.check_output([
+        "docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json",
+    ], text=True))
+    assert [row["role"] for row in state["invites"]] == roles

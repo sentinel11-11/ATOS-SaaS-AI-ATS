@@ -594,6 +594,37 @@ class AMI:
         )
         return str(attempt_id)
 
+    def originate_callback(self, attempt_id, operator_phone, customer_phone, caller_id, endpoint):
+        from ats.schemas import phone_e164
+
+        operator_phone, customer_phone = phone_e164(operator_phone), phone_e164(customer_phone)
+        config = self.config
+        if (
+            not re.fullmatch(r"\+7[0-9]{10}", operator_phone)
+            or not re.fullmatch(r"\+7[0-9]{10}", customer_phone)
+            or operator_phone == customer_phone
+            or not re.fullmatch(r"[0-9]{10}", caller_id)
+            or config.ami_cli_endpoint_prefix != "mcm-cli-" or config.ami_tech != "PJSIP"
+            or endpoint != f"mcm-cli-{caller_id}"
+        ):
+            raise Rejected("callback_route_invalid")
+        self.connect()
+        try:
+            self.action("PJSIPShowEndpoint", [("Endpoint", endpoint)])
+        except Rejected as exc:
+            raise Rejected("ami_endpoint_unavailable") from exc
+        self.action("Originate", [
+            ("Channel", f"Local/{operator_phone}@ats-beta-callback-operator/n"),
+            ("Context", "ats-beta-callback-customer"), ("Exten", "s"), ("Priority", "1"),
+            ("Timeout", "30000"), ("Async", "true"), ("CallerID", caller_id),
+            ("Variable", f"__ATS_ATTEMPT_ID={attempt_id}"),
+            ("Variable", f"__ATS_CUSTOMER_PHONE={customer_phone}"),
+            ("Variable", f"__ATS_TRUNK={endpoint}"),
+            ("Variable", f"__ATS_CALLBACK_MAX_SECONDS={config.callback_max_seconds}"),
+            ("Variable", f"__ATS_RECORD_CALLBACK={int(config.ami_record_calls)}"),
+        ], action_id=str(attempt_id))
+        return str(attempt_id)
+
     def close(self):
         with self.lock:
             raw, self.sock = self.sock, None

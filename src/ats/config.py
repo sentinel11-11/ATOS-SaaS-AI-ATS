@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     ami_dial_prefix: str = Field(default="", pattern=r"^[0-9]{0,10}$")
     ami_play_message: bool = True
     ami_record_calls: bool = True
+    callback_enabled: bool = False
+    callback_max_seconds: int = Field(default=3600, ge=60, le=7200)
     megafon_url: str = ""
     megafon_api_key: SecretStr = SecretStr("")
     megafon_crm_token: SecretStr = SecretStr("")

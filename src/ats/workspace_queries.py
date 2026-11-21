@@ -65,7 +65,7 @@ def call_dict(attempt, contact, campaign):
         "contact_id": contact.id,
         "campaign_name": campaign.name,
         "campaign_id": campaign.id,
-        "duration_seconds": max(0, int((attempt.ended_at - attempt.answered_at).total_seconds()))
+        "duration_seconds": max(0, int(((attempt.bridge_ended_at or attempt.ended_at) - attempt.answered_at).total_seconds()))
         if attempt.ended_at and attempt.answered_at
         else 0,
     }

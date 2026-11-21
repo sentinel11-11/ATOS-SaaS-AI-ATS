@@ -88,6 +88,21 @@ class QuarantineCommand(EntityCommand):
     on: bool = True
 
 
+class OperatorConnection(LegacyInput):
+    connection_method: Literal["sip", "mobile"]
+    mobile_phone: str = Field(default="", max_length=32)
+
+    @field_validator("mobile_phone")
+    @classmethod
+    def mobile_number(cls, value):
+        if not value.strip():
+            return ""
+        result = phone_from_import(value)
+        if not result.startswith("+7") or len(result) != 12:
+            raise ValueError("Use a Russian mobile number in +7 format")
+        return result
+
+
 class BlacklistCommand(LegacyInput):
     phone: str = Field(min_length=1, max_length=32)
     reason: str = Field(default="Отказ клиента / Не звонить", min_length=1, max_length=500)
@@ -218,9 +233,9 @@ def numbers(
         for phone, daily, total, answered, since_reset in db.execute(
             select(
                 CallerNumber.phone,
-                func.count(Attempt.id).filter(
+                func.coalesce(func.sum(Attempt.channel_units).filter(
                     Attempt.created_at >= day_start,
-                ),
+                ), 0),
                 func.count(Attempt.id),
                 func.count(Attempt.id).filter(Attempt.answered_at.is_not(None)),
                 func.count(Attempt.id).filter(
@@ -344,14 +359,16 @@ def blacklist_delete(data: EntityCommand, p=Depends(admin), db=Depends(session))
     return {"ok": True}
 
 
-def operator_projection(op, user):
+def operator_projection(op, user, p=None):
     return {"id": op.id, "user_id": op.user_id, "name": op.name, "ext": op.extension,
-            "status": op.status, "login": user.login, "megafon_user": op.megafon_user}
+            "status": op.status, "login": user.login, "megafon_user": op.megafon_user,
+            "connection_method": op.connection_method,
+            "mobile_phone": op.mobile_phone if p and (p.role == "admin" or p.user_id == user.id) else ""}
 
 
 def acd_state(p, db):
     repo = TenantRepository(db, p.tenant_id)
-    operators = [operator_projection(op, user) for op, user in db.execute(
+    operators = [operator_projection(op, user, p) for op, user in db.execute(
         select(Operator, User).join(
             User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id)
         ).where(Operator.tenant_id == p.tenant_id, User.active, User.role == "operator")
@@ -400,6 +417,28 @@ def admin_operator_status(operator_id: UUID, data: OperatorStatus, p=Depends(adm
     audit(db, p, "operator.status_changed_by_admin", row.id)
     db.commit()
     return {"ok": True, "status": row.status}
+
+
+@router.post("/operators/{operator_id}/connection")
+def operator_connection(
+    operator_id: UUID, data: OperatorConnection, p=Depends(admin), db=Depends(session)
+):
+    db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
+    repo = TenantRepository(db, p.tenant_id)
+    row = repo.get(Operator, operator_id, lock=True)
+    if row.status == "busy" or db.scalar(
+        select(QueueEntry.id).where(
+            QueueEntry.tenant_id == p.tenant_id, QueueEntry.operator_id == row.id,
+            QueueEntry.status == "accepted",
+        ).limit(1)
+    ):
+        raise Problem(409, "finish_operator_calls_first")
+    if data.connection_method == "mobile" and not data.mobile_phone:
+        raise Problem(422, "operator_mobile_phone_required")
+    row.connection_method, row.mobile_phone = data.connection_method, data.mobile_phone
+    audit(db, p, "operator.connection_updated", row.id)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/acd/accept")

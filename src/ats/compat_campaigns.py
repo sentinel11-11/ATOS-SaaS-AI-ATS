@@ -17,8 +17,10 @@ from ats.models import (
     Contact,
     ContactList,
     ListMember,
+    Operator,
     Template,
     Tenant,
+    User,
     now,
 )
 from ats.repositories import TenantRepository
@@ -46,6 +48,7 @@ class CampaignSave(BaseModel):
     template_id: UUID | int | None = None
     flow: str = "operator"
     route: str | None = None
+    operator_id: UUID | None = None
     schedule: dict = Field(default_factory=dict)
     max_channels: int = Field(default=0, ge=0, le=100)
     retry_max: int = Field(default=-1, ge=-1, le=5)
@@ -202,6 +205,12 @@ def campaign_save(data: CampaignSave, p=Depends(admin), db=Depends(session)):
         template = db.scalar(repo.query(Template).where(~Template.archived).order_by(Template.created_at).limit(1))
         template_id = template.id if template else None
     schedule, start, end = _schedule(data.schedule, defaults)
+    if data.operator_id:
+        operator = repo.get(Operator, data.operator_id)
+        user = repo.get(User, operator.user_id)
+        if not user.active or user.role != "operator":
+            raise Problem(409, "operator_unavailable")
+        schedule["operator_id"] = str(data.operator_id)
     provider = defaults.get("provider") or "multicom_ami"
     route = data.route or (row.route if row else {"ami": "multicom_ami", "multicom": "multicom_ami", "multicom_ami": "multicom_ami", "megafon_vats": "megafon_vats"}.get(provider, "multicom_ami"))
     command = CampaignEdit(name=data.name, route=route, template_id=template_id, mode=data.flow,
@@ -299,6 +308,7 @@ def campaign_start(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
         require_megafon_user=not (row.route == "megafon_vats" and row.mode == "operator"),
         mode=row.mode,
         template_id=row.template_id,
+        operator_id=(row.schedule or {}).get("operator_id"),
     )
     for item in db.scalars(TenantRepository(db, p.tenant_id).query(CampaignItem).where(CampaignItem.campaign_id == row.id, CampaignItem.status == "cancelled").with_for_update()):
         item.status, item.available_at = "queued", now()
@@ -339,6 +349,7 @@ def campaign_retry(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
         require_megafon_user=not (row.route == "megafon_vats" and row.mode == "operator"),
         mode=row.mode,
         template_id=row.template_id,
+        operator_id=(row.schedule or {}).get("operator_id"),
     )
     row.status = "running"
     db.commit()

@@ -9,6 +9,7 @@ class AMIFixture:
         self.secret = secret
         self.originates = []
         self.endpoint_checks = []
+        self.setvars = []
         self.endpoints = {"mcm-cli-9990000101"}
         fixture = self
 
@@ -26,7 +27,9 @@ class AMIFixture:
                     action_id = frame.get("ActionID", [""])[0]
                     if action == "Login":
                         authenticated = frame.get("Secret") == [fixture.secret]
-                    success = authenticated and action in {"Login", "Ping", "Originate"}
+                    success = authenticated and action in {"Login", "Ping", "Originate", "Setvar"}
+                    if success and action == "Setvar":
+                        fixture.setvars.append(frame)
                     if authenticated and action == "PJSIPShowEndpoint":
                         endpoint = frame.get("Endpoint", [""])[0]
                         fixture.endpoint_checks.append(endpoint)

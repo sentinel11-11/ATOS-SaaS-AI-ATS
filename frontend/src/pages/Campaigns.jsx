@@ -16,6 +16,7 @@ export default function Campaigns({ addToast, refreshKey }) {
   const [templates, setTemplates] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [databases, setDatabases] = useState([]);
+  const [operators, setOperators] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
 
@@ -41,17 +42,19 @@ export default function Campaigns({ addToast, refreshKey }) {
 
   const loadAll = async () => {
     if (!loaded) setLoading(true);
-    const [cRes, tRes, cntRes, dRes] = await Promise.all([
+    const [cRes, tRes, cntRes, dRes, opRes] = await Promise.all([
       api('/campaigns'),
       api('/templates'),
       api('/contacts'),
       api('/databases'),
+      api('/operators'),
     ]);
 
     if (cRes && cRes.campaigns) setCampaigns(cRes.campaigns);
     if (tRes && tRes.templates) setTemplates(tRes.templates);
     if (cntRes && cntRes.contacts) setContacts(cntRes.contacts);
     if (dRes && dRes.databases) setDatabases(dRes.databases);
+    if (Array.isArray(opRes?.operators)) setOperators(opRes.operators);
     setLoaded(true);
     setLoading(false);
   };
@@ -109,6 +112,7 @@ export default function Campaigns({ addToast, refreshKey }) {
       retry_delay_min: 15,
       retry_max: 0,
       route: 'multicom_ami',
+      operator_id: '',
     });
   };
 
@@ -129,6 +133,7 @@ export default function Campaigns({ addToast, refreshKey }) {
       retry_max: c.retry_max ?? 0,
       route: c.route || 'multicom_ami',
       scenario: c.scenario || {},
+      operator_id: c.schedule?.operator_id || '',
     });
   };
 
@@ -150,6 +155,7 @@ export default function Campaigns({ addToast, refreshKey }) {
       template_id: editingCamp.template_id || null,
       flow: editingCamp.flow || 'operator',
       route: editingCamp.route || 'multicom_ami',
+      operator_id: editingCamp.operator_id || null,
       max_channels: parseInt(editingCamp.max_channels, 10) || 1,
       retry_delay_min: parseInt(editingCamp.retry_delay_min) || 15,
       retry_max: Number.isInteger(Number(editingCamp.retry_max)) ? Number(editingCamp.retry_max) : 0,
@@ -652,6 +658,15 @@ export default function Campaigns({ addToast, refreshKey }) {
                   и сразу завершит звонок. Для проверки звука можно выбрать тест Echo в настройках AMI.
                 </p>
               )}
+              {editingCamp.flow === 'operator' && editingCamp.route === 'multicom_ami' && (
+                <label className="text-xs text-muted block">Оператор для звонка
+                  <select className="w-full block bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white mt-1" value={editingCamp.operator_id || ''} onChange={(e) => setEditingCamp({ ...editingCamp, operator_id: e.target.value })}>
+                    <option value="">Любой доступный оператор</option>
+                    {operators.map((op) => <option key={op.id} value={op.id}>{op.name || op.login} · {op.ext || '—'} · {op.connection_method === 'mobile' ? 'Личный телефон' : 'SIP'}</option>)}
+                  </select>
+                  <span className="block mt-1">Для личного телефона менеджер отвечает первым и нажимает 1, затем начинается вызов клиенту. Один разговор резервирует два внешних канала и две единицы дневного лимита А-номера.</span>
+                </label>
+              )}
 
               <div>
                 <label htmlFor="campaign-route" className="font-semibold text-muted block mb-1">Провайдер телефонии</label>
@@ -689,7 +704,7 @@ export default function Campaigns({ addToast, refreshKey }) {
               </div>
 
               <div>
-                <label htmlFor="campaign-channels" className="font-semibold text-muted block mb-1">Одновременных каналов</label>
+                <label htmlFor="campaign-channels" className="font-semibold text-muted block mb-1">Одновременных звонков</label>
                 <input
                   id="campaign-channels"
                   type="number"

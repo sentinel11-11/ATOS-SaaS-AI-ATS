@@ -84,12 +84,15 @@ def history(q: str = "", pg=Depends(pagination), p=Depends(principal), db=Depend
 
 @router.get("/calls/{attempt_id}")
 def call_detail(attempt_id: UUID, p=Depends(principal), db=Depends(session)):
+    from ats.callbacks import leg_projection
+
     row = db.execute(calls_query(p).where(Attempt.id == attempt_id)).first()
     if not row:
         raise Problem(404, "not_found")
     repo = TenantRepository(db, p.tenant_id)
     return {
         "call": call_dict(*row),
+        "legs": leg_projection(db, p, attempt_id),
         "events": db.scalars(
             repo.query(CallEvent)
             .where(CallEvent.attempt_id == attempt_id)

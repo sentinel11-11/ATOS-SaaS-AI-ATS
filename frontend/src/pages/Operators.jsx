@@ -1,11 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { Users, PhoneIncoming, Clock } from 'lucide-react';
 import { api } from '../api';
+import Modal from '../components/Modal';
 
 export default function Operators({ addToast, refreshKey, isAdmin }) {
   const [operators, setOperators] = useState([]);
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [editingConnection, setEditingConnection] = useState(null);
+
+  const saveConnection = async () => {
+    const res = await api(`/operators/${editingConnection.id}/connection`, { body: {
+      connection_method: editingConnection.connection_method || 'sip',
+      mobile_phone: editingConnection.mobile_phone || '',
+    } });
+    if (res?.ok) {
+      setEditingConnection(null);
+      addToast('Способ подключения оператора сохранён', 'ok');
+      loadAcdData();
+    } else addToast(res?.detail || res?.error || 'Ошибка сохранения', 'err');
+  };
 
   const loadAcdData = async () => {
     setLoading(true);
@@ -50,16 +64,17 @@ export default function Operators({ addToast, refreshKey, isAdmin }) {
                   <th className="py-2.5 px-3">Оператор</th>
                   <th className="py-2.5 px-3">Внутр. №</th>
                   <th className="py-2.5 px-3">Статус</th>
+                  <th className="py-2.5 px-3">Подключение</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && operatorsList.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="py-4 text-center text-muted">Загрузка...</td>
+                    <td colSpan={4} className="py-4 text-center text-muted">Загрузка...</td>
                   </tr>
                 ) : operatorsList.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="py-4 text-center text-dim">Операторов нет в ACD</td>
+                    <td colSpan={4} className="py-4 text-center text-dim">Операторов нет в ACD</td>
                   </tr>
                 ) : (
                   operatorsList.map((op) => (
@@ -75,6 +90,13 @@ export default function Operators({ addToast, refreshKey, isAdmin }) {
                         }`}>
                           {op.status === 'free' ? 'Свободен' : op.status === 'busy' ? 'В разговоре' : 'Перерыв'}
                         </span>}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span>{op.connection_method === 'mobile' ? 'Личный телефон' : 'SIP-устройство'}</span>
+                        {op.mobile_phone && op.connection_method === 'mobile' && <span className="block font-mono text-muted">{op.mobile_phone}</span>}
+                        {isAdmin && <button className="text-acc2 block mt-1" onClick={() => setEditingConnection({ ...op })}>
+                          Настроить подключение
+                        </button>}
                       </td>
                     </tr>
                   ))
@@ -118,6 +140,23 @@ export default function Operators({ addToast, refreshKey, isAdmin }) {
           </div>
         </div>
       </div>
+      <Modal isOpen={!!editingConnection} onClose={() => setEditingConnection(null)} title="Подключение оператора">
+        {editingConnection && <div className="flex flex-col gap-4 text-sm">
+          <label className="text-muted">Способ разговора
+            <select className="block w-full bg-[#0a1628] border border-line2 rounded-xl p-2 text-white" value={editingConnection.connection_method || 'sip'} onChange={(e) => setEditingConnection({ ...editingConnection, connection_method: e.target.value })}>
+              <option value="sip">SIP-приложение / SIP-телефон</option>
+              <option value="mobile">Личный телефон — сначала звонок менеджеру</option>
+            </select>
+          </label>
+          {editingConnection.connection_method === 'mobile' && <>
+            <label className="text-muted">Личный номер менеджера
+              <input className="block w-full bg-[#0a1628] border border-line2 rounded-xl p-2 text-white" value={editingConnection.mobile_phone || ''} placeholder="+79990000000" onChange={(e) => setEditingConnection({ ...editingConnection, mobile_phone: e.target.value })} />
+            </label>
+            <p className="text-muted">После ответа нажмите 1. Затем ATOS проверит разрешение и наберёт клиента. Для разговора нужны два внешних канала. В тестовой среде оба номера должны быть в списке разрешённых направлений.</p>
+          </>}
+          <button className="bg-acc text-white rounded-xl py-2" onClick={saveConnection}>Сохранить подключение</button>
+        </div>}
+      </Modal>
     </div>
   );
 }

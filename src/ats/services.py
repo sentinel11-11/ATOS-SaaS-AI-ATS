@@ -7,12 +7,20 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from ats.config import settings
-from ats.domain import ACTIVE, MISSING_AMI_TERMINAL, TERMINAL, Problem, next_state
+from ats.domain import (
+    ACTIVE,
+    EVIDENCE_REQUIRED,
+    MISSING_AMI_TERMINAL,
+    TERMINAL,
+    Problem,
+    next_state,
+)
 from ats.models import (
     Attempt,
     Audit,
     BlacklistEntry,
     CallerNumber,
+    CallLeg,
     Campaign,
     CampaignItem,
     Contact,
@@ -78,7 +86,8 @@ def create_campaign(db, principal, data, key):
 
 
 def validate_route(
-    tenant_id, route, db=None, *, require_megafon_user=True, mode=None, template_id=None
+    tenant_id, route, db=None, *, require_megafon_user=True, mode=None, template_id=None,
+    operator_id=None,
 ):
     if route not in {"multicom_ami", "megafon_vats"}:
         raise Problem(422, "unsupported_route")
@@ -138,7 +147,28 @@ def validate_route(
                 "Для теста Echo выберите «Информатор» и «Без шаблона». "
                 "Для обычной кампании верните обработку после ответа «Сценарий кампании».",
             )
-        if mode is not None and (mode != "message" or template_id) and not config.media_enabled:
+        mobile = None
+        if mode == "operator" and db is not None and (
+            operator_id or (config.callback_enabled and not template_id)
+        ):
+            query = select(Operator).join(User, User.id == Operator.user_id).where(
+                Operator.tenant_id == tenant_id, Operator.connection_method == "mobile",
+                User.active, User.role == "operator",
+            )
+            if operator_id:
+                query = query.where(Operator.id == operator_id)
+            mobile = db.scalar(query.order_by(Operator.id).limit(1))
+        if mobile:
+            from ats.callbacks import validate_mobile
+
+            if template_id:
+                raise Problem(409, "callback_template_unsupported", "Для соединения через личный телефон выберите «Без шаблона».")
+            validate_mobile(config, mobile)
+            if not eligible:
+                raise Problem(409, "callback_requires_verified_pool", "Для телефонного соединения включите подтверждённый А-номер в пуле.")
+            if db.get(Tenant, tenant_id).max_channels < 2:
+                raise Problem(409, "callback_needs_two_channels", "Телефонному соединению нужны два внешних канала в общих лимитах ATOS.")
+        if mode is not None and (mode != "message" or template_id) and not config.media_enabled and not mobile:
             raise Problem(
                 409, "media_not_configured",
                 "Для перевода на операторов, ИИ-сценария и шаблона требуется медиарежим Asterisk. "
@@ -168,7 +198,7 @@ def schedule_one(db, tenant_id):
     repo = TenantRepository(db, tenant_id)
     hour = now().astimezone(ZoneInfo(tenant.timezone)).hour
     active = db.scalar(
-        select(func.count())
+        select(func.coalesce(func.sum(Attempt.channel_units), 0))
         .select_from(Attempt)
         .where(Attempt.tenant_id == tenant_id, Attempt.status.in_(ACTIVE))
     )
@@ -254,6 +284,7 @@ def schedule_one(db, tenant_id):
             ),
             mode=campaign.mode,
             template_id=campaign.template_id,
+            operator_id=(campaign.schedule or {}).get("operator_id"),
         )
         operator = None
         if campaign.route in {"multicom_ami", "megafon_vats"} and (
@@ -267,9 +298,24 @@ def schedule_one(db, tenant_id):
             if requested_operator_id:
                 operator_query = operator_query.where(Operator.id == requested_operator_id)
             if campaign.route == "multicom_ami":
-                operator_query = operator_query.where(Operator.extension != "")
+                if campaign.mode != "operator" or campaign.template_id or not config.callback_enabled:
+                    operator_query = operator_query.where(Operator.connection_method == "sip")
+                elif not config.media_enabled:
+                    operator_query = operator_query.where(Operator.connection_method == "mobile")
+                operator_query = operator_query.where(
+                    (Operator.extension != "") | (Operator.connection_method == "mobile")
+                )
             operator = db.scalar(operator_query.with_for_update(skip_locked=True).limit(1))
             if not operator:
+                return False
+        mobile_callback = bool(
+            campaign.route == "multicom_ami" and operator and operator.connection_method == "mobile"
+        )
+        if mobile_callback:
+            from ats.callbacks import validate_mobile
+
+            validate_mobile(config, operator, contact.phone)
+            if active + 2 > tenant.max_channels:
                 return False
         if not config.destination_allowed(contact.phone):
             item.status = "blocked"
@@ -278,7 +324,9 @@ def schedule_one(db, tenant_id):
         from ats.workspace_service import event, select_caller
 
         try:
-            caller_number = select_caller(db, tenant, campaign.route, config, operator)
+            caller_number = select_caller(
+                db, tenant, campaign.route, config, operator, units=2 if mobile_callback else 1,
+            )
         except Problem as exc:
             if exc.code == "caller_pool_exhausted":
                 return False
@@ -300,9 +348,16 @@ def schedule_one(db, tenant_id):
             caller_number=caller_number,
             phone=contact.phone,
             contact_name=contact.name,
+            call_flow="mobile_callback" if mobile_callback else "standard",
+            channel_units=2 if mobile_callback else 1,
+            route_snapshot={"endpoint": config.ami_cli_endpoint_prefix + caller_number}
+            if mobile_callback else {},
         )
         item.status = "active"
         db.flush()
+        if mobile_callback:
+            for role, destination in [("operator", operator.mobile_phone), ("customer", contact.phone)]:
+                repo.add(CallLeg, attempt_id=attempt.id, role=role, phone=destination)
         event(db, attempt, "prepared")
         if operator:
             operator.status = "busy"
@@ -513,13 +568,17 @@ def drain_inbox(db):
     if row.route == "multicom_ami" and row.event == "channel_hangup":
         # A channel's Hangup does not establish the outcome of a multi-leg call.
         # A terminal ATSCall event can arrive later on another AMI connection.
-        if attempt.status in ACTIVE and attempt.reason != MISSING_AMI_TERMINAL:
+        if attempt.status in ACTIVE and attempt.reason not in EVIDENCE_REQUIRED:
             attempt.status = "unknown"
             attempt.reason = MISSING_AMI_TERMINAL
             attempt.updated_at = now()
             from ats.workspace_service import event as log_event
 
             log_event(db, attempt, "unknown", attempt.reason)
+        row.status = "processed"
+        return True
+    if attempt.call_flow == "mobile_callback":
+        # Provider/legacy events describe one leg; callback aggregation owns the result.
         row.status = "processed"
         return True
     if row.route == "multicom_ami" and attempt.reason == MISSING_AMI_TERMINAL:

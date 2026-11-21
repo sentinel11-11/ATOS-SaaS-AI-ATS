@@ -57,7 +57,7 @@ def test_upgrade_preserves_beta_contacts_and_calls(factory):
             [".venv/bin/alembic", "upgrade", "head"], env=env, check=True, capture_output=True
         )
         with engine.connect() as db:
-            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0011"
+            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0012"
             assert (
                 db.scalar(text("SELECT name FROM contacts WHERE id=:id"), {"id": cid}) == "Original"
             )
@@ -70,6 +70,16 @@ def test_upgrade_preserves_beta_contacts_and_calls(factory):
             assert db.scalar(text("SELECT archived FROM campaigns WHERE id=:id"), {"id": camp}) is True
             assert db.scalar(text("SELECT hidden_from_journal FROM call_attempts WHERE id=:id"), {"id": attempt}) is True
         subprocess.run([".venv/bin/alembic", "check"], env=env, check=True, capture_output=True)
+        with engine.begin() as db:
+            assert db.scalar(text("SELECT channel_units FROM call_attempts WHERE id=:id"), {"id": attempt}) == 1
+            db.execute(text("UPDATE call_attempts SET call_flow='mobile_callback',channel_units=2 WHERE id=:id"), {"id": attempt})
+        rejected = subprocess.run(
+            [".venv/bin/alembic", "downgrade", "0011"], env=env, capture_output=True, text=True,
+        )
+        assert rejected.returncode != 0 and "Callback history/configuration exists" in rejected.stderr
+        with engine.connect() as db:
+            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0012"
+            assert db.scalar(text("SELECT channel_units FROM call_attempts WHERE id=:id"), {"id": attempt}) == 2
     finally:
         engine.dispose()
         with admin.connect() as db:

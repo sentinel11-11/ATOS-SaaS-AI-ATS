@@ -133,7 +133,8 @@ def password_change(data: commands.PasswordChange, p=Depends(principal), db=Depe
 def operators(p=Depends(principal), db=Depends(session)):
     return {
         "operators": [
-            {**jsonable_encoder(op), "login": u.login}
+            {**jsonable_encoder(op), "login": u.login,
+             "mobile_phone": op.mobile_phone if p.role == "admin" or p.user_id == u.id else ""}
             for op, u in db.execute(
                 select(Operator, User)
                 .join(User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id))

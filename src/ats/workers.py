@@ -13,12 +13,13 @@ from ats.adapters import AMI, AmoCRM, DeliveryUnknown, Megafon, Rejected, Retrya
 from ats.amo_context import contact_context, reference_data
 from ats.config import settings
 from ats.db import session_factory
-from ats.domain import ACTIVE, DIAL_STATUSES, MISSING_AMI_TERMINAL, Problem, next_state
+from ats.domain import ACTIVE, DIAL_STATUSES, EVIDENCE_REQUIRED, Problem, next_state
 from ats.models import (
     AmoSyncJob,
     Attempt,
     BlacklistEntry,
     CallerNumber,
+    CallLeg,
     Campaign,
     CampaignItem,
     Contact,
@@ -100,6 +101,14 @@ class Worker:
 
     def ami_event(self, frame):
         config = settings()
+        from ats.callbacks import handle_frame
+
+        try:
+            if handle_frame(self.factory, config.telephony_tenant_id, frame):
+                return
+        except Exception as exc:
+            log.error("callback_event_persist_failed type=%s", type(exc).__name__)
+            return
         if config.inbound_enabled and config.telephony_tenant_id:
             from ats.inbound import ingest_inbound
 
@@ -242,6 +251,8 @@ class Worker:
                         .with_for_update()
                     )
                     if call:
+                        if call.call_flow == "mobile_callback":
+                            return
                         call.channel = frame["Channel"]
                 ingest(
                     db,
@@ -330,9 +341,11 @@ class Worker:
             item = repo.get(CampaignItem, attempt.item_id)
             contact = repo.get(Contact, item.contact_id, lock=True)
             campaign = repo.get(Campaign, item.campaign_id)
-            hour = now().astimezone(ZoneInfo(tenant.timezone)).hour
+            local = now().astimezone(ZoneInfo(tenant.timezone))
+            hour = local.hour
             if campaign.status != "running" or not (
                 campaign.window_start <= hour < campaign.window_end
+                and local.weekday() in campaign.weekdays
             ):
                 complete_job(db, job_id, token, "pending", delay=5)
                 return True
@@ -362,6 +375,8 @@ class Worker:
             )
             queue = db.scalar(repo.query(QueueEntry).where(QueueEntry.attempt_id == attempt.id))
             operator_ext, megafon_operator_user = "", ""
+            callback_operator_phone, callback_endpoint = "", ""
+            mobile_callback = attempt.call_flow == "mobile_callback"
             if queue and queue.operator_id:
                 operator = repo.get(Operator, queue.operator_id)
                 operator_ext = operator.extension
@@ -381,7 +396,26 @@ class Worker:
                     require_megafon_user=not bool(megafon_operator_user),
                     mode=campaign.mode,
                     template_id=campaign.template_id,
+                    operator_id=queue.operator_id if queue else None,
                 )
+                if mobile_callback:
+                    from ats.callbacks import validate_mobile
+
+                    leg = db.scalar(repo.query(CallLeg).where(
+                        CallLeg.attempt_id == attempt.id, CallLeg.role == "operator"
+                    ))
+                    if not queue or not queue.operator_id or not leg:
+                        raise Problem(409, "callback_operator_missing")
+                    user = repo.get(User, operator.user_id)
+                    if (
+                        not user.active or user.role != "operator" or operator.status != "busy"
+                        or operator.connection_method != "mobile" or operator.mobile_phone != leg.phone
+                    ):
+                        raise Problem(409, "callback_operator_changed")
+                    validate_mobile(runtime_config, operator, phone)
+                    callback_operator_phone = leg.phone
+                    callback_endpoint = attempt.route_snapshot.get("endpoint", "")
+                    media_inputs = None
                 if route == "multicom_ami":
                     number = db.scalar(
                         repo.query(CallerNumber).where(CallerNumber.phone == caller_number)
@@ -415,18 +449,23 @@ class Worker:
 
                 media = prepare_media(*media_inputs, config=runtime_config)
             driver = self.driver(route, tenant_id, runtime_config)
-            external_id = (
-                driver.originate(
-                    attempt_id,
-                    phone,
-                    caller_id=caller_number,
-                    media=media,
-                    operator_ext=operator_ext,
+            if mobile_callback:
+                external_id = driver.originate_callback(
+                    attempt_id, callback_operator_phone, phone, caller_number, callback_endpoint,
                 )
-                if route == "multicom_ami"
-                else driver.originate(
-                    attempt_id, phone, user=megafon_operator_user or megafon_user
-                )
+            else:
+                external_id = (
+                    driver.originate(
+                        attempt_id,
+                        phone,
+                        caller_id=caller_number,
+                        media=media,
+                        operator_ext=operator_ext,
+                    )
+                    if route == "multicom_ami"
+                    else driver.originate(
+                        attempt_id, phone, user=megafon_operator_user or megafon_user
+                    )
                 )
         except Problem as e:
             with self.factory.begin() as db:
@@ -441,7 +480,8 @@ class Worker:
                     finish_attempt(db, row, "failed", getattr(e, "code", "provider_rejected"))
                 elif row.status not in {"completed", "failed"}:
                     row.status = "unknown"
-                row.reason = getattr(e, "code", "provider_delivery_unknown")
+                if row.status not in {"completed", "failed"}:
+                    row.reason = getattr(e, "code", "provider_delivery_unknown")
                 complete_job(
                     db, job_id, token, "unknown" if row.status == "unknown" else "done", row.reason
                 )
@@ -474,7 +514,19 @@ class Worker:
                     raise Rejected("call_channel_unavailable")
                 driver = self.driver("multicom_ami", tenant_id, runtime_config)
                 driver.connect()
-                driver.action("Hangup", [("Channel", channel)])
+                if payload.get("command") == "callback_authorize":
+                    from ats.callbacks import authorize_customer
+
+                    with self.factory.begin() as db:
+                        db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
+                        current = TenantRepository(db, tenant_id).get(Attempt, call.id, lock=True)
+                        allowed = authorize_customer(db, current, runtime_config)
+                    driver.action("Setvar", [
+                        ("Channel", channel), ("Variable", "ATS_CALLBACK_DECISION"),
+                        ("Value", "allow" if allowed else "deny"),
+                    ])
+                else:
+                    driver.action("Hangup", [("Channel", channel)])
         except Problem as exc:
             with self.factory.begin() as db:
                 complete_job(db, job_id, token, "dead", exc.code)
@@ -521,7 +573,7 @@ class Worker:
                     contact = repo.get(Contact, item.contact_id)
                     direction = "outbound"
                     duration = (
-                        max(0, int((attempt.ended_at - attempt.answered_at).total_seconds()))
+                        max(0, int(((attempt.bridge_ended_at or attempt.ended_at) - attempt.answered_at).total_seconds()))
                         if attempt.ended_at and attempt.answered_at
                         else 0
                     )
@@ -748,7 +800,7 @@ class Worker:
                 )
                 stale_filter = (
                     Attempt.tenant_id == tenant_id,
-                    Attempt.reason != MISSING_AMI_TERMINAL,
+                    Attempt.reason.not_in(EVIDENCE_REQUIRED),
                     or_(
                         (
                             Attempt.status.in_(
@@ -771,7 +823,15 @@ class Worker:
                     .limit(100)
                 ).all()
                 for row in rows:
-                    if row.status == "dispatching":
+                    if row.call_flow == "mobile_callback" and row.status != "prepared":
+                        # A timed-out observer cannot prove either external leg has ended.
+                        # Keep both channel reservations until evidence/manual reconciliation.
+                        row.status, row.reason = "unknown", "callback_evidence_missing"
+                        row.updated_at = current
+                        from ats.workspace_service import event
+
+                        event(db, row, "unknown", row.reason)
+                    elif row.status == "dispatching":
                         # The provider may have accepted the request, so do not
                         # redial. Keep it fenced as unknown until the longer
                         # conversation safety timeout releases the slot.

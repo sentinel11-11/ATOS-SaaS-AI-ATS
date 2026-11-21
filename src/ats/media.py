@@ -46,7 +46,7 @@ def prepare_media(attempt, campaign, template, contact, config=None):
 
 def attach_recordings(factory):
     config = settings()
-    if not config.media_enabled:
+    if not (config.media_enabled or config.callback_enabled):
         return
     with factory() as db:
         calls = db.scalars(

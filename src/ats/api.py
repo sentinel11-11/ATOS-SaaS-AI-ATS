@@ -359,7 +359,7 @@ def live():
 def ready(db=Depends(session)):
     # Verify required schema, not merely TCP/Postgres availability.
     version = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if version not in {"0007", "0008", "0009", "0010", "0011"}:
+    if version != "0012":
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
     config = settings()
@@ -504,6 +504,7 @@ def campaign_state(
             require_megafon_user=not (row.route == "megafon_vats" and row.mode == "operator"),
             mode=row.mode,
             template_id=row.template_id,
+            operator_id=(row.schedule or {}).get("operator_id"),
         )
     row.status = data.status
     repo.add(Audit, actor_id=p.user_id, action=f"campaign.{data.status}", entity_id=row.id)

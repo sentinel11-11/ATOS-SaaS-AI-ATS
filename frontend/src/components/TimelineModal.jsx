@@ -14,6 +14,16 @@ const REASON_MESSAGES = {
   media_failed: 'Asterisk сообщил об ошибке выполнения медиасценария AGI.',
   ami_hangup_fallback: 'Asterisk сообщил о завершении канала. Подробности уточняются по коду завершения и диалплану.',
   ami_terminal_event_missing: 'Получено завершение канала без итогового результата сценария. Сверьте вызов с CDR/CEL и подтвердите результат перед новой попыткой.',
+  callback_bridge_unconfirmed: 'Итог сценария получен, но соединение двух плеч не подтверждено. Требуется сверка Asterisk/CDR/CEL.',
+  callback_evidence_missing: 'Истекло ожидание событий двух плеч. Каналы остаются зарезервированы до сверки Asterisk/CDR/CEL.',
+  callback_leg_tracking_missing: 'Не получены данные каналов телефонного соединения. Требуется сверка Asterisk/CDR/CEL.',
+  operator_not_confirmed: 'Менеджер не подтвердил вызов клавишей 1. Клиент не набирался.',
+  callback_gate_denied: 'ATOS отклонил набор клиента после повторной проверки кампании, контакта и оператора.',
+  callback_authorization_timeout: 'Истекло ожидание разрешения ATOS на набор клиента.',
+  operator_busy: 'Телефон менеджера занят.',
+  operator_no_answer: 'Менеджер не ответил.',
+  customer_busy: 'Телефон клиента занят.',
+  customer_no_answer: 'Клиент не ответил.',
 };
 
 export default function TimelineModal({ callId, onClose }) {
@@ -77,6 +87,16 @@ export default function TimelineModal({ callId, onClose }) {
               )}
             </div>
           )}
+
+          {Array.isArray(data.legs) && data.legs.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {data.legs.map((leg) => <div key={leg.role} className="p-4 rounded-xl bg-[#081221] border border-line">
+              <b className="block text-white">{leg.role === 'operator' ? 'Плечо менеджера' : 'Плечо клиента'}</b>
+              <span className="font-mono text-muted block">{leg.phone || '—'}</span>
+              <span className="text-white block">{leg.status}{leg.dial_status ? ` · ${leg.dial_status}` : ''}</span>
+              {leg.answered_at && <span className="text-muted block">Ответ сети: {leg.answered_at.replace('T', ' ').slice(0, 19)}</span>}
+              {leg.bridged_at && <span className="text-muted block">В мосту: {leg.bridged_at.replace('T', ' ').slice(0, 19)}</span>}
+            </div>)}
+          </div>}
 
           {/* Timeline Events List */}
           <div className="flex flex-col gap-2">

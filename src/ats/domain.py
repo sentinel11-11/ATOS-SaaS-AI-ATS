@@ -8,6 +8,12 @@ class Problem(Exception):
 ACTIVE = {"prepared", "dispatching", "accepted", "answered", "unknown"}
 TERMINAL = {"completed", "failed"}
 MISSING_AMI_TERMINAL = "ami_terminal_event_missing"
+EVIDENCE_REQUIRED = {
+    "callback_evidence_missing",
+    MISSING_AMI_TERMINAL, "callback_bridge_unconfirmed", "callback_result_conflict",
+    "callback_leg_identity_conflict",
+    "callback_leg_tracking_missing",
+}
 DIAL_STATUSES = {
     "ANSWER", "BUSY", "NOANSWER", "CHANUNAVAIL", "CONGESTION",
     "CANCEL", "DONTCALL", "TORTURE", "INVALIDARGS",

@@ -32,7 +32,7 @@ from sqlalchemy import (
 
 from ats import api_calls
 from ats.db import session
-from ats.domain import ACTIVE, DIAL_STATUSES, MISSING_AMI_TERMINAL, Problem
+from ats.domain import ACTIVE, DIAL_STATUSES, EVIDENCE_REQUIRED, Problem
 from ats.models import (
     Attempt,
     Audit,
@@ -69,7 +69,7 @@ def legacy_calls_query(p):
     duration = case(
         (
             Attempt.answered_at.is_not(None) & Attempt.ended_at.is_not(None),
-            func.greatest(0, extract("epoch", Attempt.ended_at - Attempt.answered_at)),
+            func.greatest(0, extract("epoch", func.coalesce(Attempt.bridge_ended_at, Attempt.ended_at) - Attempt.answered_at)),
         ),
         else_=0,
     )
@@ -269,7 +269,12 @@ def reconcile_stale_calls(p=Depends(admin), db=Depends(session)):
     rows = db.scalars(select(Attempt).where(Attempt.tenant_id == p.tenant_id, Attempt.status.in_(ACTIVE), Attempt.updated_at < cutoff).with_for_update()).all()
     requires_evidence = 0
     for row in rows:
-        if row.reason == MISSING_AMI_TERMINAL:
+        if row.reason in EVIDENCE_REQUIRED or (row.call_flow == "mobile_callback" and row.status != "prepared"):
+            if row.reason not in EVIDENCE_REQUIRED:
+                from ats.workspace_service import event
+
+                row.status, row.reason, row.updated_at = "unknown", "callback_evidence_missing", now()
+                event(db, row, "unknown", row.reason)
             requires_evidence += 1
             continue
         finish_attempt(db, row, "failed", "stale_call_reconciled")
@@ -367,8 +372,11 @@ def timeline(call_id: UUID, p=Depends(principal), db=Depends(session)):
         .order_by(Recording.created_at).limit(100)
     ).all()
     acd = db.scalars(repo.query(QueueEntry).where(QueueEntry.attempt_id == call_id)).all()
+    from ats.callbacks import leg_projection
+
     return {
         "ok": True, "call": call, "events": jsonable_encoder(events),
+        "legs": jsonable_encoder(leg_projection(db, p, call_id)) if call["source"] == "attempt" else [],
         "acd": jsonable_encoder(acd),
         "recordings": [
             {"id": r.id, "url": f"/api/v2/recordings/{r.id}", "content_type": r.content_type,
@@ -798,7 +806,7 @@ def analytics(
         employee_result = func.lower(func.coalesce(func.nullif(Attempt.result, ""), Attempt.status))
         talk_duration = case(
             (Attempt.answered_at.is_not(None) & Attempt.ended_at.is_not(None),
-             func.greatest(0, extract("epoch", Attempt.ended_at - Attempt.answered_at))),
+             func.greatest(0, extract("epoch", func.coalesce(Attempt.bridge_ended_at, Attempt.ended_at) - Attempt.answered_at))),
             else_=0,
         )
         employee_query = (
