@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from ats.config import settings
-from ats.domain import ACTIVE, Problem, next_state
+from ats.domain import ACTIVE, MISSING_AMI_TERMINAL, TERMINAL, Problem, next_state
 from ats.models import (
     Attempt,
     Audit,
@@ -317,7 +317,7 @@ def schedule_one(db, tenant_id):
     return False
 
 
-def ingest(db, tenant_id, route, event_key, external_id, event, payload=None):
+def ingest(db, tenant_id, route, event_key, external_id, event, payload=None, *, available_at=None):
     from sqlalchemy.dialects.postgresql import insert
 
     db.execute(
@@ -332,6 +332,7 @@ def ingest(db, tenant_id, route, event_key, external_id, event, payload=None):
             payload=payload or {},
             status="pending",
             received_at=now(),
+            available_at=available_at if available_at is not None else now(),
         )
         .on_conflict_do_nothing()
     )
@@ -339,6 +340,8 @@ def ingest(db, tenant_id, route, event_key, external_id, event, payload=None):
 
 def finish_attempt(db, attempt, event, reason=""):
     old = attempt.status
+    if attempt.route == "multicom_ami" and old in TERMINAL:
+        return
     attempt.status = next_state(old, event)
     attempt.updated_at = now()
     if reason:
@@ -507,6 +510,27 @@ def drain_inbox(db):
                 )
             row.status = "processed"
         return False
+    if row.route == "multicom_ami" and row.event == "channel_hangup":
+        # A channel's Hangup does not establish the outcome of a multi-leg call.
+        # A terminal ATSCall event can arrive later on another AMI connection.
+        if attempt.status in ACTIVE and attempt.reason != MISSING_AMI_TERMINAL:
+            attempt.status = "unknown"
+            attempt.reason = MISSING_AMI_TERMINAL
+            attempt.updated_at = now()
+            from ats.workspace_service import event as log_event
+
+            log_event(db, attempt, "unknown", attempt.reason)
+        row.status = "processed"
+        return True
+    if row.route == "multicom_ami" and attempt.reason == MISSING_AMI_TERMINAL:
+        if row.event in {"completed", "failed"}:
+            attempt.reason = ""
+        else:
+            # Delayed progress cannot resolve an observed channel termination.
+            if row.event == "answered" and attempt.answered_at is None:
+                attempt.answered_at = row.received_at
+            row.status = "processed"
+            return True
     if "agent_result" in row.payload:
         attempt.agent_result = row.payload["agent_result"]
     if row.payload.get("amo_responsible_user_id"):

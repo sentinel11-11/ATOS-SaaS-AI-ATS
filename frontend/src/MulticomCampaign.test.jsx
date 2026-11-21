@@ -102,6 +102,17 @@ it('shows a stored failure reason for an existing call in the timeline', async (
   expect(screen.getByText('Код завершения Asterisk 21')).toBeTruthy();
 });
 
+it('explains an unconfirmed channel hangup without presenting it as a completed call', async () => {
+  api.mockResolvedValue({
+    call: { id: 'unconfirmed-call', status: 'unknown', detail: 'ami_terminal_event_missing' },
+    events: [{ event_type: 'channel_hangup', fingerprint: 'hangup-1', hangup_cause: 16 }],
+  });
+  render(<TimelineModal callId="unconfirmed-call" onClose={vi.fn()} />);
+  expect(await screen.findByText('unknown')).toBeTruthy();
+  expect(screen.getByRole('alert').textContent).toContain('CDR/CEL');
+  expect(screen.getByText('Завершение канала Asterisk')).toBeTruthy();
+});
+
 it('saves the Multicom endpoint prefix through the settings form', async () => {
   api.mockImplementation(async (path, options) => {
     if (path === '/settings/raw' && !options?.body) return {

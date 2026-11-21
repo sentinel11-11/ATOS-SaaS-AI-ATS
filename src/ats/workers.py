@@ -13,7 +13,7 @@ from ats.adapters import AMI, AmoCRM, DeliveryUnknown, Megafon, Rejected, Retrya
 from ats.amo_context import contact_context, reference_data
 from ats.config import settings
 from ats.db import session_factory
-from ats.domain import ACTIVE, DIAL_STATUSES, Problem, next_state
+from ats.domain import ACTIVE, DIAL_STATUSES, MISSING_AMI_TERMINAL, Problem, next_state
 from ats.models import (
     AmoSyncJob,
     Attempt,
@@ -170,8 +170,7 @@ class Worker:
                             .with_for_update()
                         )
                         if attempt:
-                            event = "completed" if attempt.status == "answered" else "failed"
-                            payload = {"reason": "ami_hangup_fallback"}
+                            payload = {}
                             cause = frame.get("Cause", "")
                             if cause.isascii() and cause.isdigit() and 0 <= int(cause) <= 127:
                                 payload["hangup_cause"] = int(cause)
@@ -181,8 +180,9 @@ class Worker:
                                 "multicom_ami",
                                 f"{attempt.id}:hangup:{frame.get('Uniqueid', '')}",
                                 str(attempt.id),
-                                event,
+                                "channel_hangup",
                                 payload,
+                                available_at=now() + timedelta(seconds=3),
                             )
                     return
                 except (ValueError, TypeError):
@@ -748,6 +748,7 @@ class Worker:
                 )
                 stale_filter = (
                     Attempt.tenant_id == tenant_id,
+                    Attempt.reason != MISSING_AMI_TERMINAL,
                     or_(
                         (
                             Attempt.status.in_(

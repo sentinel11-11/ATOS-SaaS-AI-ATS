@@ -13,6 +13,7 @@ const REASON_MESSAGES = {
   playback_failed: 'Asterisk сообщил об ошибке воспроизведения сообщения.',
   media_failed: 'Asterisk сообщил об ошибке выполнения медиасценария AGI.',
   ami_hangup_fallback: 'Asterisk сообщил о завершении канала. Подробности уточняются по коду завершения и диалплану.',
+  ami_terminal_event_missing: 'Получено завершение канала без итогового результата сценария. Сверьте вызов с CDR/CEL и подтвердите результат перед новой попыткой.',
 };
 
 export default function TimelineModal({ callId, onClose }) {
@@ -92,7 +93,7 @@ export default function TimelineModal({ callId, onClose }) {
                       <Radio className="w-4 h-4" />
                     </span>
                     <div>
-                      <span className="font-bold text-white block">{ev.event_type || 'event'}</span>
+                      <span className="font-bold text-white block">{ev.event_type === 'channel_hangup' ? 'Завершение канала Asterisk' : ev.event_type || 'event'}</span>
                       {ev.detail && <span className="text-white block break-all">{ev.detail}</span>}
                       {Number.isInteger(ev.hangup_cause) && (
                         <span className="text-white block">Код завершения Asterisk {ev.hangup_cause}</span>

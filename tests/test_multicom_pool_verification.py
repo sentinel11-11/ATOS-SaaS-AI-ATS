@@ -243,7 +243,8 @@ def test_ami_hangup_cause_is_preserved_in_timeline_without_raw_payload(
     response = logged.get(f"/api/v2/calls/{attempt_id}/timeline")
     assert response.status_code == 200, response.text
     timeline = response.json()
-    assert timeline["call"]["detail"] == "ami_hangup_fallback"
+    assert timeline["call"]["status"] == "failed"
+    assert timeline["call"]["detail"] != "ami_hangup_fallback"
     hangup = next(event for event in timeline["events"] if event.get("hangup_cause") == 21)
     assert hangup["payload"] == {}
     assert any(event.get("dial_status") == "CHANUNAVAIL" for event in timeline["events"])

@@ -32,7 +32,7 @@ from sqlalchemy import (
 
 from ats import api_calls
 from ats.db import session
-from ats.domain import ACTIVE, DIAL_STATUSES, Problem
+from ats.domain import ACTIVE, DIAL_STATUSES, MISSING_AMI_TERMINAL, Problem
 from ats.models import (
     Attempt,
     Audit,
@@ -267,11 +267,18 @@ def reconcile_stale_calls(p=Depends(admin), db=Depends(session)):
     """Close provider calls that have had no state update for 15 minutes."""
     cutoff = now() - timedelta(minutes=15)
     rows = db.scalars(select(Attempt).where(Attempt.tenant_id == p.tenant_id, Attempt.status.in_(ACTIVE), Attempt.updated_at < cutoff).with_for_update()).all()
+    requires_evidence = 0
     for row in rows:
+        if row.reason == MISSING_AMI_TERMINAL:
+            requires_evidence += 1
+            continue
         finish_attempt(db, row, "failed", "stale_call_reconciled")
     audit(db, p, "call.stale_reconciled")
     db.commit()
-    return {"ok": True, "reconciled": len(rows)}
+    return {
+        "ok": True, "reconciled": len(rows) - requires_evidence,
+        "requires_evidence": requires_evidence,
+    }
 
 
 @router.post("/calls/clear-journal")

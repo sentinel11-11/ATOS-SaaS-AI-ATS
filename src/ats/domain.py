@@ -7,6 +7,7 @@ class Problem(Exception):
 
 ACTIVE = {"prepared", "dispatching", "accepted", "answered", "unknown"}
 TERMINAL = {"completed", "failed"}
+MISSING_AMI_TERMINAL = "ami_terminal_event_missing"
 DIAL_STATUSES = {
     "ANSWER", "BUSY", "NOANSWER", "CHANUNAVAIL", "CONGESTION",
     "CANCEL", "DONTCALL", "TORTURE", "INVALIDARGS",

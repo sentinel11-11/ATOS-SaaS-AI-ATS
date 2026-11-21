@@ -527,8 +527,7 @@ def resolve(attempt_id: UUID, data: schemas.ResolveAttempt, p=Depends(admin), db
     row = TenantRepository(db, p.tenant_id).get(Attempt, attempt_id, lock=True)
     if row.status != "unknown":
         raise Problem(409, "only_unknown_can_be_resolved")
-    finish_attempt(db, row, data.status)
-    row.reason = data.evidence
+    finish_attempt(db, row, data.status, data.evidence)
     db.add(
         Audit(
             tenant_id=p.tenant_id,
