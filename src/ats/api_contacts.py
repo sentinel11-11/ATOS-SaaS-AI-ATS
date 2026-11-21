@@ -11,7 +11,6 @@ from ats import workspace_schemas as commands
 from ats.db import session
 from ats.domain import Problem
 from ats.models import (
-    AmoSyncItem,
     Attempt,
     Audit,
     BlacklistEntry,
@@ -19,7 +18,6 @@ from ats.models import (
     CampaignItem,
     Contact,
     ContactList,
-    InboundCall,
     ListMember,
     Tenant,
     WorkspaceSettings,
@@ -143,15 +141,10 @@ def contact_update(
 
 @router.delete("/contacts/{contact_id}", status_code=204)
 def contact_archive(contact_id: UUID, p=Depends(admin), db=Depends(session)):
+    db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
     row = TenantRepository(db, p.tenant_id).get(Contact, contact_id, lock=True)
-    # Contacts are test data and are removed permanently. Keep call attempts
-    # (they contain a phone snapshot) but remove live contact relationships.
-    db.execute(delete(ListMember).where(ListMember.tenant_id == p.tenant_id, ListMember.contact_id == row.id))
-    db.execute(delete(AmoSyncItem).where(AmoSyncItem.tenant_id == p.tenant_id, AmoSyncItem.contact_id == row.id))
-    db.execute(delete(InboundCall).where(InboundCall.tenant_id == p.tenant_id, InboundCall.contact_id == row.id))
-    db.execute(delete(CampaignItem).where(CampaignItem.tenant_id == p.tenant_id, CampaignItem.contact_id == row.id))
-    db.delete(row)
-    audit(db, p, "contact.deleted", contact_id)
+    row.archived, row.consent, row.blocked = True, False, True
+    audit(db, p, "contact.archived", contact_id)
     db.commit()
 
 

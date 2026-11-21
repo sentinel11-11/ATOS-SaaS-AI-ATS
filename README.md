@@ -17,6 +17,7 @@
 9. [Результаты проверки](docs/VALIDATION_RU.md) — что действительно запускалось и что не проверено.
 10. [Предпродакшен через SSH](docs/PREPROD_SSH_RU.md) — изолированная выкладка рядом с legacy ATS и безопасное обновление.
 11. [Проверка preprod-кандидата](docs/PREPROD_VALIDATION_RU.md) — актуальные backend/frontend/browser/smoke результаты и границы live UAT.
+12. [Текущее состояние по ТЗ 1.0](docs/CURRENT_STATE_RU.md) — проверки фазы 0 от 21.11.2026, воспроизводимые команды и открытые условия приёмки.
 
 ## Быстрый старт
 
@@ -32,7 +33,7 @@ bash scripts/start-dev.sh
 
 Bootstrap попросит пароль скрыто и выдаст tenant UUID. На этой машине установка уже выполнена; production-аккаунт и пароль автоматически не создавались. `start-dev.sh` поднимает API и четыре worker-процесса. Самостоятельная проверка: `curl --fail http://127.0.0.1:8000/health/ready`.
 
-Добавьте тестовый контакт с явным согласием, создайте кампанию Simulator, запустите и проверьте журнал. Для реальных интеграций используйте [профиль](deploy/beta-profile.env.example); masked passwords из старого UI не являются доступами. `ATS_AMOCRM_TOKEN` поддерживается напрямую. Секреты храните вне Git, не в React/SQLite/чатах.
+Для локального интеграционного прогона используйте HTTP/AMI smoke ниже. Для реальных интеграций используйте [профиль](deploy/beta-profile.env.example). Кампания требует настроенного маршрута, tenant binding и разрешённого направления. `ATS_AMOCRM_TOKEN` поддерживается напрямую. Секреты храните вне Git.
 
 ## Проверки
 
@@ -57,9 +58,11 @@ ATS_DATABASE_URL="postgresql+psycopg://postgres@/ats_smoke?host=$(pwd)/.runtime/
 ATS_DATABASE_URL="postgresql+psycopg://postgres@/ats_smoke?host=$(pwd)/.runtime/pgsocket" \
 ATS_PUBLIC_ORIGIN=http://127.0.0.1:8017 ATS_SECURE_COOKIES=false ATS_WORKER_POLL_SECONDS=.1 \
 .venv/bin/python scripts/smoke.py
+ATS_DATABASE_URL="postgresql+psycopg://postgres@/ats_smoke?host=$(pwd)/.runtime/pgsocket" \
+.venv/bin/python scripts/check-database.py
 ```
 
-Данные smoke синтетические, реальные звонки запрещены. Скрипт сам запускает и останавливает свои процессы; результат пишет в `artifacts/http-smoke.json`.
+Данные smoke синтетические. Скрипт запускает локальный AMI TCP-стенд и пять отдельных процессов, проходит проверки допуска маршрута Мультикома и проверяет завершение звонка в журнале. Параметры подключения дочерних процессов указывают на loopback-стенд. Результат сохраняется в `artifacts/http-smoke.json`. `check-database.py` проверяет восстановление в отдельную базу и откат последней миграции с повторным upgrade, затем сравнивает содержимое таблиц и удаляет временную копию. Отчёт сохраняется в `artifacts/database-check.json`.
 
 ## Возможности версии 0.2
 

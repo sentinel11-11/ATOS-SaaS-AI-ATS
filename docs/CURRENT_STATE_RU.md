@@ -1,0 +1,105 @@
+# Состояние ATOS ATS по ТЗ 1.0
+
+Проверено 21.11.2026 в облачной рабочей копии `/workspace/ATOS-SaaS-AI-ATS`, исходный commit `1c38954d2f1d94e018279a6e2054ef31d909e65b`. Результаты относятся к рабочим изменениям поверх этого commit. ТЗ задаёт порядок реализации в разделе 19. Эта итерация выполняет локальную часть фазы 0.
+
+По решению владельца от 21.11.2026 проверенные изменения публикуются прямым fast-forward push в `main`. GitHub Actions запускается на push. Результаты серверного применения и GitHub CI фиксируются после соответствующих проверок.
+
+## Исправления
+
+- Общая фикстура создаёт кампанию с действующим маршрутом `megafon_vats`, tenant binding, явным списком тестовых направлений и тестовыми настройками провайдера. Подмена применяется к HTTP-транспорту адаптера. API и worker выполняют `validate_route`. Тесты завершения доставляют событие отдельно от подтверждения Originate.
+- Архивирование контакта устанавливает `archived` и `blocked`, отзывает consent под блокировкой tenant, как в существующем API v2. История попыток, связи кампаний, входящие звонки и CRM-связи сохраняются. Scheduler и dispatch проверяют признак архива перед новым вызовом.
+- Терминальный webhook МегаФона без корректного номера после окна поиска сохраняется как `unmatched`. Создание исторического звонка требует нормализованного номера. Регрессионные случаи включают пустой, отсутствующий и некорректный номер.
+- `cryptography` обновлена с `47.0.0` до `50.0.2`, транзитивная `opentelemetry-api` с `1.45.1` до `1.45.2`. Обновлён `uv.lock`.
+- HTTP smoke использует настоящий AMI-адаптер и локальный TCP-стенд с проверкой Login. API и четыре worker-процесса работают отдельно. Стенд посылает повторное завершение и запоздалый ответ. Проверяются один Originate, выбранный Caller ID, alias `mcm-cli-9990000101`, одна попытка, дедупликация Inbox и одна CRM-задача.
+
+## Проверенные результаты
+
+Среда включает Python `3.12.14` и `3.13.5`, PostgreSQL `17.12`, Node `24.22.3`.
+
+| Проверка | Результат |
+|---|---|
+| Исходный backend baseline | 80 passed, 1 failed, 38 errors |
+| Backend Python 3.12 | 122 passed |
+| Backend Python 3.13 | 122 passed |
+| Ruff | passed |
+| Frontend Vitest | 4 файла, 14 passed |
+| TypeScript и Vite build | passed |
+| npm audit, включая dev dependencies | 0 известных уязвимостей |
+| pip-audit установленного окружения | 0 известных уязвимостей |
+| HTTP и отдельные worker-процессы | 100 запросов, concurrency 8, 0 ошибок, один Originate |
+| Alembic upgrade и check | head `0011`, модели соответствуют миграциям |
+| PostgreSQL dump/restore | совпали содержимое и число строк всех 31 таблиц |
+| Откат и повторный upgrade восстановленной копии | `0011 → 0010 → 0011`, содержимое таблиц совпало |
+
+Pytest сообщает одно предупреждение Starlette об использовании `httpx` в TestClient. Оба полных прогона завершились с кодом 0.
+
+Локальные JSON-отчёты сохраняются в `artifacts/http-smoke.json`, `artifacts/database-check.json` и `artifacts/pip-audit.json`. Они генерируются при прогоне. В GitHub Actions добавлена загрузка этих отчётов, process logs и backend JUnit XML. HTTP-метрики относятся к синтетической локальной нагрузке. Время восстановления записывается в JSON для конкретной тестовой базы.
+
+## Воспроизведение
+
+Выполнять из корня репозитория. Для облачной задачи используется существующая рабочая копия. Установка требует Docker, Python 3.12 и Node 24.
+
+```bash
+bash scripts/install-dev.sh
+source scripts/dev-env.sh
+```
+
+Однократно создать disposable базы, если они ещё отсутствуют.
+
+```bash
+docker exec atos-dev-postgres createdb -U postgres ats_test
+docker exec atos-dev-postgres createdb -U postgres ats_smoke
+```
+
+Запустить проверки.
+
+```bash
+export ATS_TEST_DATABASE_URL="postgresql+psycopg://postgres@/ats_test?host=$(pwd)/.runtime/pgsocket"
+.venv/bin/pytest -ra
+.venv/bin/ruff check src tests scripts migrations
+npm --prefix frontend test
+npm --prefix frontend run build
+npm --prefix frontend audit --audit-level=moderate
+XDG_CACHE_HOME=/workspace/.cache .venv/bin/pip-audit --cache-dir /workspace/.cache/pip-audit
+
+export ATS_DATABASE_URL="postgresql+psycopg://postgres@/ats_smoke?host=$(pwd)/.runtime/pgsocket"
+export ATS_LIVE_CALLS_ENABLED=false
+.venv/bin/alembic upgrade head
+.venv/bin/python scripts/smoke.py
+.venv/bin/python scripts/check-database.py
+```
+
+Для проверки второго Python используется отдельная среда и отдельная база.
+
+```bash
+UV_PROJECT_ENVIRONMENT=.runtime/venv313 uv sync --frozen --python /usr/bin/python3.13
+docker exec atos-dev-postgres createdb -U postgres ats_test313
+ATS_TEST_DATABASE_URL="postgresql+psycopg://postgres@/ats_test313?host=$(pwd)/.runtime/pgsocket" \
+  .runtime/venv313/bin/pytest -ra
+```
+
+`check-database.py` работает с базой `ats_smoke*`, создаёт уникальную временную базу восстановления и удаляет её после проверки. Исходную smoke-базу нужно освободить от пишущих процессов до сравнения. HTTP smoke завершает запущенные им процессы самостоятельно.
+
+## Начальная трассировка требований
+
+| Требование ТЗ | Доказательство текущей итерации | Открытая часть |
+|---|---|---|
+| Фаза 0, раздел 18.1 | Два полных backend-прогона, frontend/build, Ruff, security audit, migration check | GitHub CI и branch protection |
+| R-04, R-07, T27, T39 | Сохранение истории при архивировании, phone snapshot, дедупликация AMI/webhook | Сверка CDR/CEL и провайдерских событий |
+| T16, T17 | API → scheduler → AMI TCP → inbox → журнал, CLI и alias в Originate | SIP From/PAI, звонок через Asterisk и RTP |
+| T26, T40 | Тесты потерянного dispatch lease и отзыва согласия до отправки | Reconciliation с Asterisk |
+| R-08, T48 | Dump/restore с полным сравнением таблиц, rollback/upgrade последней миграции | Production-like объём, RPO/RTO VPS и восстановление конфигурации |
+| D-09 | Этот отчёт и обновлённый раздел запуска README | Доказательства дальнейших фаз |
+
+## Условия завершения фазы 0
+
+1. Выполнить GitHub Actions на опубликованных изменениях и проверить обязательные статусы `backend (3.12)`, `backend (3.13)`, `frontend`, `integration`, `security`.
+2. Проверить настройки `main` и GitHub checks с учётом выбранной владельцем прямой публикации. Прокси среды вернул `403` при CONNECT к `api.github.com`. Разрешение домена добавлено в черновик конфигурации среды, применение ожидается в настройках.
+3. Снять inventory VPS `89.223.127.145`, каталог `/opt/ats-beta`, действующий commit, schema head, службы, Asterisk и конфигурационные флаги без значений секретов. SSH к порту 22 вернул `Connection refused` в обоих проверенных сетевых контекстах. Адрес и каталог предоставлены владельцем, фактическое состояние сервера ожидает проверки.
+4. Проверить backup/restore и порядок отката на копии серверного контура с согласованными RPO/RTO. Текущая проверка охватывает тестовые данные PostgreSQL.
+
+Следующий этап по ТЗ требует проверки изменений, подготовленных в PR #7, AMI-профиля, 15 aliases и разрешённого тестового направления на VPS. Приёмка SIP, RTP, operator bridge и amoCRM требует live UAT и отдельного протокола.
+
+## Порядок отката этой итерации
+
+Изменения используют схему `0011`. Для отката кода выбрать предыдущий проверенный release, установить зависимости из его lockfile и пересобрать frontend. Перед изменением серверного контура создать проверенный backup и снять состояние активных разговоров. Серверный порядок обновления и отката уточняется после inventory Asterisk и служб. В облачной проверке `.venv` Python 3.12 восстановлена после прерванного переключения интерпретатора, оба полных тестовых прогона выполнены заново в отдельных средах.

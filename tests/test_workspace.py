@@ -38,6 +38,8 @@ def contact(logged, **changes):
 
 
 def test_contacts_search_edit_archive_preserves_history(logged, prepared, factory):
+    from ats.services import ingest
+
     _, cid, _ = prepared
     assert logged.get(BASE + "/contacts", params={"q": "9990000101"}).json()["total"] == 1
     result = logged.put(
@@ -54,9 +56,18 @@ def test_contacts_search_edit_archive_preserves_history(logged, prepared, factor
     worker = Worker(factory)
     worker.schedule()
     worker.telephony()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        ingest(db, attempt.tenant_id, attempt.route, "completed", attempt.external_id, "completed")
+    worker.inbox()
     assert logged.delete(BASE + f"/contacts/{cid}").status_code == 204
     assert logged.get(BASE + "/contacts").json()["total"] == 0
     assert len(logged.get(BASE + f"/contacts/{cid}/history").json()["calls"]) == 1
+    with factory() as db:
+        row = db.get(Contact, UUID(cid))
+        assert row.archived and row.blocked and not row.consent
+        assert db.scalar(select(CampaignItem)).contact_id == row.id
+        assert db.scalar(select(Attempt)).status == "completed"
 
 
 def test_import_lists_duplicates_and_consent(logged):
@@ -224,9 +235,15 @@ def test_campaign_edit_clear_and_archive(logged, prepared, factory):
 
 
 def test_calls_reports_timeline_and_csv(logged, prepared, factory):
+    from ats.services import ingest
+
     worker = Worker(factory)
     worker.schedule()
     worker.telephony()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        ingest(db, attempt.tenant_id, attempt.route, "completed", attempt.external_id, "completed")
+    worker.inbox()
     result = logged.get(BASE + "/calls").json()
     assert result["total"] == 1 and result["items"][0]["contact_name"] == "Тест"
     aid = result["items"][0]["id"]

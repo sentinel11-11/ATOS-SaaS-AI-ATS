@@ -233,7 +233,9 @@ def test_transaction_rolls_back_campaign_items_and_audit(factory, tenants):
         assert db.scalar(select(func.count()).select_from(Audit)) == 0
 
 
-def test_live_route_is_explicitly_disabled(logged, prepared, factory):
+def test_live_route_is_explicitly_disabled(logged, prepared, factory, monkeypatch):
+    monkeypatch.setenv("ATS_LIVE_CALLS_ENABLED", "false")
+    settings.cache_clear()
     campaign_id, _, _ = prepared
     with factory.begin() as db:
         db.get(Campaign, UUID(campaign_id)).route = "multicom_ami"
@@ -437,9 +439,10 @@ def test_unmatched_megafon_history_is_kept_for_analytics(factory, tenants):
         assert db.scalar(select(Inbox)).status == "processed"
 
 
-def test_orphan_is_bounded(factory, tenants):
+@pytest.mark.parametrize("phone", [None, "", "invalid", "123"])
+def test_orphan_is_bounded(factory, tenants, phone):
     with factory.begin() as db:
-        ingest(db, tenants[0], "megafon_vats", "orphan", "missing", "completed")
+        ingest(db, tenants[0], "megafon_vats", "orphan", "missing", "completed", {"phone": phone})
     with factory.begin() as db:
         assert not drain_inbox(db)
         row = db.scalar(select(Inbox))
@@ -449,6 +452,7 @@ def test_orphan_is_bounded(factory, tenants):
     with factory.begin() as db:
         drain_inbox(db)
         assert db.scalar(select(Inbox)).status == "unmatched"
+        assert db.scalar(select(func.count()).select_from(HistoricalCall)) == 0
 
 
 def test_crash_after_dispatch_does_not_redial(factory, prepared):
@@ -554,6 +558,10 @@ def test_crm_failure_policy(factory, prepared, failure, expected):
     worker = Worker(factory, crm=CRM())
     worker.schedule()
     worker.telephony()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        ingest(db, attempt.tenant_id, attempt.route, "completed", attempt.external_id, "completed")
+    worker.inbox()
     worker.crm_job()
     with factory() as db:
         row = db.scalar(select(Outbox).where(Outbox.kind == "crm"))
@@ -566,6 +574,10 @@ def test_crm_lost_lease_is_not_blindly_retried(factory, prepared):
     worker = Worker(factory)
     worker.schedule()
     worker.telephony()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        ingest(db, attempt.tenant_id, attempt.route, "completed", attempt.external_id, "completed")
+    worker.inbox()
     with factory.begin() as db:
         job = claim(db, "crm")
         db.get(Outbox, job[0]).lease_until = now() - timedelta(seconds=1)

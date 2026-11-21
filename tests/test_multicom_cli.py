@@ -60,8 +60,9 @@ def test_ami_uses_selected_did_endpoint_when_enabled():
 
 def test_ami_rejects_missing_caller_identity_in_rotation_mode():
     ami = AMI(_config("mcm-cli-"), lambda _: None)
-    with pytest.raises(Rejected, match=""):
+    with pytest.raises(Rejected) as error:
         ami.originate(uuid4(), "+79255497254", caller_id="")
+    assert error.value.code == "ami_caller_identity_not_verified"
     with pytest.raises(Rejected):
         ami.originate(uuid4(), "+79255497254", caller_id="00083819")
 

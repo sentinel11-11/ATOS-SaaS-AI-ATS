@@ -434,7 +434,13 @@ def drain_inbox(db):
         # Do not starve newer events; bounded retry window handled by received_at ordering.
         row.status = "unmatched" if now() - row.received_at > timedelta(minutes=5) else "orphan"
         row.available_at = now() + timedelta(seconds=5)
-        if row.route == "megafon_vats" and row.event in {"completed", "failed"} and row.status == "unmatched":
+        history_phone = normalize_phone((row.payload or {}).get("phone", ""))
+        if (
+            row.route == "megafon_vats"
+            and row.event in {"completed", "failed"}
+            and row.status == "unmatched"
+            and history_phone
+        ):
             # A VATS account can receive history callbacks for calls that were
             # placed outside ATS. Preserve those terminal calls in the same
             # immutable journal used by the analytics views.
@@ -452,7 +458,7 @@ def drain_inbox(db):
                     HistoricalCall(
                         tenant_id=row.tenant_id,
                         contact_name="",
-                        phone=normalize_phone(payload.get("phone", "")) or str(payload.get("phone", ""))[:32],
+                        phone=history_phone,
                         campaign_name="",
                         route=row.route,
                         direction="in" if str(payload.get("direction", "")).lower() == "in" else "out",

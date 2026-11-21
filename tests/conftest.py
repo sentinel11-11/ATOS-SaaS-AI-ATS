@@ -1,7 +1,9 @@
 import os
 import subprocess
+import sys
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -29,7 +31,7 @@ def factory():
         ATS_LIVE_CALLS_ENABLED="false",
     )
     settings.cache_clear()
-    subprocess.run([".venv/bin/alembic", "upgrade", "head"], check=True)
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True)
     engine = create_engine(url)
     yield sessionmaker(engine, expire_on_commit=False)
     engine.dispose()
@@ -89,7 +91,34 @@ def logged(client, tenants):
 
 
 @pytest.fixture
-def prepared(logged):
+def provider_config(tenants, monkeypatch):
+    """Configure a real route, replacing only the provider's HTTP transport."""
+    from ats.adapters import Megafon
+
+    destinations = ["+79990000101", *(f"+79990001{i:03d}" for i in range(10))]
+    for name, value in {
+        "ATS_LIVE_CALLS_ENABLED": "true",
+        "ATS_TELEPHONY_TENANT_ID": str(tenants[0]),
+        "ATS_TEST_DESTINATIONS": ",".join(destinations),
+        "ATS_MEGAFON_URL": "https://fixture.megafon.ru",
+        "ATS_MEGAFON_USER": "fixture-operator",
+        "ATS_MEGAFON_API_KEY": "fixture-api-key",
+        "ATS_MEGAFON_CRM_TOKEN": "fixture-crm-token",
+    }.items():
+        monkeypatch.setenv(name, value)
+    settings.cache_clear()
+
+    def makecall(request):
+        assert request.url == "https://fixture.megafon.ru/crmapi/v1/makecall"
+        return httpx.Response(200, json={"callid": str(uuid4())})
+
+    with httpx.Client(transport=httpx.MockTransport(makecall)) as client:
+        monkeypatch.setattr("ats.workers.Megafon", lambda config: Megafon(config, client))
+        yield
+
+
+@pytest.fixture
+def prepared(logged, provider_config):
     contact = logged.post(
         "/api/v1/contacts",
         json={
@@ -103,6 +132,7 @@ def prepared(logged):
     assert contact.status_code == 201
     data = {
         "name": "Beta",
+        "route": "megafon_vats",
         "contact_ids": [contact.json()["id"]],
         "window_start": 0,
         "window_end": 24,

@@ -50,6 +50,8 @@ def test_legacy_template_editor_accepts_json_and_preserves_graph(logged, tenants
 
 
 def test_legacy_caller_pool_partial_edits_reset_actual_counters(logged, prepared, factory):
+    # Allocate the historical call before disabling and quarantining its DID.
+    Worker(factory).schedule()
     nid = saved(logged, "/numbers/save", {
         "number": "+7 (999) 000-00-20", "label": "MCM", "provider": "ami", "kind": "sip",
         "daily_limit": 5, "weight": 4,
@@ -61,7 +63,6 @@ def test_legacy_caller_pool_partial_edits_reset_actual_counters(logged, prepared
     )
     saved(logged, "/numbers/save", {**number, "active": True, "enabled_outgoing": False})
     saved(logged, "/numbers/quarantine", {"id": nid, "on": True})
-    Worker(factory).schedule()
     with factory.begin() as db:
         call = db.scalar(select(Attempt))
         call.caller_number, call.answered_at = "9990000020", now()

@@ -25,7 +25,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --frozen
       - run: uv run ruff check src tests scripts migrations
-      - run: uv run pytest
+      - run: uv run pytest --junitxml=artifacts/backend-tests.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-evidence-${{ matrix.python-version }}
+          path: artifacts/backend-tests.xml
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -43,6 +48,59 @@ jobs:
       - run: npm run build
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=moderate
-      - name: Report development dependency advisories
+      - name: Audit all frontend dependencies
         run: npm audit --audit-level=moderate
-        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+  integration:
+    needs: frontend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test-only-in-ci
+          POSTGRES_DB: ats_smoke
+        ports: ['5432:5432']
+        options: --health-cmd=pg_isready --health-interval=2s --health-timeout=3s --health-retries=20
+    env:
+      ATS_DATABASE_URL: postgresql+psycopg://postgres:test-only-in-ci@localhost:5432/ats_smoke
+      ATS_LIVE_CALLS_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - run: uv run alembic upgrade head
+      - run: uv run python scripts/smoke.py
+      - run: uv run python scripts/check-database.py --container "${{ job.services.postgres.id }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-evidence
+          path: |
+            artifacts/http-smoke.json
+            artifacts/database-check.json
+            artifacts/smoke-process-*.log
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - run: mkdir -p artifacts
+      - run: uv run pip-audit --progress-spinner off --format json --output artifacts/pip-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-evidence
+          path: artifacts/pip-audit.json
