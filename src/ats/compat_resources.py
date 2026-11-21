@@ -6,6 +6,7 @@ SQLite engine, accept a tenant from a request body, or bypass dispatch safeguard
 
 import json
 from datetime import timedelta
+from math import ceil
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -167,7 +168,7 @@ def number_projection(row, stats, tenant, timestamp):
     timezone = ZoneInfo(tenant.timezone)
     day_start = timestamp.astimezone(timezone).replace(hour=0, minute=0, second=0, microsecond=0)
     cooldown = row.last_used_at + timedelta(seconds=row.cooldown_seconds) if row.last_used_at else None
-    counts = stats.get(row.phone, (0, 0, 0))
+    counts = stats.get(row.phone, (0, 0, 0, 0))
     return {
         "id": row.id,
         "number": row.phone,
@@ -184,10 +185,13 @@ def number_projection(row, stats, tenant, timestamp):
         "cooldown_until": cooldown.isoformat() if cooldown else "",
         "cooling": bool(cooldown and cooldown > timestamp),
         "cooldown_seconds": row.cooldown_seconds,
+        "cooldown_remaining_seconds": max(0, ceil((cooldown - timestamp).total_seconds()))
+        if cooldown else 0,
         "daily_date": day_start.date().isoformat(),
         "daily_count": counts[0],
         "dialed_total": counts[1],
         "answered_total": counts[2],
+        "since_reset_count": counts[3],
         "carrier": row.carrier,
         "provider_ref": row.provider_ref,
     }
@@ -210,17 +214,19 @@ def numbers(
     ).all()
     # One aggregate query for the whole page, never one query per number.
     stats = {
-        phone: (daily, total, answered)
-        for phone, daily, total, answered in db.execute(
+        phone: (daily, total, answered, since_reset)
+        for phone, daily, total, answered, since_reset in db.execute(
             select(
                 CallerNumber.phone,
                 func.count(Attempt.id).filter(
                     Attempt.created_at >= day_start,
-                    (CallerNumber.counters_reset_at.is_(None))
-                    | (Attempt.created_at >= CallerNumber.counters_reset_at),
                 ),
                 func.count(Attempt.id),
                 func.count(Attempt.id).filter(Attempt.answered_at.is_not(None)),
+                func.count(Attempt.id).filter(
+                    (CallerNumber.counters_reset_at.is_(None))
+                    | (Attempt.created_at >= CallerNumber.counters_reset_at),
+                ),
             )
             .outerjoin(
                 Attempt,
@@ -293,9 +299,9 @@ def number_reset(p=Depends(admin), db=Depends(session)):
     rows = db.scalars(TenantRepository(db, p.tenant_id).query(CallerNumber).with_for_update()).all()
     timestamp = now()
     for row in rows:
-        row.counters_reset_at, row.last_used_at, row.quarantined = timestamp, None, False
+        row.counters_reset_at = timestamp
         audit(db, p, "number.counters_reset", row.id)
-    # Tenant billing/daily quotas and immutable call history are never reset.
+    # Display periods do not release quarantine, cooldown, or actual quota usage.
     db.commit()
     return {"ok": True, "reset": len(rows)}
 

@@ -2,7 +2,8 @@
 
 import csv
 import io
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from fractions import Fraction
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -187,7 +188,7 @@ def retry_failed(db, p, campaign):
 
 
 def select_caller(db, tenant, route, config=None, operator=None):
-    """Caller selection shares the tenant allocation lock; counts persisted attempts, no reset races."""
+    """Reserve under the tenant lock. Multicom uses daily weighted-least-used selection."""
     if route not in {"multicom_ami", "megafon_vats"}:
         return ""
     rules = getattr(config, "ami_operator_number_map", {}) if route == "multicom_ami" else {}
@@ -209,11 +210,22 @@ def select_caller(db, tenant, route, config=None, operator=None):
         if allowed is not None and fallback not in allowed:
             raise Problem(409, "operator_caller_mapping_missing")
         return fallback
+    timestamp = now()
     day_start = (
-        now()
+        timestamp
         .astimezone(ZoneInfo(tenant.timezone))
         .replace(hour=0, minute=0, second=0, microsecond=0)
     )
+    usage = dict(db.execute(
+        select(Attempt.caller_number, func.count(Attempt.id))
+        .where(
+            Attempt.tenant_id == tenant.id,
+            Attempt.created_at >= day_start,
+            Attempt.caller_number.in_([number.phone for number in numbers]),
+        )
+        .group_by(Attempt.caller_number)
+    ).all())
+    eligible = []
     for number in numbers:
         if not number.enabled or not number.verified or number.quarantined:
             continue
@@ -223,22 +235,23 @@ def select_caller(db, tenant, route, config=None, operator=None):
             continue
         if (
             number.last_used_at
-            and number.last_used_at + timedelta(seconds=number.cooldown_seconds) > now()
+            and number.last_used_at + timedelta(seconds=number.cooldown_seconds) > timestamp
         ):
             continue
-        count = db.scalar(
-            select(func.count())
-            .select_from(Attempt)
-            .where(
-                Attempt.tenant_id == tenant.id,
-                Attempt.caller_number == number.phone,
-                Attempt.created_at >= day_start,
-            )
-        )
-        if count < number.daily_limit:
-            number.last_used_at = now()
-            return number.phone
-    raise Problem(409, "caller_pool_exhausted")
+        if usage.get(number.phone, 0) < number.daily_limit:
+            eligible.append(number)
+    if not eligible:
+        raise Problem(409, "caller_pool_exhausted")
+    if route == "multicom_ami":
+        selected = min(eligible, key=lambda number: (
+            Fraction(usage.get(number.phone, 0), max(1, number.weight)),
+            number.last_used_at or datetime.min.replace(tzinfo=UTC),
+            number.id.int,
+        ))
+    else:
+        selected = eligible[0]
+    selected.last_used_at = timestamp
+    return selected.phone
 
 
 def run_scenario(raw, answers, name="Тест"):

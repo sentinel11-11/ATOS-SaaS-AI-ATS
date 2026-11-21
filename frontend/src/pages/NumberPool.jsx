@@ -1,11 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Shield, Power, Trash2, Edit2, ShieldAlert, PhoneCall, RefreshCw, Sliders } from 'lucide-react';
 import { api } from '../api';
 import Modal from '../components/Modal';
 
+const validCooldown = (value) => Number.isInteger(value) && value >= 0 && value <= 86400;
+
 export default function NumberPool({ addToast, refreshKey }) {
   const [numbers, setNumbers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const readVersion = useRef(0);
+  const inFlightReads = useRef(0);
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -18,11 +22,21 @@ export default function NumberPool({ addToast, refreshKey }) {
     kind: 'sip',
     daily_limit: 100,
     weight: 1,
+    cooldown_seconds: 60,
   });
 
-  const loadNumbers = async () => {
-    setLoading(true);
-    const res = await api('/numbers');
+  const loadNumbers = async (silent = false) => {
+    if (silent && inFlightReads.current) return;
+    const version = ++readVersion.current;
+    inFlightReads.current += 1;
+    if (!silent) setLoading(true);
+    let res;
+    try {
+      res = await api('/numbers', { cache: false });
+    } finally {
+      inFlightReads.current -= 1;
+    }
+    if (version !== readVersion.current) return;
     if (res && res.numbers) {
       setNumbers(Array.isArray(res.numbers) ? res.numbers : []);
     }
@@ -31,6 +45,11 @@ export default function NumberPool({ addToast, refreshKey }) {
 
   useEffect(() => {
     loadNumbers();
+    const timer = setInterval(() => loadNumbers(true), 5000);
+    return () => {
+      clearInterval(timer);
+      readVersion.current += 1;
+    };
   }, [refreshKey]);
 
   const handleToggleActive = async (id, currentActive, verified, provider) => {
@@ -66,7 +85,7 @@ export default function NumberPool({ addToast, refreshKey }) {
   const handleResetCounters = async () => {
     const res = await api('/numbers/reset', { method: 'POST', body: {} });
     if (res && res.ok) {
-      addToast('Суточные счётчики и статусы остывания сброшены', 'ok');
+      addToast('Начат новый период статистики', 'ok');
       loadNumbers();
     } else {
       addToast('Ошибка сброса счётчиков', 'err');
@@ -75,6 +94,9 @@ export default function NumberPool({ addToast, refreshKey }) {
 
   const handleAddNumber = async () => {
     if (!newNumber.phone) return addToast('Укажите номер телефона', 'warn');
+    if (!validCooldown(newNumber.cooldown_seconds)) {
+      return addToast('Охлаждение должно быть целым числом от 0 до 86400 секунд', 'warn');
+    }
 
     const res = await api('/numbers/save', {
       body: {
@@ -84,13 +106,14 @@ export default function NumberPool({ addToast, refreshKey }) {
         kind: newNumber.kind,
         daily_limit: newNumber.daily_limit,
         weight: newNumber.weight,
+        cooldown_seconds: newNumber.cooldown_seconds,
       },
     });
 
     if (res && res.ok) {
       addToast('Номер добавлен в пул', 'ok');
       setShowAddModal(false);
-      setNewContactNumber({ phone: '', label: '', provider: 'multicom_ami', kind: 'sip', daily_limit: 100, weight: 1 });
+      setNewContactNumber({ phone: '', label: '', provider: 'multicom_ami', kind: 'sip', daily_limit: 100, weight: 1, cooldown_seconds: 60 });
       loadNumbers();
     } else {
       addToast('Ошибка добавления: ' + (res?.error || '?'), 'err');
@@ -99,6 +122,10 @@ export default function NumberPool({ addToast, refreshKey }) {
 
   const handleSaveEditedNumber = async () => {
     if (!editingNumber) return;
+    const cooldown = editingNumber.cooldown_seconds ?? 60;
+    if (!validCooldown(cooldown)) {
+      return addToast('Охлаждение должно быть целым числом от 0 до 86400 секунд', 'warn');
+    }
     if (editingNumber.provider === 'multicom_ami' && editingNumber.active && !editingNumber.verified) {
       return addToast('Неподтверждённый номер нельзя включить в ротацию', 'warn');
     }
@@ -111,6 +138,7 @@ export default function NumberPool({ addToast, refreshKey }) {
         kind: editingNumber.kind,
         daily_limit: editingNumber.daily_limit,
         weight: editingNumber.weight,
+        cooldown_seconds: cooldown,
         active: editingNumber.active,
         verified: editingNumber.verified,
         enabled_outgoing: editingNumber.enabled_outgoing,
@@ -147,16 +175,17 @@ export default function NumberPool({ addToast, refreshKey }) {
           <h1 className="text-xl font-bold text-white">Пул исходящих А-номеров</h1>
           <p className="text-xs text-muted">
             В пуле {numbersList.length} · подтверждены {numbersList.filter((n) => n.verified).length} ·
-            активны {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false).length}
+            активны {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false).length} ·
+            доступны по лимитам {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false && !n.cooling && (n.daily_count || 0) < (n.daily_limit || 100)).length}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={handleResetCounters}
             className="px-3.5 py-2 rounded-xl bg-line/60 hover:bg-line text-white font-semibold text-xs flex items-center gap-1.5 transition-all"
-            title="Сбросить суточные лимиты и таймеры остывания"
+            title="Начать новый период статистики; ограничения номера учитываются отдельно"
           >
-            <RefreshCw className="w-3.5 h-3.5 text-acc2" /> Сбросить счётчики
+            <RefreshCw className="w-3.5 h-3.5 text-acc2" /> Сбросить счётчик периода
           </button>
           <button
             onClick={() => setShowAddModal(true)}
@@ -217,7 +246,12 @@ export default function NumberPool({ addToast, refreshKey }) {
 
                       {n.cooling && (
                         <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-warn/20 text-warn border border-warn/30">
-                          Остывает
+                          Остывает{n.cooldown_remaining_seconds != null ? ` · ${n.cooldown_remaining_seconds} с` : ''}
+                        </span>
+                      )}
+                      {n.daily_count >= n.daily_limit && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-warn/20 text-warn border border-warn/30">
+                          Суточный лимит исчерпан
                         </span>
                       )}
                     </div>
@@ -261,18 +295,26 @@ export default function NumberPool({ addToast, refreshKey }) {
                   </div>
 
                   <div>
-                    <span className="text-dim text-[11px] block">Приоритет (Вес)</span>
+                    <span className="text-dim text-[11px] block">Вес в ротации</span>
                     <span className="font-semibold text-white">{n.weight || 1}</span>
                   </div>
 
                   <div>
-                    <span className="text-dim text-[11px] block">Набрано звонков</span>
+                    <span className="text-dim text-[11px] block">Попыток всего</span>
                     <span className="font-semibold text-muted">{n.dialed_total || 0}</span>
                   </div>
 
                   <div>
-                    <span className="text-dim text-[11px] block">Успешных ответов</span>
+                    <span className="text-dim text-[11px] block">Ответов сети</span>
                     <span className="font-semibold text-ok">{n.answered_total || 0}</span>
+                  </div>
+                  <div>
+                    <span className="text-dim text-[11px] block">Охлаждение между попытками</span>
+                    <span className="font-semibold text-white">{n.cooldown_seconds ?? 60} с</span>
+                  </div>
+                  <div>
+                    <span className="text-dim text-[11px] block">Попыток за период</span>
+                    <span className="font-semibold text-muted">{n.since_reset_count ?? n.dialed_total ?? 0}</span>
                   </div>
                 </div>
 
@@ -372,7 +414,7 @@ export default function NumberPool({ addToast, refreshKey }) {
             </div>
 
             <div>
-              <label className="font-semibold text-muted block mb-1">Вес в ротации (Приоритет 1-10)</label>
+              <label className="font-semibold text-muted block mb-1">Вес в ротации (1–10)</label>
               <input
                 type="number"
                 min="1"
@@ -381,6 +423,21 @@ export default function NumberPool({ addToast, refreshKey }) {
                 value={newNumber.weight}
                 onChange={(e) => setNewContactNumber({ ...newNumber, weight: parseInt(e.target.value) || 1 })}
               />
+              <p className="text-[11px] text-muted mt-1">Вес задаёт относительную долю попыток среди доступных номеров.</p>
+            </div>
+            <div>
+              <label htmlFor="new-number-cooldown" className="font-semibold text-muted block mb-1">Охлаждение номера, секунд</label>
+              <input
+                id="new-number-cooldown"
+                type="number"
+                min="0"
+                max="86400"
+                step="1"
+                className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
+                value={newNumber.cooldown_seconds}
+                onChange={(e) => setNewContactNumber({ ...newNumber, cooldown_seconds: e.target.value === '' ? '' : Number(e.target.value) })}
+              />
+              <p className="text-[11px] text-muted mt-1">Минимальный интервал от начала предыдущей попытки с этого А-номера.</p>
             </div>
           </div>
 
@@ -456,7 +513,7 @@ export default function NumberPool({ addToast, refreshKey }) {
               </div>
 
               <div>
-                <label className="font-semibold text-muted block mb-1">Вес в ротации (Приоритет 1-10)</label>
+                <label className="font-semibold text-muted block mb-1">Вес в ротации (1–10)</label>
                 <input
                   type="number"
                   min="1"
@@ -465,6 +522,21 @@ export default function NumberPool({ addToast, refreshKey }) {
                   value={editingNumber.weight || 1}
                   onChange={(e) => setEditingNumber({ ...editingNumber, weight: parseInt(e.target.value) || 1 })}
                 />
+                <p className="text-[11px] text-muted mt-1">Вес задаёт относительную долю попыток среди доступных номеров.</p>
+              </div>
+              <div>
+                <label htmlFor="edit-number-cooldown" className="font-semibold text-muted block mb-1">Охлаждение номера, секунд</label>
+                <input
+                  id="edit-number-cooldown"
+                  type="number"
+                  min="0"
+                  max="86400"
+                  step="1"
+                  className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc font-semibold"
+                  value={editingNumber.cooldown_seconds ?? 60}
+                  onChange={(e) => setEditingNumber({ ...editingNumber, cooldown_seconds: e.target.value === '' ? '' : Number(e.target.value) })}
+                />
+                <p className="text-[11px] text-muted mt-1">Минимальный интервал от начала предыдущей попытки с этого А-номера.</p>
               </div>
             </div>
 

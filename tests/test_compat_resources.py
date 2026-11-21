@@ -74,8 +74,9 @@ def test_legacy_caller_pool_partial_edits_reset_actual_counters(logged, prepared
     assert number["cooling"] and number["quarantined"]
     saved(logged, "/numbers/reset", {})
     number = logged.get(BASE + "/numbers").json()["numbers"][0]
-    assert number["daily_count"] == 0 and number["dialed_total"] == 1
-    assert not number["cooling"] and not number["quarantined"]
+    assert number["daily_count"] == 1 and number["dialed_total"] == 1
+    assert number["since_reset_count"] == 0
+    assert number["cooling"] and number["quarantined"]
     assert number["enabled_outgoing"] is False
     with factory() as db:
         assert db.scalar(select(Attempt)) is not None
