@@ -129,6 +129,15 @@ def validate_route(
                 409, "caller_pool_empty",
                 "Добавьте и подтвердите А-номер Мультикома в пуле либо настройте разрешённый Caller ID.",
             )
+        if (
+            config.ami_answer_context == "ats-beta-echo"
+            and mode is not None and (mode != "message" or template_id)
+        ):
+            raise Problem(
+                409, "echo_test_requires_plain_message",
+                "Для теста Echo выберите «Информатор» и «Без шаблона». "
+                "Для обычной кампании верните обработку после ответа «Сценарий кампании».",
+            )
         if mode is not None and (mode != "message" or template_id) and not config.media_enabled:
             raise Problem(
                 409, "media_not_configured",

@@ -119,3 +119,21 @@ it('saves the Multicom endpoint prefix through the settings form', async () => {
     body: { provider_config: { ami: { trunk: 'mcm', cli_endpoint_prefix: 'mcm-cli-' } } },
   }));
 });
+
+it('saves the bounded Echo answer context through the settings form', async () => {
+  api.mockImplementation(async (path, options) => {
+    if (path === '/settings/raw' && !options?.body) return {
+      provider_config: { ami: { answer_context: 'ats-beta-answer' } },
+    };
+    if (path === '/settings') return { settings: { provider: 'multicom_ami' } };
+    return { ok: true, users: [], pipelines: [] };
+  });
+  render(<Settings addToast={vi.fn()} />);
+  const answerContext = await screen.findByLabelText('Обработка после ответа');
+  fireEvent.change(answerContext, { target: { value: 'ats-beta-echo' } });
+  expect(screen.getByText(/Echo вернёт ваш голос/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить все настройки' }));
+  await waitFor(() => expect(api).toHaveBeenCalledWith('/settings/raw', {
+    body: { provider_config: { ami: { answer_context: 'ats-beta-echo' } } },
+  }));
+});

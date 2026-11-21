@@ -1042,6 +1042,28 @@ export default function Settings({ addToast, refreshKey }) {
             />
           </div>
           <div>
+            <label htmlFor="ami-answer-context" className="text-muted block mb-1 font-semibold">Обработка после ответа</label>
+            <select
+              id="ami-answer-context"
+              className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
+              value={ami.answer_context || 'ats-beta-answer'}
+              onChange={(e) => updateProvider('ami', 'answer_context', e.target.value)}
+            >
+              <option value="ats-beta-answer">Сценарий кампании</option>
+              <option value="ats-beta-echo">Тест звука Echo — до 30 секунд</option>
+              {ami.answer_context && !['ats-beta-answer', 'ats-beta-echo'].includes(ami.answer_context) && (
+                <option value={ami.answer_context}>Настроенный контекст ({ami.answer_context})</option>
+              )}
+            </select>
+            {ami.answer_context === 'ats-beta-echo' && (
+              <p className="text-xs text-muted mt-1">
+                Установите диагностический контекст на Asterisk, затем используйте «Информатор» без шаблона.
+                После ответа произнесите фразу — Echo вернёт ваш голос. Завершение по # или через 30 секунд.
+                Выбор действует для всех исходящих кампаний Мультикома этого рабочего пространства.
+              </p>
+            )}
+          </div>
+          <div>
             <label className="text-muted block mb-1 font-semibold">Контексты входящих (через запятую)</label>
             <input
               className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"

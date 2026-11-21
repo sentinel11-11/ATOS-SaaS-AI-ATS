@@ -648,7 +648,8 @@ export default function Campaigns({ addToast, refreshKey }) {
               {editingCamp.flow === 'message' && editingCamp.route === 'multicom_ami' && (
                 <p className="md:col-span-4 text-xs text-muted">
                   Для первого тестового звонка выберите «Без шаблона».
-                  После ответа Asterisk воспроизведёт стандартное сообщение hello-world.
+                  При стандартной обработке после ответа Asterisk воспроизведёт короткое сообщение hello-world
+                  и сразу завершит звонок. Для проверки звука можно выбрать тест Echo в настройках AMI.
                 </p>
               )}
 
