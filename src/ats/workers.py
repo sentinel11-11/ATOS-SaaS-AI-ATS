@@ -710,29 +710,16 @@ class Worker:
                     break
             pipelines, statuses, users = reference_data(crm, raw_contacts)
             with self.factory.begin() as db:
+                db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
                 repo = TenantRepository(db, tenant_id)
                 row_job = repo.get(AmoSyncJob, UUID(payload["job_id"]), lock=True)
                 row_job.status = "running"
                 counts = {"created": 0, "updated": 0, "archived": 0, "skipped": 0}
-                event_payload = payload.get("payload") or {}
-                deleted = event_payload.get("contacts", {}).get("delete", []) if isinstance(event_payload, dict) else []
-                for entry in deleted if isinstance(deleted, list) else []:
-                    try:
-                        deleted_id = int(entry.get("id") if isinstance(entry, dict) else entry)
-                    except (TypeError, ValueError):
-                        continue
-                    deleted_row = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == deleted_id).with_for_update())
-                    if deleted_row:
-                        deleted_row.archived, deleted_row.blocked, deleted_row.consent = True, True, False
-                        counts["archived"] += 1
                 seen = set()
                 for raw in raw_contacts:
                     crm_id = int(raw["crm_contact_id"])
-                    existing = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == crm_id).with_for_update())
                     if raw.get("archived"):
-                        if existing:
-                            existing.archived, existing.blocked, existing.consent = True, True, False
-                            counts["archived"] += 1
+                        counts["skipped"] += 1
                         continue
                     try:
                         phone = phone_from_import(raw.get("phone", ""))
@@ -743,10 +730,14 @@ class Worker:
                         counts["skipped"] += 1
                         continue
                     seen.add(phone)
+                    existing = db.scalar(repo.query(Contact).where(Contact.phone == phone).with_for_update())
                     if existing is None:
-                        existing = db.scalar(repo.query(Contact).where(Contact.phone == phone).with_for_update())
-                    phone_owner = db.scalar(repo.query(Contact).where(Contact.phone == phone).with_for_update())
-                    if phone_owner is not None and (existing is None or phone_owner.id != existing.id):
+                        mapped = db.scalars(repo.query(Contact).where(Contact.crm_contact_id == crm_id).limit(2).with_for_update()).all()
+                        if len(mapped) > 1:
+                            counts["skipped"] += 1
+                            continue
+                        existing = mapped[0] if mapped else None
+                    if existing and existing.crm_contact_id not in (None, crm_id):
                         counts["skipped"] += 1
                         continue
                     if existing is None:
@@ -754,7 +745,7 @@ class Worker:
                         counts["created"] += 1
                     else:
                         existing.name, existing.phone, existing.email, existing.group = raw["name"], phone, raw["email"], raw["group"]
-                        existing.crm_contact_id, existing.source, existing.archived = crm_id, "amoCRM", False
+                        existing.crm_contact_id, existing.source = crm_id, "amoCRM"
                         existing.crm_context = contact_context(raw, pipelines, statuses, users)
                         counts["updated"] += 1
                 row_job.counts, row_job.status, row_job.updated_at = counts, "completed", now()

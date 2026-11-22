@@ -10,10 +10,27 @@ from ats.models import (
     CampaignItem,
     Contact,
 )
+from ats.schemas import phone_from_import
 
 
 def pagination(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)):
     return offset, limit
+
+
+def contact_search(q):
+    matches = [
+        Contact.name.ilike(f"%{q}%"),
+        Contact.phone.contains(q),
+        Contact.email.ilike(f"%{q}%"),
+        Contact.group.ilike(f"%{q}%"),
+    ]
+    try:
+        phone = phone_from_import(q)
+    except ValueError:
+        pass
+    else:
+        matches.append(Contact.phone.contains(phone))
+    return or_(*matches)
 
 
 def dated(query, column, since, until):

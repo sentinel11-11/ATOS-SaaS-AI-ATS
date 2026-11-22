@@ -12,7 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, select
 
 from ats.api_contacts import complaint as register_complaint
 from ats.db import session
@@ -31,7 +31,7 @@ from ats.repositories import TenantRepository
 from ats.schemas import phone_from_import
 from ats.security import admin, principal
 from ats.spreadsheets import spreadsheet_text
-from ats.workspace_queries import call_dict, calls_query
+from ats.workspace_queries import call_dict, calls_query, contact_search
 from ats.workspace_schemas import ContactEdit, ImportContacts, ListSave, Outcome
 from ats.workspace_service import audit, import_contacts, save_contact
 
@@ -145,7 +145,7 @@ def contacts(
     repo = TenantRepository(db, p.tenant_id)
     query = repo.query(Contact).where(~Contact.archived)
     if q:
-        query = query.where(or_(Contact.name.ilike(f"%{q}%"), Contact.phone.contains(q)))
+        query = query.where(contact_search(q))
     if group:
         query = query.where(Contact.group == group)
     total = db.scalar(select(func.count()).select_from(query.subquery()))
@@ -169,29 +169,37 @@ def contacts(
     return {"ok": True, "contacts": [contact_dict(c, databases.get(c.id), complaints.get(c.id, 0)) for c in rows], "total": total, "offset": offset, "limit": limit}
 
 
-def _save(db, p, data):
+def _save(db, p, data, *, restore=False):
     repo = TenantRepository(db, p.tenant_id)
     phone = phone_from_import(data.phone)
     row = repo.get(Contact, data.id, lock=True) if data.id else db.scalar(repo.query(Contact).where(Contact.phone == phone).with_for_update())
     existing = row is not None
+    restored = bool(restore and row and row.archived)
     # The legacy checkbox records an explicit manual action. Preserve the source on edits.
     source = data.consent_source if data.consent_source is not None else (row.consent_source if row and row.consent_source else f"manual:{p.login}")
+    consent = data.consent
+    blocked = data.blacklisted if data.blacklisted is not None else row.blocked if row else False
+    if row and row.archived:
+        source, consent, blocked = row.consent_source, row.consent, row.blocked
     command = ContactEdit(
         name=data.name.strip() or (row.name if row else "Без имени"), phone=phone,
-        consent=data.consent, consent_source=source,
+        consent=consent, consent_source=source,
         group=next((v for v in (data.group_name, data.group, data.grp) if v is not None), row.group if row else ""),
         notes=data.note if data.note is not None else row.notes if row else "",
         email=data.email if data.email is not None else row.email if row else "",
-        blocked=data.blacklisted if data.blacklisted is not None else row.blocked if row else False,
+        blocked=blocked,
         crm_contact_id=data.crm_contact_id if data.crm_contact_id is not None else row.crm_contact_id if row else None,
     )
     row = save_contact(db, p, command, row.id if row else None)
+    if restored:
+        row.archived = False
+        audit(db, p, "contact.restored", row.id)
     if data.database_id:
         repo.get(ContactList, data.database_id)
         member = db.scalar(repo.query(ListMember).where(ListMember.list_id == data.database_id, ListMember.contact_id == row.id))
         if not member:
             repo.add(ListMember, list_id=data.database_id, contact_id=row.id)
-    return row, existing
+    return row, existing, restored
 
 
 @router.post("/contacts")
@@ -200,11 +208,22 @@ def contact_save(data: ContactSave, p=Depends(admin), db=Depends(session)):
     # Lock once for race-free phone upsert and consent changes, matching scheduler allocation.
     db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
     try:
-        row, existing = _save(db, p, data)
+        row, existing, restored = _save(db, p, data, restore=True)
     except ValueError:
         raise Problem(422, "bad_phone") from None
     db.commit()
-    return {"ok": True, "id": str(row.id), "updated_existing": str(row.id) if existing and not data.id else False}
+    if restored:
+        result = "restored"
+    elif existing:
+        result = "updated"
+    else:
+        result = "created"
+    return {
+        "ok": True,
+        "id": str(row.id),
+        "updated_existing": str(row.id) if existing and not data.id else False,
+        "result": result,
+    }
 
 
 @router.post("/contacts/delete")
@@ -287,7 +306,7 @@ def contacts_import(data: ImportRows, p=Depends(admin), db=Depends(session)):
     for index, value in enumerate(data.rows, 1):
         try:
             with db.begin_nested():
-                row, existing = _save(db, p, value.model_copy(update={"database_id": data.database_id or value.database_id}))
+                row, existing, _ = _save(db, p, value.model_copy(update={"database_id": data.database_id or value.database_id}))
                 report["updated" if existing else "added"] += 1
         except ValueError:
             report["skipped"] += 1

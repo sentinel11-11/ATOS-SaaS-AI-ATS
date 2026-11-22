@@ -26,6 +26,7 @@ from ats.models import (
     LoginBucket,
     Operator,
     Outbox,
+    Tenant,
     User,
     WorkspaceSettings,
     now,
@@ -339,28 +340,30 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
         if action == "duplicate_crm_id":
             pass
         elif raw.get("archived"):
-            existing = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == crm_id))
-            action = "archive" if existing else "unchanged"
+            action, error = "unchanged", "crm_contact_deleted"
         elif not phone:
             action, error = "invalid_phone", "invalid_phone"
         elif phone in seen_phones:
             action, error = "duplicate_phone", "duplicate_phone"
         else:
             seen_phones.add(phone)
-            existing = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == crm_id))
+            existing = db.scalar(repo.query(Contact).where(Contact.phone == phone))
             if existing is None:
-                existing = db.scalar(repo.query(Contact).where(Contact.phone == phone, ~Contact.archived))
-            phone_owner = db.scalar(repo.query(Contact).where(Contact.phone == phone, ~Contact.archived))
-            if phone_owner is not None and (existing is None or phone_owner.id != existing.id):
+                mapped = db.scalars(repo.query(Contact).where(Contact.crm_contact_id == crm_id).limit(2)).all()
+                if len(mapped) > 1:
+                    action, error = "duplicate_crm_id", "duplicate_crm_id"
+                else:
+                    existing = mapped[0] if mapped else None
+            if existing and existing.crm_contact_id not in (None, crm_id):
                 action, error = "duplicate_phone", "duplicate_phone"
-            if existing:
-                if action != "duplicate_phone":
-                    action = "update" if (
-                        existing.archived
-                        or existing.name != raw.get("name", "")
-                        or existing.phone != phone
-                        or existing.email != raw.get("email", "")
-                    ) else "unchanged"
+            if existing and not error:
+                action = "update" if (
+                    existing.archived
+                    or existing.crm_contact_id != crm_id
+                    or existing.name != raw.get("name", "")
+                    or existing.phone != phone
+                    or existing.email != raw.get("email", "")
+                ) else "unchanged"
         counts[action] = counts.get(action, 0) + 1
         item = AmoSyncItem(
             tenant_id=p.tenant_id,
@@ -376,7 +379,7 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             contact_id=existing.id if existing else None,
             error=error,
             crm_context=contact_context(raw, pipelines, statuses, users),
-            selected=action in {"create", "update", "unchanged", "archive"},
+            selected=action in {"create", "update", "unchanged"} and not error,
         )
         db.add(item)
     job.counts = counts
@@ -420,6 +423,7 @@ def sync_status(job_id: UUID, p=Depends(principal), db=Depends(session)):
 
 @router.post("/sync/{job_id}/confirm")
 def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depends(session)):
+    db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
     repo = TenantRepository(db, p.tenant_id)
     job = repo.get(AmoSyncJob, job_id, lock=True)
     if job.status != "preview":
@@ -437,12 +441,17 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
                 item.applied = True
             continue
         if item.action == "archive":
-            if item.contact_id:
-                row = repo.get(Contact, item.contact_id, lock=True)
-                row.archived, row.blocked, row.consent = True, True, False
-                item.applied = True
+            # Ignore archive actions from previews saved by earlier versions.
+            item.error = "crm_contact_deleted"
             continue
         existing = repo.get(Contact, item.contact_id, lock=True) if item.contact_id else None
+        phone_owner = db.scalar(repo.query(Contact).where(Contact.phone == item.phone).with_for_update())
+        if existing is None:
+            existing = phone_owner
+        if ((phone_owner and existing.id != phone_owner.id)
+            or (existing and existing.crm_contact_id not in (None, item.crm_contact_id))):
+            item.error = "duplicate_phone"
+            continue
         if existing is None:
             blocked = db.scalar(repo.query(BlacklistEntry).where(BlacklistEntry.phone == item.phone)) is not None
             existing = repo.add(Contact, name=item.name, phone=item.phone, email=item.email, group=item.group, source=item.source, consent=True, consent_source=data.consent_source, crm_contact_id=item.crm_contact_id, crm_context=item.crm_context, blocked=blocked)
@@ -453,7 +462,6 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
             # Preserve an explicit opt-out on an existing contact.
             if existing.consent:
                 existing.consent_source = data.consent_source
-            existing.archived = False
         item.contact_id, item.applied, item.consent = existing.id, True, existing.consent
     job.status, job.updated_at = "completed", now()
     db.add(Audit(tenant_id=p.tenant_id, actor_id=p.user_id, action="amo.sync.confirm", entity_id=job.id))

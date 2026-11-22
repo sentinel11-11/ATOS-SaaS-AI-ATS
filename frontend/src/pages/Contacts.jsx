@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Plus, Trash2, Users, FileSpreadsheet, ShieldAlert, Search, Filter, AlertTriangle, CheckCircle, Info, Download, Check, X, RefreshCw } from 'lucide-react';
 import { api, openWithTicket } from '../api';
 import Modal from '../components/Modal';
@@ -26,6 +26,7 @@ export default function Contacts({ addToast, refreshKey }) {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
+  const contactsRequest = useRef(0);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,16 +61,18 @@ export default function Contacts({ addToast, refreshKey }) {
   const [importLoading, setImportLoading] = useState(false);
   const [importReport, setImportReport] = useState(null);
 
-  const loadContacts = async () => {
+  const loadContacts = async ({ page = contactPage, search = searchQuery, group = selectedGroupFilter } = {}) => {
+    const request = ++contactsRequest.current;
     if (!loaded) setLoading(true);
-    const params = new URLSearchParams({ offset: String(contactPage * contactsPageSize), limit: String(contactsPageSize) });
-    if (searchQuery.trim()) params.set('q', searchQuery.trim());
-    if (selectedGroupFilter) params.set('group', selectedGroupFilter);
+    const params = new URLSearchParams({ offset: String(page * contactsPageSize), limit: String(contactsPageSize) });
+    if (search.trim()) params.set('q', search.trim());
+    if (group) params.set('group', group);
     const [cRes, campRes] = await Promise.all([
       api(`/contacts?${params.toString()}`),
       api('/campaigns')
     ]);
 
+    if (request !== contactsRequest.current) return;
     if (cRes && cRes.contacts) setContacts(cRes.contacts);
     if (cRes && Number.isFinite(cRes.total)) setContactTotal(cRes.total);
     if (campRes && campRes.campaigns) setCampaigns(campRes.campaigns);
@@ -79,7 +82,10 @@ export default function Contacts({ addToast, refreshKey }) {
 
   useEffect(() => {
     const timer = window.setTimeout(loadContacts, 200);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      contactsRequest.current += 1;
+    };
   }, [refreshKey, contactPage, searchQuery, selectedGroupFilter]);
 
   useEffect(() => {
@@ -228,19 +234,7 @@ export default function Contacts({ addToast, refreshKey }) {
     new Set((Array.isArray(contacts) ? contacts : []).map((c) => c.group_name || c.grp).filter(Boolean))
   );
 
-  const filteredContacts = (Array.isArray(contacts) ? contacts : []).filter((c) => {
-    const q = searchQuery.toLowerCase().trim();
-    const matchesSearch =
-      !q ||
-      (c.name && c.name.toLowerCase().includes(q)) ||
-      (c.phone && c.phone.includes(q)) ||
-      (c.group_name && c.group_name.toLowerCase().includes(q));
-
-    const matchesGroup =
-      !selectedGroupFilter || (c.group_name || c.grp) === selectedGroupFilter;
-
-    return matchesSearch && matchesGroup;
-  });
+  const filteredContacts = Array.isArray(contacts) ? contacts : [];
 
   const contactCrmLabel = (contact) => {
     const context = contact.crm_context || {};
@@ -303,13 +297,18 @@ export default function Contacts({ addToast, refreshKey }) {
     if (!contact.phone) return addToast('Укажите телефон', 'warn');
     const res = await api('/contacts/save', { body: contact });
     if (res && res.ok) {
-      if (res.updated_existing) {
+      if (res.result === 'restored') {
+        addToast('Контакт восстановлен. Настройки согласия и блокировки сохранены', 'ok');
+      } else if (res.updated_existing) {
         addToast('Контакт с этим номером уже был в БД — данные обновлены (защита от дублей)', 'ok');
       } else {
         addToast('Новый контакт успешно создан', 'ok');
       }
       setShowNewModal(false);
-      loadContacts();
+      setSearchQuery(contact.phone);
+      setSelectedGroupFilter('');
+      setContactPage(0);
+      loadContacts({ page: 0, search: contact.phone, group: '' });
     } else {
       addToast('Ошибка сохранения контакта: ' + (res?.error || '?'), 'err');
     }
@@ -364,7 +363,7 @@ export default function Contacts({ addToast, refreshKey }) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-white">База контактов и клиенты</h1>
-          <p className="text-xs text-muted">Всего в базе: {contacts.length} контактов</p>
+          <p className="text-xs text-muted">Всего в базе: {contactTotal} контактов</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -441,7 +440,7 @@ export default function Contacts({ addToast, refreshKey }) {
             className="w-full bg-[#0a1628] border border-line2 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white outline-none focus:border-acc"
             placeholder="Поиск по имени, номеру телефона или группе..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => { setSearchQuery(e.target.value); setContactPage(0); }}
           />
         </div>
 
@@ -450,7 +449,7 @@ export default function Contacts({ addToast, refreshKey }) {
           <select
             className="w-full bg-[#0a1628] border border-line2 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white outline-none focus:border-acc font-semibold"
             value={selectedGroupFilter}
-            onChange={(e) => setSelectedGroupFilter(e.target.value)}
+            onChange={(e) => { setSelectedGroupFilter(e.target.value); setContactPage(0); }}
           >
             <option value="">Все группы и базы ({availableGroups.length})</option>
             {availableGroups.map((g) => (

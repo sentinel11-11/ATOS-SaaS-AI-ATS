@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Form, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, select
 
 from ats import workspace_schemas as commands
 from ats.db import session
@@ -24,7 +24,7 @@ from ats.models import (
 )
 from ats.repositories import TenantRepository
 from ats.security import admin, principal
-from ats.workspace_queries import call_dict, calls_query, pagination
+from ats.workspace_queries import call_dict, calls_query, contact_search, pagination
 from ats.workspace_service import (
     audit,
     import_contacts,
@@ -47,13 +47,7 @@ def contacts(
 ):
     query = TenantRepository(db, p.tenant_id).query(Contact).where(~Contact.archived)
     if q:
-        query = query.where(
-            or_(
-                Contact.name.ilike(f"%{q}%"),
-                Contact.phone.contains(q),
-                Contact.email.ilike(f"%{q}%"),
-            )
-        )
+        query = query.where(contact_search(q))
     if group:
         query = query.where(Contact.group == group)
     if blocked is not None:

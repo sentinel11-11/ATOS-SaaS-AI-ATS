@@ -20,6 +20,7 @@ from ats.db import session
 from ats.domain import ACTIVE, Problem
 from ats.models import (
     Attempt,
+    BlacklistEntry,
     Campaign,
     CampaignItem,
     Contact,
@@ -154,6 +155,9 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
     try:
         crm = AmoCRM(config)
         raw = crm.read(f"/api/v4/contacts/{data.crm_contact_id}")
+        if (int(raw.get("id", 0)) != data.crm_contact_id
+            or raw.get("is_deleted") or raw.get("deleted_at")):
+            raise Problem(409, "crm_contact_not_synced")
         phones = set()
         for field in raw.get("custom_fields_values") or []:
             if field.get("field_code") != "PHONE":
@@ -205,13 +209,23 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
     if data.mode == "forward" and not operator.mobile_phone:
         raise Problem(409, "forward_number_not_set")
     contact = db.scalar(select(Contact).where(
-        Contact.tenant_id == auth.p.tenant_id, Contact.crm_contact_id == data.crm_contact_id,
-        Contact.phone == phone, ~Contact.archived,
-    ))
+        Contact.tenant_id == auth.p.tenant_id, Contact.phone == phone,
+    ).with_for_update())
     if not contact:
         raise Problem(409, "crm_contact_not_synced")
-    if not contact.consent or contact.blocked:
+    if contact.crm_contact_id not in (None, data.crm_contact_id):
+        raise Problem(409, "crm_contact_not_synced", "Номер уже связан с другим контактом amoCRM.")
+    blacklisted = db.scalar(select(BlacklistEntry.id).where(
+        BlacklistEntry.tenant_id == auth.p.tenant_id, BlacklistEntry.phone == phone,
+    ))
+    if (contact.archived or not contact.consent or contact.blocked
+        or not contact.consent_source.strip() or blacklisted):
         raise Problem(409, "no_consent")
+    if contact.crm_contact_id is None:
+        # The live CRM contact, selected phone and card link were verified above.
+        # Bind this admitted local number without rewriting another contact's identity.
+        contact.crm_contact_id = data.crm_contact_id
+        audit(db, auth.p, "contact.crm_linked", contact.id)
     connection = "mobile" if data.mode == "forward" else "browser"
     validate_route(auth.p.tenant_id, "multicom_ami", db, mode="operator",
                    operator_id=operator.id, connection_method=connection)
