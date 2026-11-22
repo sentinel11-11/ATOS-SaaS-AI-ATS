@@ -45,21 +45,25 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
         "direct_media=no\ndtmf_mode=rfc4733\n"
     )
     if mode == "browser":
+        from sqlalchemy import select
+
         from ats.models import Operator
         from ats.webrtc import save_device
 
         widget = request.getfixturevalue("widget")
         factory = request.getfixturevalue("factory")
         with factory.begin() as db:
-            operator = db.get(Operator, widget["operator_id"])
-            endpoint = "ats-web-" + operator.id.hex
-            save_device(db, operator, endpoint, endpoint, "browser-fixture-private-password-32-chars")
+            devices = []
+            for operator in db.scalars(select(Operator).where(Operator.tenant_id == widget["tenant_id"])):
+                endpoint = "ats-web-" + operator.id.hex
+                save_device(db, operator, endpoint, endpoint, "browser-fixture-private-password-32-chars")
+                devices.append({"endpoint": endpoint, "username": endpoint,
+                                "password": "browser-fixture-private-password-32-chars"})
         import runpy
 
         render = runpy.run_path(str(root / "scripts/install-widget-webrtc.py"))["render_devices"]
         with (folder / "pjsip.conf").open("a") as output:
-            output.write(render([{"endpoint": endpoint, "username": endpoint,
-                                  "password": "browser-fixture-private-password-32-chars"}], "localhost"))
+            output.write(render(devices, "localhost"))
         (folder / "http.conf").write_text('[general]\nenabled=no\n#include "http-widget.conf"\n')
         (folder / "http-widget.conf").write_text("[general](+)\nenabled=yes\nbindaddr=0.0.0.0\nbindport=8088\n")
     shutil.copy(root / "deploy/asterisk/extensions-ats-beta-callback.conf", folder / "extensions.conf")

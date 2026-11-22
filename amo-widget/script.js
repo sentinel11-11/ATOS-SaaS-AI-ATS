@@ -2,8 +2,10 @@ define(['jquery'], function ($) {
   'use strict';
 
   return function RATSWidget() {
+    if(window.RATSPhoneWidget)return window.RATSPhoneWidget;
     var self = this;
-    var VERSION = '5.2.0';
+    window.RATSPhoneWidget=self;
+    var VERSION = '5.3.0';
     var ROOT = 'rats-widget-root';
     var alive = false;
     var wired = false;
@@ -14,7 +16,18 @@ define(['jquery'], function ($) {
     var cardCache = {};
     var pendingCard = false;
     var principal = null;
-    var mode = 'forward';
+    var mode = 'browser';
+    var manager = null;
+    var managerKey = '';
+    var managerPending = false;
+    var managerSynced = 0;
+    var agentId = null;
+    var agentLease = false;
+    var agentConnecting = false;
+    var agentPolling = false;
+    var agentTickCount = 0;
+    var agentStatus = '';
+    var receiveCall = null;
     var busy = false;
     var callId = null;
     var call = null;
@@ -24,7 +37,6 @@ define(['jquery'], function ($) {
     var sipRegistered = false;
     var sipSession = null;
     var sipIncoming = false;
-    var expectedSipToken = null;
     var webrtc = null;
     var loadedJsSIP = false;
     var remoteAudio = null;
@@ -38,6 +50,14 @@ define(['jquery'], function ($) {
     var boundConnections = new WeakSet();
 
     var ERROR_MAP = {
+      responsible_mapping_missing: 'Ответственный из карточки ещё не связан с оператором ATOS',
+      responsible_user_missing: 'Назначьте ответственного в карточке amoCRM',
+      responsible_changed: 'Ответственный изменился. Обновите карточку и повторите звонок',
+      responsible_browser_offline: 'Ответственный должен открыть amoCRM и подключить браузерный телефон',
+      widget_upgrade_required: 'Обновите виджет и перезагрузите страницы amoCRM',
+      agent_in_another_tab: 'Приём звонков подключён в другой вкладке amoCRM',
+      agent_session_lost: 'Подключение браузерного телефона обновляется',
+      browser_call_mismatch: 'Вызов не относится к этому браузеру',
       invalid_rats_url: 'Укажите публичный HTTPS-адрес ATOS в настройках виджета',
       amocrm_signed_request_unavailable: 'SDK amoCRM не предоставил подписанный запрос. Обновите страницу и интеграцию',
       amo_widget_origin_rejected: 'Аккаунт amoCRM отличается от настроенного в ATOS',
@@ -156,7 +176,7 @@ define(['jquery'], function ($) {
       });
     }
     function setError(message) { errorMessage = String(message || ''); statusMessage = ''; draw(); }
-    function setStatus(message) { statusMessage = String(message || ''); errorMessage = ''; draw(); }
+    function setStatus(message) { statusMessage = String(message || ''); draw(); }
     function serverError(error) {
       var code = error && (error.code || error.error || error.message) || '';
       return ERROR_MAP[code] || (error && error.status === 404 ? ERROR_MAP.widget_backend_not_ready : code) || 'Ошибка подключения к RATS';
@@ -192,11 +212,11 @@ define(['jquery'], function ($) {
       api('/me','GET').then(function (res) {
         if (!alive) return;
         principal = res;
-        if (res && res.active_call && res.active_call.call_id && !callId) {
-          callId = String(res.active_call.call_id); callState = res.active_call.state; callingStatus(true);
+        if (res && res.initiated_call && res.initiated_call.call_id && !callId) {
+          callId = String(res.initiated_call.call_id); callState = res.initiated_call.state; callingStatus(true);
           if (!refreshTimer) refreshTimer = setInterval(refreshCall, 1800); refreshCall();
         }
-        if (res && res.operator_id && mode === 'browser') sipConnect().catch(function () {});
+        if (res && res.browser_available) sipConnect().catch(function () {});
         draw();
       }).catch(function (e) {
         if (alive) setError(serverError(e));
@@ -213,8 +233,13 @@ define(['jquery'], function ($) {
       var ctx = context(), card = cardCache[ctx.key];
       safeText(element('rats-phone'), card && card.phone || '—');
       safeText(element('rats-name'), card && card.name || 'Контакт не выбран');
-      safeText(element('rats-user'), principal ? principal.operator_name || 'Оператор RATS' : 'Определяется автоматически');
-      safeText(element('rats-forward'), principal ? principal.forward_number_masked || 'Не назначен' : '—');
+      var owner = managerKey === ctx.key ? manager : null;
+      safeText(element('rats-user'), owner ? owner.operator_name : 'Определяется по карточке');
+      safeText(element('rats-forward'), owner ? owner.forward_number_masked || 'Не назначен' : '—');
+      safeText(element('rats-manager-status'), owner ? (owner.reason ? serverError({code:owner.reason}) :
+        owner.status==='busy' ? 'Ответственный занят разговором' : owner.status==='break' ? 'Ответственный на перерыве' :
+        mode==='browser' ? (owner.browser_online?'Браузер ответственного подключён':'Ответственный должен открыть amoCRM и подключить браузерный телефон') :
+        owner.forward_available?'Первый вызов поступит на телефон ответственного':'Телефон ответственного не назначен') : '');
       safeText(element('rats-status'), errorMessage || statusMessage);
       safeText(element('rats-call-state'), ({idle:'Нет разговора', queued:'В очереди', ringing_operator:'Вызываем менеджера', ringing_customer:'Звоним клиенту', connected:'Разговор', ending:'Завершаем', reconciliation_required:'Требуется сверка Asterisk', ended:'Завершён', failed:'Ошибка'})[callState] || callState);
       safeText(element('rats-call-id'), callId ? 'ID: ' + callId.slice(0,8) : '');
@@ -222,24 +247,34 @@ define(['jquery'], function ($) {
       if (browser) browser.checked = mode === 'browser';
       if (forward) forward.checked = mode === 'forward';
       var userBlock = element('rats-user-block'); if (userBlock) userBlock.hidden = false;
-      var ready = !!principal && !!card && !!card.phone && !busy && !callId && (mode !== 'browser' || sipRegistered);
+      var ready = !!principal && !!owner && !owner.reason && owner.status==='free' && !!card && !!card.phone && !busy && !callId &&
+        (mode === 'browser' ? owner.browser_online : owner.forward_available);
       var start = element('rats-start'); if (start) start.disabled = !ready;
       var mic = element('rats-microphone'); if (mic) mic.hidden = mode !== 'browser';
       var hangup = element('rats-hangup'); if (hangup) hangup.disabled = !callId;
-      var answer = element('rats-answer'); if (answer) { answer.hidden = !sipIncoming; answer.disabled = !sipIncoming; }
+      var answer = element('rats-answer'); if (answer) { answer.hidden = true; }
       root.classList.toggle('rats-live', !!callId);
       root.classList.toggle('rats-error', !!errorMessage);
     }
     function syncCard(force) {
       if (!alive || pendingCard) return;
       var ctx=context(); if (!ctx.key) { lastCardKey=''; draw(); return; }
-      if (ctx.key === lastCardKey && cardCache[ctx.key] && !force) { draw(); return; }
+      if (ctx.key === lastCardKey && cardCache[ctx.key] && !force) { syncManager(ctx); draw(); return; }
       lastCardKey=ctx.key; pendingCard=true;
       resolveCard(ctx).then(function (card) {
         cardCache[ctx.key]=card;
-        if (context().key===ctx.key) setStatus('Контакт готов для звонка');
+        if (context().key===ctx.key) {if(force)errorMessage='';setStatus('Контакт готов для звонка');}
       }).catch(function () { if (context().key===ctx.key) setError('В карточке нет связанного контакта с телефоном'); })
-        .then(function () {pendingCard=false; draw();});
+        .then(function () {pendingCard=false;syncManager(ctx);draw();});
+    }
+    function syncManager(ctx) {
+      if (!ctx.key || managerPending || (managerKey===ctx.key && Date.now()-managerSynced<5000)) return;
+      managerPending=true;managerSynced=Date.now();
+      api('/context','POST',{entity_type:ctx.type,entity_id:ctx.id}).then(function(res){
+        if(context().key !== ctx.key)return;
+        manager=res.responsible;managerKey=ctx.key;draw();
+      }).catch(function(e){if(context().key===ctx.key){manager=null;managerKey='';setError(serverError(e));}})
+        .finally(function(){managerPending=false;});
     }
     function randomId() {
       if (!window.crypto || typeof window.crypto.randomUUID!=='function') throw new Error('Требуется HTTPS и crypto.randomUUID');
@@ -264,10 +299,10 @@ define(['jquery'], function ($) {
       return remoteAudio;
     }
     function signalMediaReady() {
-      if (mediaReadySent || !callId || mode !== 'browser' || !localStream || !localStream.active || !mediaConnection) return;
+      if (mediaReadySent || !receiveCall || !localStream || !localStream.active || !mediaConnection) return;
       if (mediaConnection.connectionState !== 'connected') return;
       mediaReadySent = true;
-      api('/calls/'+encodeURIComponent(callId)+'/ready','POST',{})
+      api('/calls/'+encodeURIComponent(receiveCall.call_id)+'/ready','POST',{session_id:agentId,token:receiveCall.operator_call_token})
         .catch(function(e){mediaReadySent=false;setError(serverError(e));});
     }
     function sessionAttach(session, isIncoming) {
@@ -279,7 +314,7 @@ define(['jquery'], function ($) {
         pc.addEventListener('track',function(track){
           ensureAudio().srcObject = track.streams && track.streams[0] || new MediaStream([track.track]);
           var playing = ensureAudio().play();
-          if (playing && playing.catch) playing.catch(function(){setError('Браузер заблокировал звук. Нажмите «Включить звук»');var audioButton=element('rats-audio');if(audioButton)audioButton.hidden=false;});
+          if (playing && playing.catch) playing.catch(function(){agentStatus='Нажмите «Включить звук»';drawAgent();document.querySelector('.rats-agent-audio').hidden=false;});
         });
         pc.addEventListener('connectionstatechange',signalMediaReady);
         pc.addEventListener('iceconnectionstatechange',signalMediaReady);
@@ -287,16 +322,24 @@ define(['jquery'], function ($) {
       }
       session.on('peerconnection', function(e){bind(e.peerconnection);});
       bind(session.connection);
-      session.on('confirmed',function(){sipIncoming=false;callingStatus(true);setStatus('Браузер подключён. Ожидаем соединения с клиентом');bind(session.connection);});
-      function finish(){sipSession=null;sipIncoming=false;mediaConnection=null;callingStatus(!!callId);draw();}
+      session.on('confirmed',function(){sipIncoming=false;callingStatus(true);agentStatus='Браузер подключён. Ожидаем клиента';drawAgent();bind(session.connection);});
+      function finish(){sipSession=null;sipIncoming=false;mediaConnection=null;mediaReadySent=false;
+        receiveCall=null;agentStatus='Браузерный телефон готов';
+        if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
+        callingStatus(!!callId);drawAgent();draw();}
       session.on('ended',finish);session.on('failed',finish);
     }
     function sipConnect() {
       if(sipUA && sipRegistered) return Promise.resolve();
-      if(sipUA) return Promise.reject({code:'browser_endpoint_not_ready'});
+      if(sipUA || agentConnecting) return Promise.resolve();
       if(!principal) return Promise.reject({code:'operator_mapping_missing'});
-      setStatus('Подготавливаем браузерную телефонию…');
-      return api('/webrtc/config','GET').then(function(cfg){
+      agentConnecting=true;
+      if(!agentId)agentId=randomId();
+      agentStatus='Подготавливаем браузерный телефон';drawAgent();
+      return api('/agent/lease','POST',{session_id:agentId}).then(function(){
+        agentLease=true;
+        return api('/webrtc/config?session_id='+encodeURIComponent(agentId),'GET');
+      }).then(function(cfg){
         webrtc=cfg;
         if(cfg.ready!==true||!/^wss:\/\//.test(cfg.wss_url||'')||!/^sip:[^@]+@[^@]+$/.test(cfg.sip_uri||''))throw{code:'browser_endpoint_not_ready'};
         return loadJsSIP(cfg.library_url||'');
@@ -307,52 +350,108 @@ define(['jquery'], function ($) {
         sipUA=new JsSIP.UA({sockets:[socket],uri:webrtc.sip_uri,password:password,
           authorization_user:webrtc.auth_user||undefined,register:true,session_timers:false});
         webrtc.sip_password=null;
-        sipUA.on('registered',function(){sipRegistered=true;setStatus('Браузерный телефон зарегистрирован на Asterisk');});
-        sipUA.on('unregistered',function(){sipRegistered=false;setStatus('Браузерный телефон отключён');});
-        sipUA.on('disconnected',function(){sipRegistered=false;setError('SIP WebSocket отключился — проверьте подключение Asterisk');});
-        sipUA.on('registrationFailed',function(){sipRegistered=false;setError('SIP-регистрация браузера не прошла');});
+        sipUA.on('registered',function(){sipRegistered=true;agentStatus='Браузерный телефон зарегистрирован на Asterisk';heartbeat();drawAgent();});
+        sipUA.on('unregistered',function(){sipRegistered=false;agentStatus='Браузерный телефон отключён';heartbeat();drawAgent();});
+        sipUA.on('disconnected',function(){sipRegistered=false;agentStatus='Нет подключения к Asterisk';heartbeat();drawAgent();});
+        sipUA.on('registrationFailed',function(){sipRegistered=false;agentStatus='Ошибка регистрации браузерного телефона';heartbeat();drawAgent();});
         sipUA.on('newRTCSession',function(e){
           if(e.originator!=='remote')return;
           if(sipSession){e.session.terminate();return;}
-          if(!callId){e.session.terminate();return;}
           var deliveredToken = '';
           try { deliveredToken = String(e.request && e.request.getHeader && e.request.getHeader('X-RATS-Call-Token') || ''); } catch (_error) {}
-          if (!expectedSipToken || deliveredToken !== expectedSipToken) {e.session.terminate();return;}
-          sessionAttach(e.session,false);
-          try {
-            e.session.answer({mediaStream:localStream,mediaConstraints:{audio:true,video:false},pcConfig:{iceServers:(webrtc&&webrtc.ice_servers)||[]}});
-            setStatus('Телефон подключается. Ожидаем клиента');
-          } catch (answerError) {setError('Не удалось подключить микрофон');hangup();}
+          if (!/^[a-f0-9]{48}$/.test(deliveredToken)) {e.session.terminate();return;}
+          // Only the participant's signed identity and leased page can accept this nonce.
+          sipSession=e.session;
+          function abandoned(){if(sipSession===e.session&&!receiveCall){sipSession=null;sipIncoming=false;drawAgent();}}
+          e.session.on('ended',abandoned);e.session.on('failed',abandoned);
+          api('/agent/invite','POST',{session_id:agentId,token:deliveredToken}).then(function(res){
+            if(sipSession!==e.session)return;
+            receiveCall=res;mediaReadySent=false;sessionAttach(e.session,true);
+            agentStatus='Входящий звонок — '+(res.context.contact_name||'Клиент');drawAgent();
+            if(localStream && res.call_id===callId)answer();
+          }).catch(function(){if(sipSession===e.session)sipSession=null;try{e.session.terminate();}catch(ignore){}});
         });
         sipUA.start();
-        setStatus('Подключаем браузерный SIP-телефон…');
-      }).catch(function(e){ setError(serverError(e)); throw e; });
+        agentStatus='Подключаем браузерный SIP-телефон';drawAgent();
+      }).catch(function(e){agentLease=false;agentStatus=serverError(e);drawAgent();throw e;})
+        .finally(function(){agentConnecting=false;});
     }
     function answer() {
       if(!sipSession||!sipIncoming)return;
-      sipIncoming=false;
-      try{sipSession.answer({mediaConstraints:{audio:true,video:false},pcConfig:{iceServers:(webrtc&&webrtc.ice_servers)||[]}});}
-      catch(e){setError('Нет доступа к микрофону или ошибка WebRTC');}
-      draw();
+      var session=sipSession;sipIncoming=false;drawAgent();
+      var media=localStream?Promise.resolve(localStream):navigator.mediaDevices.getUserMedia({audio:true,video:false});
+      media.then(function(stream){
+        if(sipSession!==session){stream.getTracks().forEach(function(t){t.stop();});return;}
+        localStream=stream;
+        session.answer({mediaStream:stream,mediaConstraints:{audio:true,video:false},pcConfig:{iceServers:(webrtc&&webrtc.ice_servers)||[]}});
+      }).catch(function(){agentStatus='Разрешите доступ к микрофону';sipIncoming=true;drawAgent();});
+    }
+    function heartbeat(){
+      if(!agentLease)return;
+      api('/agent/heartbeat','POST',{session_id:agentId,registered:sipRegistered}).then(function(res){
+        if(res.status)principal.status=res.status;drawAgent();
+      }).catch(function(e){
+        if(e.code==='agent_session_lost'){
+          agentLease=false;sipRegistered=false;
+          if(sipUA){try{sipUA.stop();}catch(ignore){}sipUA=null;}
+        }
+        agentStatus=serverError(e);drawAgent();
+      });
+    }
+    function drawAgent(){
+      var panel=document.getElementById('rats-browser-agent');
+      if(!panel){panel=document.createElement('section');panel.id='rats-browser-agent';panel.className='rats-widget rats-agent';
+        panel.innerHTML='<div class="rats-agent-status" role="status"></div><div class="rats-agent-client"></div>'+
+          '<button class="rats-agent-answer rats-primary" hidden>Ответить</button><button class="rats-agent-hangup rats-danger" hidden>Завершить</button>'+
+          '<button class="rats-agent-audio rats-text" hidden>Включить звук</button>'+
+          '<button class="rats-agent-availability rats-text">Перерыв</button>';
+        document.body.appendChild(panel);
+      }
+      safeText(panel.querySelector('.rats-agent-status'),agentStatus);
+      safeText(panel.querySelector('.rats-agent-client'),receiveCall?((receiveCall.context.contact_name||'Клиент')+' '+(receiveCall.context.phone||'')):'');
+      panel.querySelector('.rats-agent-answer').hidden=!sipIncoming;
+      panel.querySelector('.rats-agent-hangup').hidden=!receiveCall;
+      var available=panel.querySelector('.rats-agent-availability');
+      available.hidden=!agentLease||!!receiveCall;
+      available.disabled=!!principal&&principal.status==='busy';
+      safeText(available,principal&&principal.status==='break'?'Готов к звонкам':'Перерыв');
+      panel.hidden=!agentStatus;
+    }
+    function agentTick(){
+      if(!principal || !principal.browser_available)return;
+      if(!agentLease){if(++agentTickCount%4===0)sipConnect().catch(function(){});return;}
+      if(++agentTickCount%2===0)heartbeat();
+      signalMediaReady();
+      if(!receiveCall||agentPolling)return;
+      agentPolling=true;var id=receiveCall.call_id;
+      api('/calls/'+encodeURIComponent(id),'GET').then(function(res){
+        if(!receiveCall||receiveCall.call_id!==id)return;
+        agentStatus=({connected:'Разговор с клиентом',ringing_customer:'Вызываем клиента',ringing_operator:'Вызов менеджера'})[res.state]||agentStatus;
+        if(res.state==='ended'||res.state==='failed'){
+          if(sipSession)try{sipSession.terminate();}catch(ignore){}
+        }
+        drawAgent();
+      }).finally(function(){agentPolling=false;}).catch(function(){});
     }
     function startCall(card,overridePhone) {
-      if(busy||callId)return;
+      if(busy||callId||sipSession)return;
       var c=card,phone=normalizePhone(overridePhone||(c&&c.phone));
       if(!principal)return setError('Сначала необходимо подтвердить пользователя amoCRM');
       if(!c||!c.crm_contact_id||!phone)return setError('Выберите контакт с действительным номером');
-      if(mode==='browser' && !sipRegistered)return setError('Браузерная телефония ещё не зарегистрирована. Выберите телефон менеджера или обратитесь к администратору');
-      if(mode==='browser' && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia))return setError('Для микрофона нужен современный браузер и защищённая страница HTTPS');
+      if(!manager||managerKey!==context().key)return setError('Подождите определения ответственного');
       var ctx=context();
       var body={phone:phone,crm_contact_id:c.crm_contact_id,mode:mode,
-        amo_account:system().subdomain||'',entity_type:ctx.type||'contacts',entity_id:ctx.id||c.crm_contact_id};
+        amo_account:system().subdomain||'',entity_type:ctx.type||'contacts',entity_id:ctx.id||c.crm_contact_id,protocol_version:3};
       if(requestBody && JSON.stringify(body)!==JSON.stringify(requestBody))return setError('Повторите предыдущий запрос в исходной карточке, чтобы уточнить его результат');
       if(!requestId){requestId=randomId();requestBody=body;}
-      busy=true;setStatus('Запрашиваем звонок через Мультиком…');
-      var media=mode==='browser'?navigator.mediaDevices.getUserMedia({audio:true,video:false}):Promise.resolve(null);
+      busy=true;errorMessage='';setStatus('Запрашиваем звонок через Мультиком…');
+      var isSelf=manager.operator_id===principal.operator_id;
+      var media=mode==='browser'&&isSelf?navigator.mediaDevices.getUserMedia({audio:true,video:false}):Promise.resolve(null);
       media.then(function(stream){localStream=stream;mediaReadySent=false;return api('/calls','POST',Object.assign({},body,{client_request_id:requestId}));})
         .then(function(result){
           if(!result.call_id)throw{code:'widget_backend_not_ready'};
-          callId=String(result.call_id);expectedSipToken=String(result.operator_call_token||'');callState=result.state||'queued';callingStatus(true);
+          callId=String(result.call_id);callState=result.state||'queued';callingStatus(true);
+          if(!result.is_participant&&localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
           setStatus(mode==='browser'?'Ожидаем вызов в браузере':'Сначала вызываем телефон менеджера');
           if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(refreshCall,1800);
           return api('/calls/'+encodeURIComponent(callId)+'/start','POST',{}).then(refreshCall);
@@ -373,9 +472,9 @@ define(['jquery'], function ($) {
         if (callState !== 'ended' && callState !== 'failed') signalMediaReady();
         if(callState==='ended'||callState==='failed'){
           setStatus(callState==='ended'?'Звонок завершён':serverError({code:result.reason})||'Звонок завершился ошибкой');
-          callId=null;expectedSipToken=null;requestId=null;requestBody=null;mediaReadySent=false;callingStatus(false);
-          if(sipSession)try{sipSession.terminate();}catch(ignore){}
-          if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
+          callId=null;requestId=null;requestBody=null;mediaReadySent=false;callingStatus(!!sipSession);
+          if(sipSession&&receiveCall&&receiveCall.call_id===id)try{sipSession.terminate();}catch(ignore){}
+          if(localStream&&!receiveCall){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
           if(refreshTimer)clearInterval(refreshTimer);refreshTimer=null;
         }else { statusMessage=({ringing_operator:'Вызов менеджера',ringing_customer:'Вызываем клиента',connected:'Разговор с клиентом'})[callState]||'Ожидаем ответа';draw(); }
       }).catch(function(e){if(e.status===401){principal=null;setError(serverError(e));}})
@@ -387,7 +486,7 @@ define(['jquery'], function ($) {
       api('/calls/'+encodeURIComponent(id)+'/hangup','POST',{})
         .then(function(){setStatus('Запрошено завершение разговора');})
         .catch(function(e){setError(serverError(e));});
-      if(sipSession)try{sipSession.terminate();}catch(e){}
+      if(sipSession&&receiveCall&&receiveCall.call_id===id)try{sipSession.terminate();}catch(e){}
     }
     function selectMode(next) {
       if(callId||busy||requestId)return setError('Сначала завершите текущий запрос');
@@ -404,6 +503,22 @@ define(['jquery'], function ($) {
       promise.then(function(c){startCall(c,phone);}).catch(function(){setError('Номер не принадлежит контакту карточки');});
     }
     function click(e) {
+      var agent=document.getElementById('rats-browser-agent');
+      if(agent&&agent.contains(e.target)){
+        var action=e.target.closest('button');if(!action)return;
+        if(action.classList.contains('rats-agent-answer'))answer();
+        if(action.classList.contains('rats-agent-hangup')&&receiveCall){
+          api('/calls/'+encodeURIComponent(receiveCall.call_id)+'/hangup','POST',{}).catch(function(e){agentStatus=serverError(e);drawAgent();});
+          if(sipSession)try{sipSession.terminate();}catch(ignore){}
+        }
+        if(action.classList.contains('rats-agent-audio'))ensureAudio().play().then(function(){action.hidden=true;}).catch(function(){});
+        if(action.classList.contains('rats-agent-availability')){
+          api('/agent/availability','POST',{status:principal.status==='break'?'free':'break'}).then(function(res){
+            principal.status=res.status;drawAgent();syncManager(context());
+          }).catch(function(e){agentStatus=serverError(e);drawAgent();});
+        }
+        return;
+      }
       var r=document.getElementById(ROOT);if(!r||!r.contains(e.target))return;
       var t=e.target.closest&&e.target.closest('button,input');if(!t)return;
       if(t.classList.contains('rats-start')){e.preventDefault();startCall(cardCache[context().key]);}
@@ -418,10 +533,10 @@ define(['jquery'], function ($) {
       return '<section id="'+ROOT+'" class="rats-widget" role="region" aria-label="Телефония RATS">' +
         '<header class="rats-head"><div class="rats-mark">R<span>▲</span>TS</div><div class="rats-head-sub">MULTICOM · ASTERISK</div></header>' +
         '<div class="rats-section"><div class="rats-label">Клиент</div><div class="rats-name">Контакт не выбран</div><div class="rats-phone">—</div></div>' +
-        '<div class="rats-section rats-user-block" hidden><div class="rats-label">Менеджер</div><div class="rats-user"></div><div class="rats-label rats-label-small">Телефон переадресации</div><div class="rats-forward">—</div></div>' +
+        '<div class="rats-section rats-user-block" hidden><div class="rats-label">Ответственный менеджер</div><div class="rats-user"></div><div class="rats-label rats-label-small">Телефон переадресации</div><div class="rats-forward">—</div><p class="rats-hint rats-manager-status"></p></div>' +
         '<div class="rats-section"><div class="rats-label">Куда подключить менеджера?</div><label class="rats-radio"><input type="radio" name="rats-mode" class="rats-mode-browser" checked> В браузере amoCRM</label>' +
-        '<label class="rats-radio"><input type="radio" name="rats-mode" class="rats-mode-forward"> На мой телефон</label>' +
-        '<p class="rats-hint rats-microphone">Потребуется микрофон и WebRTC-подключение к Asterisk.</p></div>' +
+        '<label class="rats-radio"><input type="radio" name="rats-mode" class="rats-mode-forward"> На телефон ответственного</label>' +
+        '<p class="rats-hint rats-microphone">Первый вызов поступит в браузер ответственного из карточки.</p></div>' +
         '<div class="rats-actions">' +
         '<button class="rats-start rats-primary" type="button" disabled>Позвонить клиенту</button>' +
         '<button class="rats-answer rats-answer" type="button" hidden>Ответить</button>' +
@@ -445,26 +560,35 @@ define(['jquery'], function ($) {
         catch(e){console.warn('RATS render error',e);}
       }return true;},
       init:function(){alive=true;
-        if(!phoneActionRegistered&&areaType(system().area)&&typeof self.add_action==='function'){
+        if(!phoneActionRegistered&&typeof self.add_action==='function'){
           try{self.add_action('phone',routePhoneClick);phoneActionRegistered=true;}catch(e){console.warn('RATS phone action',e);}
         }
-        if(!timer)timer=setInterval(function(){if(document.getElementById(ROOT))syncCard(false);},1700);
+        if(!timer)timer=setInterval(function(){if(document.getElementById(ROOT))syncCard(false);agentTick();},1700);
         if(!wired){document.addEventListener('click',click,false);wired=true;}
         autoIdentify();
         setTimeout(function(){syncCard(false);draw();},0);
         return true;},
       bind_actions:function(){draw();return true;},
       settings:function(){return true;},onSave:function(){return true;},
-      destroy:function(){if(callId||busy||requestId)return true;alive=false;
-        if(timer)clearInterval(timer);timer=null;if(refreshTimer)clearInterval(refreshTimer);refreshTimer=null;
-        if(wired){document.removeEventListener('click',click,false);wired=false;}
-        if(sipSession){try{sipSession.terminate();}catch(e){}sipSession=null;}
-        if(sipUA){try{sipUA.stop();}catch(e){}sipUA=null;sipRegistered=false;}
-        if(remoteAudio){remoteAudio.srcObject=null;remoteAudio.remove();remoteAudio=null;}
-        if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
-        principal=null;callId=null;callingStatus(false);
-        phoneActionRegistered=false;cardCache={};lastCardKey='';expectedSipToken=null;return true;}
+      // amoCRM destroys card views during navigation. The receiving phone belongs
+      // to the signed-in manager's page and continues through those transitions.
+      destroy:function(){lastCardKey='';managerKey='';cardCache={};return true;}
     };
+    window.addEventListener('pagehide',function(){
+      alive=false;
+      if(timer)clearInterval(timer);
+      if(refreshTimer)clearInterval(refreshTimer);
+      if(sipUA)try{sipUA.stop();}catch(ignore){}
+      if(localStream)localStream.getTracks().forEach(function(t){t.stop();});
+    });
+    window.addEventListener('pageshow',function(event){
+      if(!event.persisted)return;
+      alive=true;sipUA=null;sipSession=null;receiveCall=null;localStream=null;
+      sipRegistered=false;agentLease=false;mediaReadySent=false;mediaConnection=null;
+      timer=setInterval(function(){if(document.getElementById(ROOT))syncCard(false);agentTick();},1700);
+      if(callId)refreshTimer=setInterval(refreshCall,1800);
+      autoIdentify();
+    });
     return this;
   };
 });

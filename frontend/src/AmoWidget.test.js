@@ -5,6 +5,7 @@ import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 const source = readFileSync(resolve('../amo-widget/script.js'), 'utf8');
 let widget;
 let listeners;
+let windowListeners;
 
 function deferred(promise) {
   const result = {done(fn) {promise.then(fn, () => {}); return result;}, fail(fn) {promise.catch(fn); return result;}};
@@ -13,9 +14,10 @@ function deferred(promise) {
 
 async function flush() {await vi.advanceTimersByTimeAsync(1);}
 
-function mount(handler) {
+function mount(handler, owner=identity) {
   let Constructor;
-  const signed = vi.fn(options => deferred(Promise.resolve().then(() => handler(options))));
+  const signed = vi.fn(options => deferred(Promise.resolve().then(() =>
+    pathOf(options).endsWith('/context') ? {responsible: owner} : handler(options))));
   const jquery = {ajax: options => deferred(Promise.resolve(options.url.includes('/contacts/') ? {
     id: 123, name: 'Client from CRM', custom_fields_values: [{field_code: 'PHONE', values: [{value: '+79990000101'}]}],
   } : {_embedded: {contacts: [{id: 123}]}}))};
@@ -30,15 +32,18 @@ function mount(handler) {
   return signed;
 }
 
-beforeEach(() => {vi.useFakeTimers(); listeners = vi.spyOn(document, 'addEventListener');});
+beforeEach(() => {vi.useFakeTimers(); listeners = vi.spyOn(document, 'addEventListener'); windowListeners=vi.spyOn(window,'addEventListener');});
 afterEach(() => {
   if (widget) widget.callbacks.destroy();
   for (const [event, listener] of listeners.mock.calls) if (event === 'click') document.removeEventListener(event, listener, false);
+  for (const [event, listener] of windowListeners.mock.calls) if (['pagehide','pageshow'].includes(event)) window.removeEventListener(event, listener);
   vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); document.body.innerHTML = '';
   delete window.RATSJsSIP;
+  delete window.RATSPhoneWidget;
 });
 
-const identity = {operator_name: 'Manager', operator_id: 'operator', forward_number_masked: '+7***1000'};
+const identity = {operator_name: 'Manager', operator_id: 'operator', status: 'free',
+  forward_number_masked: '+7***1000', forward_available: true, browser_online: true};
 const pathOf = options => new URL(options.url).pathname;
 
 it('keeps calling disabled until the signed identity has arrived', async () => {
@@ -55,6 +60,7 @@ it('keeps calling disabled until the signed identity has arrived', async () => {
 it('double click creates and starts one request; no keypress is required', async () => {
   const signed = mount(options => pathOf(options).endsWith('/me') ? identity : {call_id: 'call-one', state: 'queued', operator_call_token: 'nonce'});
   await flush();
+  document.querySelector('.rats-mode-forward').click();
   document.querySelector('.rats-start').click(); document.querySelector('.rats-start').click();
   await flush();
   const calls = signed.mock.calls.map(([value]) => value);
@@ -67,6 +73,52 @@ it('double click creates and starts one request; no keypress is required', async
   expect(command.operator_id).toBeUndefined();
 });
 
+it('uses the card responsible and starts their browser without requesting the initiators microphone', async () => {
+  const getUserMedia = vi.fn();
+  Object.defineProperty(navigator, 'mediaDevices', {configurable: true, value: {getUserMedia}});
+  const owner = {...identity, operator_id: 'responsible', operator_name: 'Renat', forward_number_masked: '+7***2000'};
+  const signed = mount(options => pathOf(options).endsWith('/me') ? identity :
+    {call_id: 'remote-call', state: 'queued', is_participant: false}, owner);
+  await flush();
+  expect(document.querySelector('.rats-user').textContent).toBe('Renat');
+  expect(document.querySelector('.rats-forward').textContent).toBe('+7***2000');
+  document.querySelector('.rats-start').click();await flush();
+  expect(getUserMedia).not.toHaveBeenCalled();
+  const command = signed.mock.calls.find(([value]) => pathOf(value).endsWith('/calls'))[0];
+  expect(JSON.parse(command.data)).toMatchObject({mode: 'browser', protocol_version: 3});
+  expect(JSON.parse(command.data).operator_id).toBeUndefined();
+});
+
+it('refreshes the responsible and forwarding number while the same card stays open', async () => {
+  const owner = {...identity, operator_name: 'Ilya'};
+  mount(() => identity, owner);await flush();
+  expect(document.querySelector('.rats-user').textContent).toBe('Ilya');
+  owner.operator_name='Renat';owner.operator_id='responsible';owner.forward_number_masked='+7***2000';
+  await vi.advanceTimersByTimeAsync(5200);
+  expect(document.querySelector('.rats-user').textContent).toBe('Renat');
+  expect(document.querySelector('.rats-forward').textContent).toBe('+7***2000');
+});
+
+it('keeps the receiving phone through card destruction and reconnects after browser back navigation', async () => {
+  const agents=[];
+  class UA {
+    constructor(){this.events={};this.stop=vi.fn();agents.push(this);}
+    on(name, fn){this.events[name]=fn;}
+    start(){this.events.registered();}
+  }
+  window.RATSJsSIP={UA,WebSocketInterface:class {}};
+  mount(options => {
+    if(pathOf(options).endsWith('/me'))return {...identity,browser_available:true};
+    if(pathOf(options).endsWith('/webrtc/config'))return {ready:true,wss_url:'wss://ats.example.invalid/ws',sip_uri:'sip:manager@ats.example.invalid',sip_password:'fixture-only'};
+    return {ok:true};
+  });
+  await flush();expect(agents).toHaveLength(1);
+  widget.callbacks.destroy();expect(agents[0].stop).not.toHaveBeenCalled();
+  window.dispatchEvent(new Event('pagehide'));expect(agents[0].stop).toHaveBeenCalledOnce();
+  const event=new Event('pageshow');Object.defineProperty(event,'persisted',{value:true});
+  window.dispatchEvent(event);await flush();expect(agents).toHaveLength(2);
+});
+
 it('retries an ambiguous network failure with the same request ID', async () => {
   let attempts = 0;
   const signed = mount(options => {
@@ -74,7 +126,7 @@ it('retries an ambiguous network failure with the same request ID', async () => 
     if (pathOf(options).endsWith('/calls') && ++attempts === 1) throw {status: 503, responseJSON: {error: 'connection_failed'}};
     return {call_id: 'call-one', state: 'queued', operator_call_token: 'nonce'};
   });
-  await flush(); document.querySelector('.rats-start').click(); await flush();
+  await flush(); document.querySelector('.rats-mode-forward').click(); document.querySelector('.rats-start').click(); await flush();
   document.querySelector('.rats-start').click(); await flush();
   const commands = signed.mock.calls.filter(([value]) => pathOf(value).endsWith('/calls')).map(([value]) => JSON.parse(value.data));
   expect(commands).toHaveLength(2);
@@ -93,9 +145,10 @@ it('rejects an unrelated SIP invite and waits for the real bridge before showing
   Object.defineProperty(navigator, 'mediaDevices', {configurable: true, value: {getUserMedia: vi.fn(async () => ({active: true, getTracks: () => [{stop() {}}]}))}});
   let serverState = 'ringing_operator';
   const signed = mount(options => {
-    if (pathOf(options).endsWith('/me')) return identity;
+    if (pathOf(options).endsWith('/me')) return {...identity, browser_available: true};
     if (pathOf(options).endsWith('/webrtc/config')) return {ready: true, wss_url: 'wss://ats.example.invalid/asterisk/ws', sip_uri: 'sip:manager@ats.example.invalid', sip_password: 'fixture-only'};
-    return {call_id: 'browser-call', operator_call_token: 'expected-nonce', state: serverState};
+    return {call_id: 'browser-call', operator_call_token: 'a'.repeat(48), state: serverState,
+      is_participant: true, context: {contact_name: 'Client'}};
   });
   await flush(); document.querySelector('.rats-mode-browser').click(); await flush();
   document.querySelector('.rats-start').click(); await flush();
@@ -106,7 +159,8 @@ it('rejects an unrelated SIP invite and waits for the real bridge before showing
   const pcEvents = {};
   const pc = {connectionState: 'new', addEventListener: (name, fn) => {pcEvents[name] = fn;}};
   const session = {connection: pc, terminate: vi.fn(), answer: vi.fn(), on: (name, fn) => {handlers[name] = fn;}};
-  ua.events.newRTCSession({originator: 'remote', session, request: {getHeader: () => 'expected-nonce'}});
+  ua.events.newRTCSession({originator: 'remote', session, request: {getHeader: () => 'a'.repeat(48)}});
+  await flush();
   expect(session.answer).toHaveBeenCalledOnce();
   handlers.confirmed(); await flush();
   expect(document.querySelector('.rats-call-state').textContent).not.toBe('Разговор');

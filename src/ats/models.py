@@ -358,6 +358,9 @@ class OperatorDevice(Owned, Base):
     username: Mapped[str] = mapped_column(String(80))
     encrypted_secret: Mapped[str] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(default=True, server_default="true")
+    agent_session_id: Mapped[UUID | None]
+    agent_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    agent_registered: Mapped[bool] = mapped_column(default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, server_default=func.now())
     __table_args__ = (
         ForeignKeyConstraint(["tenant_id", "operator_id"], ["operators.tenant_id", "operators.id"]),
@@ -368,6 +371,8 @@ class OperatorDevice(Owned, Base):
 class WidgetCall(Owned, Base):
     __tablename__ = "widget_calls"
     operator_id: Mapped[UUID]
+    initiator_user_id: Mapped[UUID]
+    browser_session_id: Mapped[UUID | None]
     campaign_id: Mapped[UUID]
     client_request_id: Mapped[UUID]
     request_hash: Mapped[str] = mapped_column(String(64))
@@ -380,8 +385,11 @@ class WidgetCall(Owned, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, server_default=func.now())
     __table_args__ = (
         UniqueConstraint("tenant_id", "operator_id", "client_request_id"),
+        UniqueConstraint("tenant_id", "initiator_user_id", "client_request_id", name="uq_widget_initiator_request"),
         UniqueConstraint("campaign_id"),
+        Index("ix_widget_call_token", "operator_token"),
         ForeignKeyConstraint(["tenant_id", "operator_id"], ["operators.tenant_id", "operators.id"]),
+        ForeignKeyConstraint(["tenant_id", "initiator_user_id"], ["users.tenant_id", "users.id"], name="fk_widget_initiator"),
         ForeignKeyConstraint(["tenant_id", "campaign_id"], ["campaigns.tenant_id", "campaigns.id"]),
         CheckConstraint("mode IN ('forward','browser')", name="ck_widget_call_mode"),
     )

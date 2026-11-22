@@ -24,9 +24,11 @@ server.on('upgrade',(req,socket,head)=>{
   const port = server.address().port;
   fs.writeFileSync(path.join(cfg.folder,'gateway.json'),JSON.stringify({port}));
   while(!fs.existsSync(path.join(cfg.folder,'token.txt')))await new Promise(r=>setTimeout(r,20));
+  while(!fs.existsSync(path.join(cfg.folder,'recipient-token.txt')))await new Promise(r=>setTimeout(r,20));
   const token=fs.readFileSync(path.join(cfg.folder,'token.txt'),'utf8');
   const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||(fs.existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined),headless:true,args:['--no-sandbox','--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--ignore-certificate-errors','--disable-features=LocalNetworkAccessChecks','--autoplay-policy=no-user-gesture-required']});
   try{
+    async function setup(token,receiver=false){
     const context=await browser.newContext({ignoreHTTPSErrors:true,permissions:['microphone']});
     const page=await context.newPage();
     page.on('console',m=>console.log('browser:',m.type(),m.text()));
@@ -37,8 +39,8 @@ server.on('upgrade',(req,socket,head)=>{
       if(url.pathname.startsWith('/api/v4/'))return route.fulfill({json:url.pathname.includes('/contacts/')?{id:123,name:'Native customer',custom_fields_values:[{field_code:'PHONE',values:[{value:'+79990000101'}]}]}:{id:101,_embedded:{contacts:[{id:123}]}}});
       return route.fulfill({contentType:'text/html',body:'<!doctype html><html><body><main></main></body></html>'});
     });
-    await page.goto('https://omkr.amocrm.ru/leads/detail/101');
-    await page.evaluate(({port,token})=>{
+    await page.goto('https://omkr.amocrm.ru/'+(receiver?'contacts/list':'leads/detail/101'));
+    await page.evaluate(({port,token,receiver})=>{
       function request(options,signed){
         const headers=Object.assign({},options.headers||{});if(signed)headers['X-Auth-Token']=token;
         if(options.contentType)headers['Content-Type']=options.contentType;
@@ -51,25 +53,45 @@ server.on('upgrade',(req,socket,head)=>{
       window.install=()=>{
         const widget=new window.Widget();
         widget.get_settings=()=>({ratsUrl:'https://localhost:'+port});
-        widget.system=()=>({area:'lcard',subdomain:'omkr',amouser_id:7654321});
+        widget.system=()=>({area:receiver?'dashboard':'lcard',subdomain:'omkr',amouser_id:7654321});
         widget.$authorizedAjax=o=>request(o,true);
         widget.render_template=data=>{document.querySelector('main').innerHTML=data.render;};
         widget.add_action=()=>{};widget.callbacks.render();widget.callbacks.init();window.widget=widget;
       };
+      window.micRequests=0;const gum=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia=(...args)=>{window.micRequests++;return gum(...args);};
       const Original=window.RTCPeerConnection;window.peers=[];
       // Force the real relay path on every runner; production keeps the normal ICE policy.
       window.RTCPeerConnection=function(...args){const pc=new Original({...args[0],iceTransportPolicy:'relay'},args[1]);window.peers.push(pc);pc.addEventListener('connectionstatechange',()=>console.log('PC',pc.connectionState,pc.iceConnectionState));return pc;};
       window.RTCPeerConnection.prototype=Original.prototype;
-    },{port,token});
+    },{port,token,receiver});
     await page.addScriptTag({content:fs.readFileSync(path.join(cfg.root,'amo-widget/script.js'),'utf8')});
     await page.evaluate(()=>window.install());
+    return page;
+    }
+    const recipient=cfg.cross?await setup(fs.readFileSync(path.join(cfg.folder,'recipient-token.txt'),'utf8'),true):null;
+    if(recipient)await recipient.waitForFunction(()=>document.querySelector('.rats-agent-status')?.textContent.includes('зарегистрирован'));
+    const page=await setup(token);
     await page.locator('.rats-name').filter({hasText:'Native customer'}).waitFor();
     await page.locator('.rats-mode-browser').click();
-    await page.waitForFunction(()=>document.querySelector('.rats-status').textContent.includes('зарегистрирован'),null,{timeout:15000});
+    await page.waitForFunction(()=>document.querySelector('.rats-agent-status')?.textContent.includes('зарегистрирован'),null,{timeout:15000});
     await page.locator('.rats-start').click();
+    if(recipient){
+      await recipient.locator('.rats-agent-answer:visible').waitFor();
+      const before=await page.evaluate(()=>({peers:peers.length,mic:micRequests}));
+      if(before.peers||before.mic)throw Error('Initiator must not acquire a microphone or create a peer for another manager');
+      await recipient.evaluate(()=>{window.widget.callbacks.destroy();history.pushState({},'', '/contacts/list');});
+      await recipient.locator('.rats-agent-answer').click();
+    }
     await page.waitForFunction(()=>document.querySelector('.rats-call-state').textContent==='Разговор',null,{timeout:25000});
     await page.waitForTimeout(1000);
-    const result=await page.evaluate(async()=>{
+    const mediaPage=recipient||page;
+    if(recipient){
+      await page.close();
+      await recipient.waitForTimeout(1500);
+      if(!await recipient.evaluate(()=>peers.some(pc=>pc.connectionState==='connected')))throw Error('Closing initiator page interrupted responsible manager');
+    }
+    const result=await mediaPage.evaluate(async()=>{
       const rows=[];let relay=false;
       for(const pc of window.peers){
         const report=await pc.getStats();
@@ -84,8 +106,13 @@ server.on('upgrade',(req,socket,head)=>{
     console.log('media statistics',JSON.stringify(stats));
     if(!result.relay)throw Error('Selected ICE candidate must use the TURN relay');
     if(!stats.some(s=>s.type==='inbound-rtp'&&s.received>5)||!stats.some(s=>s.type==='outbound-rtp'&&s.sent>5))throw Error('Bidirectional browser SRTP not established');
-    await page.locator('.rats-hangup').click();
-    await page.waitForFunction(()=>document.querySelector('.rats-call-state').textContent==='Завершён',null,{timeout:10000});
+    if(recipient){
+      await recipient.locator('.rats-agent-hangup').click();
+      await recipient.waitForFunction(()=>!document.querySelector('.rats-agent-hangup')||document.querySelector('.rats-agent-hangup').hidden,null,{timeout:10000});
+    }else{
+      await page.locator('.rats-hangup').click();
+      await page.waitForFunction(()=>document.querySelector('.rats-call-state').textContent==='Завершён',null,{timeout:10000});
+    }
     console.log('PASS: shipped widget + signed API + WSS registration + real WebRTC/SRTP + bridge + hangup');
   }finally{await browser.close();server.close();}
 })().then(()=>process.exit(0)).catch(error=>{console.error(error);server.close();process.exit(1);});

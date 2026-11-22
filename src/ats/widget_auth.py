@@ -28,6 +28,26 @@ class WidgetPrincipal:
     account_id: int
 
 
+def mapped_operator(db, tenant_id, amo_user_id, user_map=None):
+    if user_map is None:
+        profile = db.scalar(select(ConnectionProfile).where(
+            ConnectionProfile.tenant_id == tenant_id, ConnectionProfile.provider == "amocrm",
+        ))
+        user_map = (profile.public_values if profile else {}).get("operator_user_map", {})
+    extensions = [str(ext) for ext, ident in user_map.items() if str(ident) == str(amo_user_id)]
+    if len(extensions) != 1:
+        raise Problem(409, "operator_mapping_missing")
+    found = db.execute(select(Operator, User).join(User, (
+        (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id)
+    )).where(
+        Operator.tenant_id == tenant_id, Operator.extension == extensions[0],
+        User.active, ~User.archived, User.role == "operator",
+    )).all()
+    if len(found) != 1:
+        raise Problem(409, "operator_mapping_missing")
+    return found[0]
+
+
 def widget_principal(request: Request, db=Depends(session)):
     tenant_id = settings().amo_tenant_id
     if not tenant_id:
@@ -62,19 +82,7 @@ def widget_principal(request: Request, db=Depends(session)):
             raise ValueError("binding")
     except (jwt.PyJWTError, ValueError, TypeError, AttributeError) as exc:
         raise Problem(401, "amo_widget_token_invalid") from exc
-    user_map = (public or {}).get("operator_user_map", {})
-    extensions = [str(ext) for ext, ident in user_map.items() if str(ident) == str(claims["user_id"])]
-    if len(extensions) != 1:
-        raise Problem(409, "operator_mapping_missing")
-    found = db.execute(select(Operator, User).join(User, (
-        (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id)
-    )).where(
-        Operator.tenant_id == tenant_id, Operator.extension == extensions[0],
-        User.active, ~User.archived, User.role == "operator",
-    )).all()
-    if len(found) != 1:
-        raise Problem(409, "operator_mapping_missing")
-    operator, user = found[0]
+    operator, user = mapped_operator(db, tenant_id, claims["user_id"], (public or {}).get("operator_user_map", {}))
     request.state.tenant_id = tenant_id
     return WidgetPrincipal(Principal(tenant_id, user.id, user.role, user.login),
                            operator.id, claims["user_id"], int(account_id))

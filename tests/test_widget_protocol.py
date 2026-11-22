@@ -1,12 +1,14 @@
+import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import jwt
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from test_mobile_callback import callback as mobile_callback_fixture
 
 from ats.adapters import AmoCRM
@@ -21,6 +23,7 @@ from ats.models import (
     CampaignItem,
     Contact,
     Operator,
+    OperatorDevice,
     Outbox,
     QueueEntry,
     User,
@@ -50,10 +53,10 @@ def widget(factory, callback, client, monkeypatch):
             "client_secret": SECRET, "operator_user_map": {"704": 7654321},
         }})
 
-    raw_contact = {"id": 123, "name": "Client", "custom_fields_values": [
+    raw_contact = {"id": 123, "responsible_user_id": 7654321, "name": "Client", "custom_fields_values": [
         {"field_code": "PHONE", "values": [{"value": "+79990000101"}]},
     ]}
-    raw_card = {"_embedded": {"contacts": [{"id": 123}]}}
+    raw_card = {"responsible_user_id": 7654321, "_embedded": {"contacts": [{"id": 123}]}}
 
     class CRM(AmoCRM):
         def __init__(self, config):
@@ -62,12 +65,13 @@ def widget(factory, callback, client, monkeypatch):
         def read(self, path, params=None):
             if path == "/api/v4/contacts/123":
                 return raw_contact
-            return raw_card
+            return {"id": int(path.rsplit("/", 1)[-1]), **raw_card}
 
         def close(self):
             pass
 
     monkeypatch.setattr("ats.api_widget.AmoCRM", CRM)
+    monkeypatch.setattr("ats.workers.AmoCRM", CRM)
     claims = {"exp": int((now() + timedelta(minutes=10)).timestamp()), "aud": "http://testserver",
               "client_uuid": CLIENT_ID, "account_id": 12345, "user_id": 7654321,
               "subdomain": "omkr", "jti": str(uuid4()), "iss": "amocrm.ru", "is_admin": False}
@@ -99,6 +103,141 @@ def test_moderated_widget_signed_identity_and_cors(widget):
     })
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == "https://omkr.amocrm.ru"
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_widget_migration_backfills_old_actor_and_preserves_new_separate_actor(factory, widget, legacy):
+    created = create(widget)
+    call_id = UUID(created["call_id"])
+    with factory.begin() as db:
+        call = db.get(WidgetCall, call_id)
+        expected_user = call.initiator_user_id
+        if legacy:
+            call.crm_context = {"amo_user_id": 7654321, "contact_id": 123}
+            expected_session = None
+        else:
+            user = User(tenant_id=widget["tenant_id"], login="other-initiator", role="operator", password_hash="fixture")
+            db.add(user)
+            db.flush()
+            expected_user, expected_session = user.id, uuid4()
+            call.initiator_user_id, call.browser_session_id = expected_user, expected_session
+            call.crm_context = {**call.crm_context, "initiator_ats_user_id": str(user.id),
+                                "browser_session_id": str(expected_session)}
+    env = {**os.environ, "ATS_DATABASE_URL": os.environ["ATS_TEST_DATABASE_URL"]}
+    try:
+        subprocess.run([".venv/bin/alembic", "downgrade", "0013"], env=env, check=True, capture_output=True)
+        with factory() as db:
+            assert db.scalar(text("SELECT count(*) FROM widget_calls WHERE id=:id"), {"id": call_id}) == 1
+    finally:
+        subprocess.run([".venv/bin/alembic", "upgrade", "head"], env=env, check=True, capture_output=True)
+    with factory() as db:
+        call = db.get(WidgetCall, call_id)
+        assert call.initiator_user_id == expected_user and call.browser_session_id == expected_session
+        assert call.operator_id == widget["operator_id"]
+
+
+@pytest.mark.parametrize("phase", ["before_start", "before_dispatch"])
+def test_changed_responsible_prevents_network_call_and_releases_reserved_operator(factory, widget, phase):
+    call_id = create(widget)["call_id"]
+    worker = Worker(factory)
+    if phase == "before_dispatch":
+        assert widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"]).status_code == 202
+        worker.schedule()
+    widget["raw_card"]["responsible_user_id"] = 9999999
+    if phase == "before_start":
+        result = widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+        assert result.status_code == 409
+    else:
+        worker.telephony()
+    assert not widget["provider"].originates
+    with factory() as db:
+        assert db.get(Operator, widget["operator_id"]).status == "free"
+        assert not db.scalar(select(QueueEntry).where(QueueEntry.status == "accepted"))
+
+
+@pytest.fixture
+def browser_agent(factory, widget, monkeypatch):
+    from ats.webrtc import save_device
+
+    for key, value in {"ATS_WEBRTC_ENABLED": "true", "ATS_WEBRTC_WSS_URL": "wss://ats.example.invalid/asterisk/ws",
+                       "ATS_WEBRTC_SIP_DOMAIN": "ats.example.invalid"}.items():
+        monkeypatch.setenv(key, value)
+    settings.cache_clear()
+    with factory.begin() as db:
+        operator = db.get(Operator, widget["operator_id"])
+        endpoint = "ats-web-" + operator.id.hex
+        save_device(db, operator, endpoint, endpoint, "x" * 48)
+    widget["provider"].endpoints.add(endpoint)
+    ident = str(uuid4())
+    for path, extra in [("lease", {}), ("heartbeat", {"registered": True})]:
+        response = widget["client"].post("/api/v1/amo/widget/v2/agent/" + path,
+            json={"session_id": ident, **extra}, headers=widget["headers"])
+        assert response.status_code == 200, response.text
+    return ident
+
+
+def test_agent_lease_serializes_tabs_and_cannot_be_stolen_while_busy(factory, widget, browser_agent):
+    other = str(uuid4())
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/lease", json={"session_id": other}, headers=widget["headers"])
+    assert response.status_code == 409 and response.json()["error"] == "agent_in_another_tab"
+    response = widget["client"].get("/api/v1/amo/widget/v2/webrtc/config", params={"session_id": other}, headers=widget["headers"])
+    assert response.status_code == 409 and "sip_password" not in response.json()
+    call_id = create(widget, payload(mode="browser", protocol_version=3))["call_id"]
+    widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    Worker(factory).schedule()
+    with factory.begin() as db:
+        db.scalar(select(OperatorDevice)).agent_expires_at = now() - timedelta(seconds=1)
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/lease", json={"session_id": other}, headers=widget["headers"])
+    assert response.status_code == 409
+    with factory() as db:
+        assert db.scalar(select(WidgetCall)).browser_session_id == UUID(browser_agent)
+        assert db.get(Operator, widget["operator_id"]).status == "busy"
+
+
+def test_browser_disconnected_after_allocation_never_dials_customer(factory, widget, browser_agent):
+    call_id = create(widget, payload(mode="browser", protocol_version=3))["call_id"]
+    widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    worker = Worker(factory)
+    worker.schedule()
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/heartbeat",
+        json={"session_id": browser_agent, "registered": False}, headers=widget["headers"])
+    assert response.status_code == 200
+    worker.telephony()
+    assert not widget["provider"].originates
+    with factory() as db:
+        assert db.scalar(select(Attempt)).reason == "responsible_browser_offline"
+        assert db.get(Operator, widget["operator_id"]).status == "free"
+
+
+def test_browser_heartbeat_preserves_break_and_cannot_release_busy_operator(factory, widget, browser_agent):
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/availability",
+        json={"status": "break"}, headers=widget["headers"])
+    assert response.status_code == 200
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/heartbeat",
+        json={"session_id": browser_agent, "registered": True}, headers=widget["headers"])
+    assert response.json()["status"] == "break"
+    widget["client"].post("/api/v1/amo/widget/v2/agent/availability", json={"status": "free"}, headers=widget["headers"])
+    call_id = create(widget, payload(mode="browser", protocol_version=3))["call_id"]
+    widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    Worker(factory).schedule()
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/availability", json={"status": "free"}, headers=widget["headers"])
+    assert response.status_code == 409
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/heartbeat",
+        json={"session_id": browser_agent, "registered": True}, headers=widget["headers"])
+    assert response.json()["status"] == "busy"
+
+
+def test_agent_lease_takeover_expires_queued_calls_and_blocks_old_page(factory, widget, browser_agent):
+    call_id = create(widget, payload(mode="browser", protocol_version=3))["call_id"]
+    with factory.begin() as db:
+        db.scalar(select(OperatorDevice)).agent_expires_at = now() - timedelta(seconds=1)
+    other = str(uuid4())
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/lease", json={"session_id": other}, headers=widget["headers"])
+    assert response.status_code == 200
+    state = widget["client"].get(f"/api/v1/amo/widget/v2/calls/{call_id}", headers=widget["headers"]).json()
+    assert state["state"] == "failed" and state["reason"] == "responsible_browser_offline"
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/heartbeat", json={"session_id": browser_agent}, headers=widget["headers"])
+    assert response.status_code == 409
 
 
 @pytest.mark.parametrize("change,value", [
@@ -333,6 +472,42 @@ def test_widget_reuses_an_admitted_phone_and_delivers_to_the_verified_crm_contac
         assert db.scalar(select(func.count()).select_from(Contact)) == 1
 
 
+@pytest.mark.parametrize("entity_type,entity_id", [("leads", 101), ("contacts", 123), ("companies", 202)])
+def test_widget_result_task_uses_source_entity_and_actual_participant(factory, widget, entity_type, entity_id):
+    from ats.models import WorkspaceSettings
+    from ats.services import finish_attempt
+
+    with factory.begin() as db:
+        row = db.scalar(select(WorkspaceSettings).where(WorkspaceSettings.tenant_id == widget["tenant_id"]))
+        if row:
+            row.values = {**row.values, "amo_auto_create_tasks": True}
+        else:
+            db.add(WorkspaceSettings(tenant_id=widget["tenant_id"], values={"amo_auto_create_tasks": True}))
+    call_id = create(widget, payload(entity_type=entity_type, entity_id=entity_id))["call_id"]
+    widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    worker = Worker(factory)
+    worker.schedule()
+    with factory.begin() as db:
+        finish_attempt(db, db.scalar(select(Attempt)), "failed", "fixture_finished")
+    tasks, registrations = [], []
+
+    class Delivery:
+        def send(self, *args):
+            pass
+
+        def register_call(self, *args, **kwargs):
+            registrations.append(args)
+
+        def create_task(self, *args, **kwargs):
+            tasks.append((args, kwargs))
+
+    worker.crm = Delivery()
+    assert worker.crm_job()
+    assert registrations[0][5] == 7654321
+    assert tasks[0][0][1] == entity_id and tasks[0][0][3] == 7654321
+    assert tasks[0][1] == {"entity_type": entity_type}
+
+
 def test_widget_refuses_a_phone_changed_while_queued_before_reserving_resources(factory, widget):
     call_id = create(widget)["call_id"]
     widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
@@ -425,7 +600,7 @@ def test_other_authenticated_operator_cannot_control_call(factory, widget):
 
 
 @pytest.mark.parametrize("mode", ["forward", "browser"])
-def test_another_lead_responsible_keeps_the_signed_callers_devices_and_resources(
+def test_card_responsible_receives_both_modes_and_owns_resources_and_result(
     factory, widget, monkeypatch, mode
 ):
     from ats.services import finish_attempt
@@ -460,31 +635,61 @@ def test_another_lead_responsible_keeps_the_signed_callers_devices_and_resources
     browser = widget["client"].get("/api/v1/amo/widget/v2/webrtc/config", headers=widget["headers"])
     assert browser.status_code == 200 and browser.json()["auth_user"] == own_endpoint
     assert browser.json()["sip_password"] == "x" * 48
-    call_id = create(widget, payload(mode=mode))["call_id"]
+    other_headers = {**widget["headers"], "X-Auth-Token": jwt.encode(
+        {**widget["claims"], "user_id": 7654322}, SECRET, algorithm="HS256",
+    )}
+    session_id = str(uuid4())
+    if mode == "browser":
+        for path, extra in [("lease", {}), ("heartbeat", {"registered": True})]:
+            response = widget["client"].post("/api/v1/amo/widget/v2/agent/" + path,
+                json={"session_id": session_id, **extra}, headers=other_headers)
+            assert response.status_code == 200, response.text
+    context = widget["client"].post("/api/v1/amo/widget/v2/context",
+        json={"entity_type": "leads", "entity_id": 101}, headers=widget["headers"]).json()
+    assert context["responsible"]["operator_name"] == "Alim"
+    assert context["responsible"]["forward_number_masked"] == "+7***1001"
+    legacy = widget["client"].post("/api/v1/amo/widget/v2/calls", json=payload(mode=mode), headers=widget["headers"])
+    assert legacy.status_code == 409 and legacy.json()["error"] == "widget_upgrade_required"
+    created = create(widget, payload(mode=mode, protocol_version=3))
+    assert not created["is_participant"] and "operator_call_token" not in created
+    call_id = created["call_id"]
+    denied = widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/ready", headers=widget["headers"])
+    assert denied.status_code == 404
+    assert widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=other_headers).status_code == 404
     result = widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
     assert result.status_code == 202
     worker = Worker(factory)
     worker.schedule()
     with factory() as db:
         attempt = db.scalar(select(Attempt))
-        assert db.scalar(select(WidgetCall)).operator_id == widget["operator_id"]
-        assert db.scalar(select(QueueEntry)).operator_id == widget["operator_id"]
-        assert db.get(Operator, widget["operator_id"]).status == "busy"
-        assert db.get(Operator, other_id).status == "free"
+        call = db.scalar(select(WidgetCall))
+        assert call.operator_id == other_id
+        assert call.initiator_user_id == db.get(Operator, widget["operator_id"]).user_id
+        assert db.scalar(select(QueueEntry)).operator_id == other_id
+        assert db.get(Operator, widget["operator_id"]).status == "free"
+        assert db.get(Operator, other_id).status == "busy"
         assert attempt.channel_units == (2 if mode == "forward" else 1)
+        token = call.operator_token
+    if mode == "browser":
+        invite = {"session_id": session_id, "token": token}
+        assert widget["client"].post("/api/v1/amo/widget/v2/agent/invite", json=invite, headers=widget["headers"]).status_code == 409
+        assert widget["client"].post("/api/v1/amo/widget/v2/agent/invite", json=invite, headers=other_headers).status_code == 200
+        bad = {**invite, "token": "f" * 48}
+        assert widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/ready", json=bad, headers=other_headers).status_code == 403
+        assert widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/ready", json=invite, headers=other_headers).status_code == 200
     assert worker.telephony()
     frame = widget["provider"].originates[-1]
     if mode == "forward":
-        assert frame["Channel"] == ["Local/+79990001000@ats-beta-callback-operator/n"]
+        assert frame["Channel"] == ["Local/+79990001001@ats-beta-callback-operator/n"]
     else:
-        assert frame["Channel"] == [f"Local/{widget['operator_id']}@ats-beta-callback-browser/n"]
-        assert f"__ATS_OPERATOR_ENDPOINT={own_endpoint}" in frame["Variable"]
-        assert f"__ATS_OPERATOR_ENDPOINT={other_endpoint}" not in frame["Variable"]
+        assert frame["Channel"] == [f"Local/{other_id}@ats-beta-callback-browser/n"]
+        assert f"__ATS_OPERATOR_ENDPOINT={other_endpoint}" in frame["Variable"]
+        assert f"__ATS_OPERATOR_ENDPOINT={own_endpoint}" not in frame["Variable"]
     with factory.begin() as db:
         finish_attempt(db, db.scalar(select(Attempt)), "failed", "fixture_finished")
     with factory() as db:
         delivery = db.scalar(select(Outbox).where(Outbox.kind == "crm"))
-        assert delivery.payload["amo_responsible_user_id"] == 7654321
+        assert delivery.payload["amo_responsible_user_id"] == 7654322
         assert db.get(Operator, widget["operator_id"]).status == "free"
         assert db.get(Operator, other_id).status == "free"
 

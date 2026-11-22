@@ -1,3 +1,4 @@
+import json
 import socketserver
 import threading
 from types import SimpleNamespace
@@ -95,6 +96,29 @@ def test_amo_creates_contact_note():
         aid, 123, "completed"
     )
     assert requests == ["GET", "POST"]
+
+
+@pytest.mark.parametrize("entity_type", ["leads", "contacts", "companies"])
+def test_amo_task_reconciles_with_the_same_entity_and_responsible(entity_type):
+    attempt_id = uuid4()
+    tasks = []
+
+    def handler(request):
+        assert request.url.path == "/api/v4/tasks"
+        if request.method == "GET":
+            assert request.url.params["filter[entity_id]"] == "69447281"
+            assert request.url.params["filter[entity_type]"] == entity_type
+            return httpx.Response(200, json={"_embedded": {"tasks": tasks}})
+        task = json.loads(request.content)[0]
+        assert task["entity_id"] == 69447281 and task["entity_type"] == entity_type
+        assert task["responsible_user_id"] == 7654322
+        tasks.append(task)
+        return httpx.Response(200, json={})
+
+    crm = AmoCRM(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    crm.create_task(attempt_id, 69447281, responsible=7654322, entity_type=entity_type)
+    crm.create_task(attempt_id, 69447281, responsible=7654322, entity_type=entity_type)
+    assert len(tasks) == 1
 
 
 def test_remote_urls_and_ami_injection_rejected():

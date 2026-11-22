@@ -263,7 +263,11 @@ async def request_guard(request: Request, call_next):
         request._body = b"".join(parts)
     response = await call_next(request)
     route_path = getattr(request.scope.get("route"), "path", "unmatched")
-    if unsafe or response.status_code >= 400:
+    agent_poll = request.url.path in {
+        "/api/v1/amo/widget/v2/agent/heartbeat", "/api/v1/amo/widget/v2/agent/lease",
+        "/api/v1/amo/widget/v2/context",
+    }
+    if (unsafe and not agent_poll) or response.status_code >= 400:
         log.info(
             "http_request request_id=%s method=%s path=%s status=%s",
             request.state.request_id,
@@ -364,7 +368,7 @@ def live():
 def ready(db=Depends(session)):
     # Verify required schema, not merely TCP/Postgres availability.
     version = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if version != "0013":
+    if version != "0014":
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
     config = settings()

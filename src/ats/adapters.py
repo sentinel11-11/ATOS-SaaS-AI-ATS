@@ -369,7 +369,7 @@ class AmoCRM:
         except (ValueError, KeyError, TypeError, IndexError) as exc:
             raise DeliveryUnknown() from exc
 
-    def create_task(self, attempt_id, contact_id, due_hours=24, responsible=None):
+    def create_task(self, attempt_id, contact_id, due_hours=24, responsible=None, *, entity_type="contacts"):
         from datetime import UTC, datetime, timedelta
 
         marker = f"ATS#{attempt_id}"
@@ -379,7 +379,7 @@ class AmoCRM:
                     "/api/v4/tasks",
                     {
                         "filter[entity_id]": contact_id,
-                        "filter[entity_type]": "contacts",
+                        "filter[entity_type]": entity_type,
                         "limit": 250,
                         "page": page,
                     },
@@ -396,7 +396,7 @@ class AmoCRM:
         task = {
             "text": f"{marker} Обработать результат звонка ATS",
             "entity_id": contact_id,
-            "entity_type": "contacts",
+            "entity_type": entity_type,
             "task_type_id": 1,
             "complete_till": int((datetime.now(UTC) + timedelta(hours=due_hours)).timestamp()),
         }

@@ -29,3 +29,5 @@
 #rats-widget-root.rats-error .rats-status{color:#ff9e91}
 #rats-widget-root .rats-footer{background:#0a1218;text-align:center;padding:9px 4px;font-size:9px;letter-spacing:.2px;color:#7f909d}
 #rats-widget-root [hidden]{display:none!important}
+
+.rats-agent{position:fixed;bottom:18px;right:18px;z-index:99999;width:270px;padding:12px;box-shadow:0 4px 20px #0008}.rats-agent-status{font-size:12px}.rats-agent-client{font-weight:600;margin:8px 0}.rats-agent button{width:100%;margin-top:6px}.rats-agent[hidden],.rats-agent [hidden]{display:none!important}

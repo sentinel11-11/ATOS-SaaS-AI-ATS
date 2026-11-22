@@ -331,6 +331,32 @@ class Worker:
             return False
         job_id, token, tenant_id, payload, attempts = job
         attempt_id = UUID(payload["attempt_id"])
+        # The initiator may differ from the participant. Read CRM before acquiring
+        # the allocation mutex and before sending anything to the provider.
+        try:
+            from ats.connections import settings_for_tenant
+            from ats.widget_context import verify_responsible
+
+            with self.factory() as db:
+                call = db.scalar(select(WidgetCall).join(CampaignItem, (
+                    CampaignItem.campaign_id == WidgetCall.campaign_id
+                )).join(Attempt, Attempt.item_id == CampaignItem.id).where(
+                    WidgetCall.tenant_id == tenant_id, Attempt.id == attempt_id, Attempt.status == "prepared",
+                ))
+                if call:
+                    verify_responsible(db, call, settings_for_tenant(db, tenant_id), AmoCRM)
+        except Retryable as exc:
+            with self.factory.begin() as db:
+                complete_job(db, job_id, token, "pending", exc.code, backoff(attempts, exc.retry_after))
+            return True
+        except (Problem, Rejected, ValueError, TypeError, KeyError) as exc:
+            with self.factory.begin() as db:
+                db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
+                attempt = TenantRepository(db, tenant_id).get(Attempt, attempt_id, lock=True)
+                if attempt.status == "prepared":
+                    finish_attempt(db, attempt, "failed", getattr(exc, "code", "crm_context_invalid"))
+                complete_job(db, job_id, token)
+            return True
         with self.factory.begin() as db:
             # Serialize with pause/allocation. No network request holds this lock.
             tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
@@ -650,9 +676,10 @@ class Worker:
                 if options.get("amo_auto_create_tasks"):
                     crm.create_task(
                         attempt_id,
-                        crm_id,
+                        widget_context.get("entity_id") or crm_id,
                         options.get("task_due_hours", 24),
                         responsible,
+                        entity_type=widget_context.get("entity_type") or "contacts",
                     )
         except Retryable as e:
             with self.factory.begin() as db:
