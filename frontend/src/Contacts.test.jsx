@@ -65,3 +65,45 @@ it('shows a restored contact immediately after saving from a later page', async 
   expect(screen.getByPlaceholderText(searchPlaceholder).value).toBe(contact.phone);
   expect(screen.getByText(contact.name)).toBeTruthy();
 });
+
+it('shows a separate outgoing block and lets an administrator explicitly remove it', async () => {
+  const addToast = vi.fn();
+  let current = { ...contact, blacklisted: 1 };
+  api.mockImplementation((path) => {
+    if (path === `/contacts/${contact.id}/unblock`) {
+      current = { ...current, blacklisted: 0 };
+      return { ok: true };
+    }
+    if (path.startsWith('/contacts/history')) return { contact: current, calls: [] };
+    if (path.startsWith('/contacts?')) return { contacts: [current], total: 1 };
+    return { campaigns: [] };
+  });
+  render(<Contacts addToast={addToast} />);
+  await screen.findByText('Звонки запрещены');
+  expect(screen.getByText('Есть (Вкл)')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Карточка' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Разрешить звонки' }));
+  await waitFor(() => expect(api).toHaveBeenCalledWith(`/contacts/${contact.id}/unblock`, { method: 'POST' }));
+  await waitFor(() => expect(screen.queryByText('Звонки запрещены')).toBeNull());
+  expect(addToast).toHaveBeenCalledWith('Исходящие звонки разрешены', 'ok');
+});
+
+it.each([
+  ['contact_blacklisted', 'Номер находится в чёрном списке. Сначала проверьте причину запрета'],
+  ['admin_required', 'Разрешить звонки может администратор'],
+])('keeps the outgoing block when the server returns %s', async (error, message) => {
+  const addToast = vi.fn();
+  const blocked = { ...contact, blacklisted: 1 };
+  api.mockImplementation((path) => {
+    if (path.endsWith('/unblock')) return { ok: false, error };
+    if (path.startsWith('/contacts/history')) return { contact: blocked, calls: [] };
+    if (path.startsWith('/contacts?')) return { contacts: [blocked], total: 1 };
+    return { campaigns: [] };
+  });
+  render(<Contacts addToast={addToast} />);
+  await screen.findByText('Звонки запрещены');
+  fireEvent.click(screen.getByRole('button', { name: 'Карточка' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Разрешить звонки' }));
+  await waitFor(() => expect(addToast).toHaveBeenCalledWith(message, 'err'));
+  expect(screen.getByText('Звонки запрещены')).toBeTruthy();
+});

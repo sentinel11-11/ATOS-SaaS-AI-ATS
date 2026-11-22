@@ -592,6 +592,7 @@ class Worker:
                 raise Rejected("crm_tenant_not_bound")
             with self.factory() as db:
                 repo = TenantRepository(db, tenant_id)
+                widget_context = {}
                 if "inbound_id" in payload:
                     attempt = repo.get(InboundCall, UUID(payload["inbound_id"]))
                     if not attempt.contact_id:
@@ -602,13 +603,16 @@ class Worker:
                     attempt = repo.get(Attempt, UUID(payload["attempt_id"]))
                     item = repo.get(CampaignItem, attempt.item_id)
                     contact = repo.get(Contact, item.contact_id)
+                    widget_call = db.scalar(repo.query(WidgetCall).where(WidgetCall.campaign_id == item.campaign_id))
+                    widget_context = (widget_call.crm_context or {}) if widget_call else {}
                     direction = "outbound"
                     duration = (
                         max(0, int(((attempt.bridge_ended_at or attempt.ended_at) - attempt.answered_at).total_seconds()))
                         if attempt.ended_at and attempt.answered_at
                         else 0
                     )
-                crm_id, status, attempt_id = contact.crm_contact_id, attempt.status, attempt.id
+                crm_id = widget_context.get("contact_id") or contact.crm_contact_id
+                status, attempt_id = attempt.status, attempt.id
                 contact_id, phone, name = contact.id, attempt.phone or contact.phone, contact.name
                 created_at = attempt.created_at
                 provider = db.scalar(repo.query(WorkspaceSettings))

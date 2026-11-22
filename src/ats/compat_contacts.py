@@ -20,6 +20,7 @@ from ats.domain import Problem
 from ats.models import (
     Attempt,
     Audit,
+    BlacklistEntry,
     Campaign,
     CampaignItem,
     Contact,
@@ -239,6 +240,24 @@ def contact_delete(data: Ids, p=Depends(admin), db=Depends(session)):
         audit(db, p, "contact.archived", row.id)
     db.commit()
     return {"ok": True, "deleted": len(rows)}
+
+
+@router.post("/contacts/{contact_id}/unblock")
+def contact_unblock(contact_id: UUID, p=Depends(admin), db=Depends(session)):
+    db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
+    repo = TenantRepository(db, p.tenant_id)
+    row = repo.get(Contact, contact_id, lock=True)
+    if row.archived:
+        raise Problem(409, "contact_archived")
+    if not row.consent or not row.consent_source.strip():
+        raise Problem(409, "no_consent")
+    if db.scalar(repo.query(BlacklistEntry).where(BlacklistEntry.phone == row.phone)):
+        raise Problem(409, "contact_blacklisted")
+    if row.blocked:
+        row.blocked = False
+        audit(db, p, "contact.unblocked", row.id)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/contacts/history")

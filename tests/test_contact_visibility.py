@@ -5,10 +5,88 @@ import pytest
 from sqlalchemy import func, select
 
 from ats.config import settings
-from ats.models import AmoSyncItem, AmoSyncJob, Attempt, Audit, Contact, Outbox
+from ats.models import (
+    AmoSyncItem,
+    AmoSyncJob,
+    Attempt,
+    Audit,
+    BlacklistEntry,
+    Contact,
+    Outbox,
+    User,
+)
 from ats.workers import Worker
 
 BASE = "/api/v1/workspace"
+
+
+def test_admin_can_explicitly_unblock_a_restored_contact_and_keep_history(logged, prepared, factory):
+    Worker(factory).schedule()
+    contact_id = UUID(prepared[1])
+    with factory.begin() as db:
+        row = db.get(Contact, contact_id)
+        row.blocked = True
+        source = row.consent_source
+        attempt_id = db.scalar(select(Attempt.id))
+    for _ in range(2):
+        response = logged.post(f"/api/v2/contacts/{contact_id}/unblock")
+        assert response.status_code == 200, response.text
+    with factory() as db:
+        row = db.get(Contact, contact_id)
+        assert not row.blocked and row.consent and row.consent_source == source
+        assert row.crm_contact_id == 123
+        assert db.get(Attempt, attempt_id).phone == "+79990000101"
+        assert db.scalar(select(func.count()).select_from(Audit).where(
+            Audit.action == "contact.unblocked", Audit.entity_id == contact_id,
+        )) == 1
+
+
+@pytest.mark.parametrize("restriction,error", [
+    ("blacklist", "contact_blacklisted"), ("no_consent", "no_consent"), ("archived", "contact_archived"),
+])
+def test_unblock_preserves_blacklist_archive_and_consent_restrictions(logged, factory, tenants, restriction, error):
+    saved = logged.post("/api/v2/contacts/save", json={
+        "name": "Restricted fixture", "phone": "+79855772554", "consent": True,
+    }).json()
+    with factory.begin() as db:
+        row = db.get(Contact, UUID(saved["id"]))
+        row.blocked = True
+        if restriction == "blacklist":
+            db.add(BlacklistEntry(tenant_id=tenants[0], phone=row.phone, reason="Recorded refusal"))
+        elif restriction == "no_consent":
+            row.consent = False
+        else:
+            row.archived = True
+    response = logged.post(f"/api/v2/contacts/{saved['id']}/unblock")
+    assert response.status_code == 409 and response.json()["error"] == error
+    with factory() as db:
+        assert db.get(Contact, UUID(saved["id"])).blocked
+
+
+def test_operator_cannot_remove_a_contact_block(logged, factory, tenants):
+    saved = logged.post("/api/v2/contacts/save", json={
+        "name": "Restricted fixture", "phone": "+79855772554", "consent": True,
+    }).json()
+    with factory.begin() as db:
+        db.get(Contact, UUID(saved["id"])).blocked = True
+        db.scalar(select(User).where(User.tenant_id == tenants[0], User.login == "admin")).role = "operator"
+    response = logged.post(f"/api/v2/contacts/{saved['id']}/unblock")
+    assert response.status_code == 403 and response.json()["error"] == "admin_required"
+    with factory() as db:
+        assert db.get(Contact, UUID(saved["id"])).blocked
+
+
+def test_contact_unblock_is_tenant_scoped(logged, factory, tenants):
+    with factory.begin() as db:
+        row = Contact(tenant_id=tenants[1], name="Foreign fixture", phone="+79855772554",
+                      blocked=True, consent=True, consent_source="Fixture approval")
+        db.add(row)
+        db.flush()
+        contact_id = row.id
+    response = logged.post(f"/api/v2/contacts/{contact_id}/unblock")
+    assert response.status_code == 404
+    with factory() as db:
+        assert db.get(Contact, contact_id).blocked
 
 
 @pytest.mark.parametrize("consent", [True, False])

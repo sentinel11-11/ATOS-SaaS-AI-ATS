@@ -22,6 +22,7 @@ from ats.models import (
     Contact,
     Operator,
     Outbox,
+    QueueEntry,
     User,
     WidgetCall,
     now,
@@ -304,14 +305,64 @@ def test_widget_contact_resolution_preserves_local_restrictions(factory, widget,
         assert db.scalar(select(func.count()).select_from(WidgetCall)) == 0
 
 
-def test_widget_does_not_replace_a_different_crm_identity(factory, widget):
+def test_widget_reuses_an_admitted_phone_and_delivers_to_the_verified_crm_contact(factory, widget):
+    from ats.services import finish_attempt
+
     with factory.begin() as db:
         db.get(Contact, widget["contact_id"]).crm_contact_id = 456
-    response = widget["client"].post("/api/v1/amo/widget/v2/calls", json=payload(), headers=widget["headers"])
-    assert response.status_code == 409 and response.json()["error"] == "crm_contact_not_synced"
+    call_id = create(widget)["call_id"]
+    response = widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    assert response.status_code == 202
+    deliveries = []
+
+    class CRMDelivery:
+        def send(self, attempt_id, contact_id, status):
+            deliveries.append((contact_id, status))
+
+    worker = Worker(factory, crm=CRMDelivery())
+    worker.schedule()
+    with factory.begin() as db:
+        attempt = db.scalar(select(Attempt))
+        assert attempt.contact_name == widget["raw_contact"]["name"]
+        finish_attempt(db, attempt, "failed", "fixture_finished")
+    assert worker.crm_job()
+    assert deliveries == [(123, "failed")]
     with factory() as db:
         assert db.get(Contact, widget["contact_id"]).crm_contact_id == 456
-        assert db.scalar(select(func.count()).select_from(WidgetCall)) == 0
+        assert db.scalar(select(WidgetCall)).crm_context["contact_id"] == 123
+        assert db.scalar(select(func.count()).select_from(Contact)) == 1
+
+
+def test_widget_refuses_a_phone_changed_while_queued_before_reserving_resources(factory, widget):
+    call_id = create(widget)["call_id"]
+    widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    with factory.begin() as db:
+        db.get(Contact, widget["contact_id"]).phone = "+79990000999"
+    Worker(factory).schedule()
+    state = widget["client"].get(f"/api/v1/amo/widget/v2/calls/{call_id}", headers=widget["headers"])
+    assert state.status_code == 200 and state.json()["state"] == "failed"
+    assert state.json()["reason"] == "contact_phone_mismatch"
+    repeated = widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    assert repeated.status_code == 202 and repeated.json()["state"] == "failed"
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Attempt)) == 0
+        assert db.get(Operator, widget["operator_id"]).status == "free"
+    assert not widget["provider"].originates
+
+
+def test_crm_deletion_blocks_a_phone_used_via_a_different_local_crm_mapping(factory, widget):
+    from ats.workspace_service import block_crm_contacts
+
+    with factory.begin() as db:
+        db.get(Contact, widget["contact_id"]).crm_contact_id = 456
+    create(widget)
+    with factory.begin() as db:
+        affected = block_crm_contacts(db, widget["tenant_id"], 123)
+        assert [row.id for row in affected] == [widget["contact_id"]]
+    with factory() as db:
+        contact = db.get(Contact, widget["contact_id"])
+        assert contact.blocked and not contact.consent
+        assert contact.crm_contact_id == 456
 
 
 def test_widget_reports_a_blocked_existing_phone_instead_of_a_missing_contact(factory, widget):
@@ -371,6 +422,71 @@ def test_other_authenticated_operator_cannot_control_call(factory, widget):
     for method, suffix in [("get", ""), ("post", "/hangup"), ("post", "/start"), ("post", "/ready")]:
         response = getattr(widget["client"], method)(f"/api/v1/amo/widget/v2/calls/{call_id}{suffix}", headers=headers)
         assert response.status_code == 404
+
+
+@pytest.mark.parametrize("mode", ["forward", "browser"])
+def test_another_lead_responsible_keeps_the_signed_callers_devices_and_resources(
+    factory, widget, monkeypatch, mode
+):
+    from ats.services import finish_attempt
+    from ats.webrtc import save_device
+
+    for name, value in {
+        "ATS_WEBRTC_ENABLED": "true", "ATS_WEBRTC_WSS_URL": "wss://ats.example.invalid/asterisk/ws",
+        "ATS_WEBRTC_SIP_DOMAIN": "ats.example.invalid",
+    }.items():
+        monkeypatch.setenv(name, value)
+    settings.cache_clear()
+    with factory.begin() as db:
+        own = db.get(Operator, widget["operator_id"])
+        own.name = "Ilya"
+        user = User(tenant_id=widget["tenant_id"], login="alim", role="operator", password_hash="fixture")
+        db.add(user)
+        db.flush()
+        other = Operator(tenant_id=widget["tenant_id"], user_id=user.id, name="Alim", extension="705",
+                         status="free", connection_method="mobile", mobile_phone="+79990001001")
+        db.add(other)
+        db.flush()
+        other_id = other.id
+        own_endpoint, other_endpoint = "ats-web-" + own.id.hex, "ats-web-" + other.id.hex
+        save_device(db, own, own_endpoint, own_endpoint, "x" * 48)
+        save_device(db, other, other_endpoint, other_endpoint, "y" * 48)
+        save_provider_config(db, widget["tenant_id"], {"amocrm": {
+            "operator_user_map": {"704": 7654321, "705": 7654322},
+        }})
+    widget["provider"].endpoints.update([own_endpoint, other_endpoint])
+    widget["raw_card"]["responsible_user_id"] = 7654322
+    widget["raw_contact"]["responsible_user_id"] = 7654322
+    browser = widget["client"].get("/api/v1/amo/widget/v2/webrtc/config", headers=widget["headers"])
+    assert browser.status_code == 200 and browser.json()["auth_user"] == own_endpoint
+    assert browser.json()["sip_password"] == "x" * 48
+    call_id = create(widget, payload(mode=mode))["call_id"]
+    result = widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    assert result.status_code == 202
+    worker = Worker(factory)
+    worker.schedule()
+    with factory() as db:
+        attempt = db.scalar(select(Attempt))
+        assert db.scalar(select(WidgetCall)).operator_id == widget["operator_id"]
+        assert db.scalar(select(QueueEntry)).operator_id == widget["operator_id"]
+        assert db.get(Operator, widget["operator_id"]).status == "busy"
+        assert db.get(Operator, other_id).status == "free"
+        assert attempt.channel_units == (2 if mode == "forward" else 1)
+    assert worker.telephony()
+    frame = widget["provider"].originates[-1]
+    if mode == "forward":
+        assert frame["Channel"] == ["Local/+79990001000@ats-beta-callback-operator/n"]
+    else:
+        assert frame["Channel"] == [f"Local/{widget['operator_id']}@ats-beta-callback-browser/n"]
+        assert f"__ATS_OPERATOR_ENDPOINT={own_endpoint}" in frame["Variable"]
+        assert f"__ATS_OPERATOR_ENDPOINT={other_endpoint}" not in frame["Variable"]
+    with factory.begin() as db:
+        finish_attempt(db, db.scalar(select(Attempt)), "failed", "fixture_finished")
+    with factory() as db:
+        delivery = db.scalar(select(Outbox).where(Outbox.kind == "crm"))
+        assert delivery.payload["amo_responsible_user_id"] == 7654321
+        assert db.get(Operator, widget["operator_id"]).status == "free"
+        assert db.get(Operator, other_id).status == "free"
 
 
 def test_browser_customer_gate_waits_for_real_operator_answer_and_media(factory, widget, monkeypatch):

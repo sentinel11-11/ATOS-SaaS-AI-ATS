@@ -297,6 +297,11 @@ def schedule_one(db, tenant_id):
                 repo.add(Audit, actor_id=None, action="campaign.completed", entity_id=campaign.id)
             continue
         contact = repo.get(Contact, item.contact_id, lock=True)
+        if widget_call and (widget_call.crm_context or {}).get("phone", contact.phone) != contact.phone:
+            widget_call.crm_context = {**widget_call.crm_context, "failure_reason": "contact_phone_mismatch"}
+            campaign.status, campaign.archived, item.status = "completed", True, "failed"
+            repo.add(Audit, actor_id=None, action="widget.call_failed", entity_id=widget_call.id)
+            return True
         blacklisted = db.scalar(
             repo.query(BlacklistEntry).where(BlacklistEntry.phone == contact.phone)
         )
@@ -387,7 +392,8 @@ def schedule_one(db, tenant_id):
             ordinal=ordinal,
             caller_number=caller_number,
             phone=contact.phone,
-            contact_name=contact.name,
+            contact_name=(widget_call.crm_context or {}).get("contact_name") or contact.name
+            if widget_call else contact.name,
             call_flow="browser_callback" if browser_callback else "mobile_callback" if mobile_callback else "standard",
             channel_units=2 if mobile_callback else 1,
             route_snapshot={"endpoint": config.ami_cli_endpoint_prefix + caller_number,

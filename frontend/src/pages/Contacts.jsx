@@ -314,6 +314,23 @@ export default function Contacts({ addToast, refreshKey }) {
     }
   };
 
+  const handleUnblockContact = async (contact) => {
+    const result = await api(`/contacts/${contact.id}/unblock`, { method: 'POST' });
+    if (result?.ok) {
+      addToast('Исходящие звонки разрешены', 'ok');
+    } else {
+      const errors = {
+        contact_blacklisted: 'Номер находится в чёрном списке. Сначала проверьте причину запрета',
+        contact_archived: 'Сначала восстановите контакт из архива',
+        no_consent: 'Для разрешения звонков требуется действующее согласие',
+        admin_required: 'Разрешить звонки может администратор',
+      };
+      addToast(errors[result?.error] || 'Не удалось снять запрет на звонки', 'err');
+    }
+    loadContactCard(contact.id);
+    loadContacts();
+  };
+
   const handleImportFile = async (e) => {
     e.preventDefault();
     if (!selectedFile) return addToast('Выберите файл CSV или Excel', 'warn');
@@ -571,6 +588,7 @@ export default function Contacts({ addToast, refreshKey }) {
                         {c.consent ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
                         {c.consent ? 'Есть (Вкл)' : 'Нет (Выкл)'}
                       </button>
+                      {!!c.blacklisted && <span className="block mt-1 text-bad">Звонки запрещены</span>}
                     </td>
                     <td className="py-3 px-3 text-right">
                       <button
@@ -742,6 +760,16 @@ export default function Contacts({ addToast, refreshKey }) {
                 </button>
               </div>
             </div>
+            {!!cardContactData?.contact?.blacklisted && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-bad/30 bg-bad/10 p-3">
+                <span className="text-bad font-semibold">Для контакта установлен запрет на исходящие звонки</span>
+                <button onClick={() => handleUnblockContact(cardContactData.contact)} disabled={!cardContactData.contact.consent}
+                  className="shrink-0 rounded-lg bg-line px-3 py-2 text-white font-semibold disabled:opacity-40">
+                  Разрешить звонки
+                </button>
+              </div>
+            )}
+
             {cardContactData?.contact?.crm_context && (cardContactData.contact.crm_context.pipeline_name || cardContactData.contact.crm_context.stage_name || cardContactData.contact.crm_context.responsible_name || cardContactData.contact.crm_context.tags?.length > 0) && (
               <div className="p-4 rounded-xl bg-[#081221] border border-line">
                 <div className="text-dim mb-3">Данные из amoCRM</div>

@@ -7,7 +7,7 @@ from fractions import Fraction
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from ats.domain import ACTIVE, Problem
 from ats.models import (
@@ -22,6 +22,7 @@ from ats.models import (
     ListMember,
     Template,
     Tenant,
+    WidgetCall,
     now,
 )
 from ats.repositories import TenantRepository
@@ -57,8 +58,16 @@ def save_contact(db, p, data, contact_id=None):
 
 
 def block_crm_contacts(db, tenant_id, crm_contact_id, actor_id=None):
+    widget_contacts = select(CampaignItem.contact_id).join(WidgetCall, (
+        (WidgetCall.campaign_id == CampaignItem.campaign_id)
+        & (WidgetCall.tenant_id == CampaignItem.tenant_id)
+    )).where(
+        WidgetCall.tenant_id == tenant_id,
+        WidgetCall.crm_context["contact_id"].as_integer() == crm_contact_id,
+    )
     rows = db.scalars(select(Contact).where(
-        Contact.tenant_id == tenant_id, Contact.crm_contact_id == crm_contact_id,
+        Contact.tenant_id == tenant_id,
+        or_(Contact.crm_contact_id == crm_contact_id, Contact.id.in_(widget_contacts)),
     ).with_for_update()).all()
     for row in rows:
         if row.blocked and not row.consent:

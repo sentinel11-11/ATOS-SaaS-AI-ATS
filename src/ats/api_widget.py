@@ -95,6 +95,8 @@ def projection(db, call):
 
             customer = db.scalar(select(CallLeg).where(CallLeg.attempt_id == attempt.id, CallLeg.role == "customer"))
             state = "ringing_customer" if customer and customer.channel else "ringing_operator"
+    elif (call.crm_context or {}).get("failure_reason"):
+        state, reason = "failed", call.crm_context["failure_reason"]
     elif call.cancel_requested:
         state, reason = "ended", "cancelled_by_user"
     elif call.expires_at <= now():
@@ -238,8 +240,6 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
     if (contact.archived or not contact.consent or contact.blocked
         or not contact.consent_source.strip() or blacklisted):
         raise Problem(409, "no_consent")
-    if contact.crm_contact_id not in (None, data.crm_contact_id):
-        raise Problem(409, "crm_contact_not_synced", "Номер уже связан с другим контактом amoCRM.")
     if contact.crm_contact_id is None:
         # The live CRM contact, selected phone and card link were verified above.
         # Bind this admitted local number without rewriting another contact's identity.
@@ -257,7 +257,8 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
                       operator_token=secrets.token_hex(24),
                       crm_context={"account_id": auth.account_id, "contact_id": data.crm_contact_id,
                                    "entity_type": data.entity_type, "entity_id": data.entity_id,
-                                   "amo_user_id": auth.amo_user_id},
+                                   "amo_user_id": auth.amo_user_id, "phone": phone,
+                                   "contact_name": imported["name"] or contact.name},
                       expires_at=now() + timedelta(seconds=config.widget_call_ttl_seconds))
     db.add(call)
     db.flush()
@@ -278,6 +279,7 @@ def activate(ident: UUID, auth=Depends(widget_principal), db=Depends(session)):
         raise Problem(409, "call_request_expired")
     campaign = db.get(Campaign, call.campaign_id)
     if campaign.archived:
+        db.commit()
         return projection(db, call)
     campaign.status = "running"
     db.commit()
