@@ -1,6 +1,7 @@
 import argparse
 import logging
 import random
+import re
 import signal
 import threading
 from datetime import timedelta
@@ -38,6 +39,7 @@ from ats.models import (
 )
 from ats.repositories import TenantRepository
 from ats.services import drain_inbox, finish_attempt, ingest, schedule_one, validate_route
+from ats.workspace_service import block_crm_contacts
 
 log = logging.getLogger("ats.worker")
 
@@ -714,11 +716,25 @@ class Worker:
                 repo = TenantRepository(db, tenant_id)
                 row_job = repo.get(AmoSyncJob, UUID(payload["job_id"]), lock=True)
                 row_job.status = "running"
-                counts = {"created": 0, "updated": 0, "archived": 0, "skipped": 0}
+                counts = {"created": 0, "updated": 0, "archived": 0, "blocked": 0, "skipped": 0}
+                event_payload = payload.get("payload") or {}
+                deleted = event_payload.get("contacts", {}).get("delete", []) if isinstance(event_payload, dict) else []
+                deleted = list(deleted) if isinstance(deleted, list) else []
+                if isinstance(event_payload, dict):
+                    deleted.extend(value for key, value in event_payload.items()
+                                   if re.fullmatch(r"contacts\[delete\]\[\d+\]\[id\]", key))
+                deleted_ids = {int(raw["crm_contact_id"]) for raw in raw_contacts if raw.get("archived")}
+                for entry in deleted:
+                    try:
+                        deleted_ids.add(int(entry.get("id") if isinstance(entry, dict) else entry))
+                    except (TypeError, ValueError):
+                        continue
+                for crm_id in deleted_ids:
+                    counts["blocked"] += len(block_crm_contacts(db, tenant_id, crm_id))
                 seen = set()
                 for raw in raw_contacts:
                     crm_id = int(raw["crm_contact_id"])
-                    if raw.get("archived"):
+                    if crm_id in deleted_ids:
                         counts["skipped"] += 1
                         continue
                     try:

@@ -237,7 +237,10 @@ def _megafon_callback_payload(payload, mapping=None):
 async def request_guard(request: Request, call_next):
     request.state.request_id = str(uuid4())
     unsafe = request.method not in {"GET", "HEAD", "OPTIONS"}
-    if unsafe and not request.url.path.startswith("/webhooks/") and not request.url.path.startswith("/api/v1/amo/widget/") and request.url.path != "/api/megafon/events":
+    if (unsafe and not request.url.path.startswith("/webhooks/")
+        and not request.url.path.startswith("/api/v1/amo/widget/")
+        and not request.url.path.startswith("/api/v1/workspace/amo/webhook/")
+        and request.url.path != "/api/megafon/events"):
         if request.headers.get("origin") != settings().public_origin:
             return JSONResponse({"error": "origin_rejected"}, status_code=403)
     # Enforce the limit for both chunked and Content-Length requests before parsing.

@@ -42,6 +42,7 @@ from ats.workspace_schemas import (
     AmoWidgetCard,
     AmoWidgetClickToCall,
 )
+from ats.workspace_service import block_crm_contacts
 
 router = APIRouter(prefix="/api/v1/workspace/amo", tags=["amocrm"])
 public_router = APIRouter(tags=["amocrm"])
@@ -328,7 +329,7 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
     repo = TenantRepository(db, p.tenant_id)
     seen_phones = set()
     seen_crm_ids = set()
-    counts = {"create": 0, "update": 0, "unchanged": 0, "duplicate_phone": 0, "duplicate_crm_id": 0, "invalid_phone": 0, "archive": 0}
+    counts = {"create": 0, "update": 0, "unchanged": 0, "duplicate_phone": 0, "duplicate_crm_id": 0, "invalid_phone": 0, "archive": 0, "block": 0}
     for raw in raw_contacts:
         phone = _phone(raw.get("phone"))
         crm_id = int(raw["crm_contact_id"])
@@ -340,7 +341,11 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
         if action == "duplicate_crm_id":
             pass
         elif raw.get("archived"):
-            action, error = "unchanged", "crm_contact_deleted"
+            existing = db.scalar(repo.query(Contact).where(Contact.crm_contact_id == crm_id))
+            if existing:
+                action = "block"
+            else:
+                action, error = "unchanged", "crm_contact_deleted"
         elif not phone:
             action, error = "invalid_phone", "invalid_phone"
         elif phone in seen_phones:
@@ -379,7 +384,7 @@ def sync_preview(data: AmoSyncPreview, p=Depends(admin), db=Depends(session)):
             contact_id=existing.id if existing else None,
             error=error,
             crm_context=contact_context(raw, pipelines, statuses, users),
-            selected=action in {"create", "update", "unchanged"} and not error,
+            selected=action in {"create", "update", "unchanged", "block"} and not error,
         )
         db.add(item)
     job.counts = counts
@@ -440,9 +445,8 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
                 existing.crm_context = item.crm_context or {}
                 item.applied = True
             continue
-        if item.action == "archive":
-            # Ignore archive actions from previews saved by earlier versions.
-            item.error = "crm_contact_deleted"
+        if item.action in {"archive", "block"}:
+            item.applied = bool(block_crm_contacts(db, p.tenant_id, item.crm_contact_id, p.user_id))
             continue
         existing = repo.get(Contact, item.contact_id, lock=True) if item.contact_id else None
         phone_owner = db.scalar(repo.query(Contact).where(Contact.phone == item.phone).with_for_update())
@@ -480,16 +484,6 @@ async def webhook(tenant_id: UUID, request: Request, x_amo_webhook_token: str | 
         expected, bound = "", False
     if not bound or not expected or not x_amo_webhook_token or not secrets_compare(x_amo_webhook_token, expected):
         raise Problem(401, "amo_webhook_unauthorized")
-    bucket_key = f"amo-webhook:{tenant_id}:{now().strftime('%Y%m%d%H%M')}"
-    bucket = db.scalar(select(LoginBucket).where(LoginBucket.key == bucket_key).with_for_update())
-    if bucket is None:
-        bucket = LoginBucket(key=bucket_key, count=1, reset_at=now() + timedelta(minutes=1))
-        db.add(bucket)
-    else:
-        bucket.count += 1
-        if bucket.count > 120:
-            db.rollback()
-            raise Problem(429, "amo_webhook_rate_limited")
     try:
         payload = await request.json()
     except ValueError:
@@ -499,14 +493,27 @@ async def webhook(tenant_id: UUID, request: Request, x_amo_webhook_token: str | 
             raise Problem(400, "invalid_webhook_payload") from None
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     event_key = hashlib.sha256(raw.encode()).hexdigest()
-    result = db.execute(insert(Inbox).values(id=uuid4(), tenant_id=tenant_id, route="amocrm", event_key=event_key, external_id=event_key, event="contact_changed", payload=payload, status="pending", received_at=now()).on_conflict_do_nothing())
-    if result.rowcount:
+    bucket_key = f"amo-webhook:{tenant_id}:{now().strftime('%Y%m%d%H%M')}"
+    count = db.scalar(insert(LoginBucket).values(
+        key=bucket_key, count=1, reset_at=now() + timedelta(minutes=1),
+    ).on_conflict_do_update(
+        index_elements=[LoginBucket.key], set_={"count": LoginBucket.count + 1},
+    ).returning(LoginBucket.count))
+    if count > 120:
+        db.rollback()
+        raise Problem(429, "amo_webhook_rate_limited")
+    event_id = db.scalar(insert(Inbox).values(
+        id=uuid4(), tenant_id=tenant_id, route="amocrm", event_key=event_key,
+        external_id=event_key, event="contact_changed", payload=payload,
+        status="pending", received_at=now(),
+    ).on_conflict_do_nothing().returning(Inbox.id))
+    if event_id is not None:
         job = AmoSyncJob(tenant_id=tenant_id, mode="webhook", status="queued", counts={})
         db.add(job)
         db.flush()
         db.add(Outbox(tenant_id=tenant_id, kind="crm_sync", dedupe_key=f"amo-webhook:{event_key}", payload={"job_id": str(job.id), "event_key": event_key, "payload": payload, "mode": "webhook"}))
     db.commit()
-    return {"accepted": True, "duplicate": not bool(result.rowcount)}
+    return {"accepted": True, "duplicate": event_id is None}
 
 
 def secrets_compare(left, right):

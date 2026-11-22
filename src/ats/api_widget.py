@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from ats.adapters import AmoCRM, Rejected, Retryable
+from ats.amo_context import contact_context
 from ats.config import settings
 from ats.connections import settings_for_tenant
 from ats.db import session
@@ -33,7 +34,8 @@ from ats.schemas import CampaignCreate, phone_from_import
 from ats.services import create_campaign, finish_attempt, validate_route
 from ats.webrtc import check_device, device_for, ice_servers, password_for
 from ats.widget_auth import widget_principal
-from ats.workspace_service import audit
+from ats.workspace_schemas import ContactEdit
+from ats.workspace_service import audit, save_contact
 
 router = APIRouter(prefix="/api/v1/amo/widget/v2", tags=["signed amoCRM widget"])
 assets_router = APIRouter(tags=["widget assets"])
@@ -178,6 +180,7 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
                 raise Problem(403, "contact_not_in_card")
         elif data.entity_id and data.entity_id != data.crm_contact_id:
             raise Problem(403, "contact_not_in_card")
+        imported = crm.normalize_contact(raw)
     except (Rejected, Retryable) as exc:
         raise Problem(502, "crm_read_failed") from exc
     except (ValueError, TypeError, KeyError) as exc:
@@ -194,6 +197,8 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
     if existing:
         if existing.request_hash != fingerprint:
             raise Problem(409, "idempotency_key_reused")
+        # Release the tenant mutex before request logging uses a separate transaction.
+        db.commit()
         return {**projection(db, existing), "operator_call_token": existing.operator_token}
     operator = db.scalar(select(Operator).where(Operator.id == auth.operator_id).with_for_update())
     pending = db.scalar(select(WidgetCall).join(Campaign, Campaign.id == WidgetCall.campaign_id).where(
@@ -211,16 +216,30 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
     contact = db.scalar(select(Contact).where(
         Contact.tenant_id == auth.p.tenant_id, Contact.phone == phone,
     ).with_for_update())
-    if not contact:
-        raise Problem(409, "crm_contact_not_synced")
-    if contact.crm_contact_id not in (None, data.crm_contact_id):
-        raise Problem(409, "crm_contact_not_synced", "Номер уже связан с другим контактом amoCRM.")
+    if contact is None:
+        previous = db.scalars(select(Contact).where(
+            Contact.tenant_id == auth.p.tenant_id,
+            Contact.crm_contact_id == data.crm_contact_id,
+        ).with_for_update()).all()
+        if any(row.archived or row.blocked or not row.consent
+               or not row.consent_source.strip() for row in previous):
+            raise Problem(409, "no_consent")
+        contact = save_contact(db, auth.p, ContactEdit(
+            name=imported["name"] or "Без имени", phone=phone,
+            email=imported["email"], group=imported["group"],
+            crm_contact_id=data.crm_contact_id, consent=True, consent_source="amoCRM",
+        ))
+        contact.source = "amoCRM"
+        contact.tags = imported["tag_names"]
+        contact.crm_context = contact_context(imported, {}, {}, {})
     blacklisted = db.scalar(select(BlacklistEntry.id).where(
         BlacklistEntry.tenant_id == auth.p.tenant_id, BlacklistEntry.phone == phone,
     ))
     if (contact.archived or not contact.consent or contact.blocked
         or not contact.consent_source.strip() or blacklisted):
         raise Problem(409, "no_consent")
+    if contact.crm_contact_id not in (None, data.crm_contact_id):
+        raise Problem(409, "crm_contact_not_synced", "Номер уже связан с другим контактом amoCRM.")
     if contact.crm_contact_id is None:
         # The live CRM contact, selected phone and card link were verified above.
         # Bind this admitted local number without rewriting another contact's identity.

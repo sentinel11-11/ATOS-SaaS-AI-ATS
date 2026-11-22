@@ -56,6 +56,19 @@ def save_contact(db, p, data, contact_id=None):
     return row
 
 
+def block_crm_contacts(db, tenant_id, crm_contact_id, actor_id=None):
+    rows = db.scalars(select(Contact).where(
+        Contact.tenant_id == tenant_id, Contact.crm_contact_id == crm_contact_id,
+    ).with_for_update()).all()
+    for row in rows:
+        if row.blocked and not row.consent:
+            continue
+        row.blocked, row.consent = True, False
+        db.add(Audit(tenant_id=tenant_id, actor_id=actor_id,
+                     action="contact.crm_deleted", entity_id=row.id))
+    return rows
+
+
 def import_contacts(db, p, command):
     """CSV/text import: explicit consent, preserve existing revocations, never guess consent."""
     repo = TenantRepository(db, p.tenant_id)

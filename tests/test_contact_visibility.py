@@ -100,7 +100,7 @@ def sync_crm(factory, tenants, monkeypatch):
 
 
 @pytest.mark.parametrize("deleted_response", [True, False])
-def test_crm_deletions_never_archive_or_block_local_contacts(
+def test_crm_deletions_block_calls_and_keep_local_contacts_visible(
     logged, factory, tenants, sync_crm, deleted_response
 ):
     crm, worker = sync_crm
@@ -120,15 +120,20 @@ def test_crm_deletions_never_archive_or_block_local_contacts(
         assert worker.crm_sync_job()
         result = logged.get(BASE + f"/amo/sync/{job_id}").json()
         assert result["status"] == "completed" and result["counts"]["archived"] == 0
+        assert result["counts"]["blocked"] == 1
     with factory() as db:
         row = db.get(Contact, UUID(saved["id"]))
-        assert not row.archived and not row.blocked and row.consent
+        assert not row.archived and row.blocked and not row.consent
+        assert db.scalar(select(func.count()).select_from(Audit).where(
+            Audit.action == "contact.crm_deleted", Audit.entity_id == row.id,
+        )) == 1
     assert logged.get("/api/v2/contacts").json()["total"] == 1
 
 
 def test_old_crm_archive_preview_cannot_hide_a_contact(logged, factory, tenants):
     saved = logged.post("/api/v2/contacts/save", json={
         "name": "Retained fixture", "phone": "+79855772554", "consent": True,
+        "crm_contact_id": 123,
     }).json()
     with factory.begin() as db:
         job = AmoSyncJob(tenant_id=tenants[0], status="preview", mode="manual")
@@ -142,8 +147,11 @@ def test_old_crm_archive_preview_cannot_hide_a_contact(logged, factory, tenants)
     result = logged.post(BASE + f"/amo/sync/{job_id}/confirm", json={
         "item_ids": [str(item_id)], "consent_source": "Manual import",
     })
-    assert result.status_code == 200 and result.json()["applied"] == 0
+    assert result.status_code == 200 and result.json()["applied"] == 1
     assert logged.get("/api/v2/contacts").json()["total"] == 1
+    with factory() as db:
+        row = db.get(Contact, UUID(saved["id"]))
+        assert row.blocked and not row.consent and not row.archived
 
 
 def test_crm_preview_marks_deleted_contacts_unselected(logged, sync_crm):
@@ -154,6 +162,73 @@ def test_crm_preview_marks_deleted_contacts_unselected(logged, sync_crm):
     item = result.json()["items"][0]
     assert item["action"] == "unchanged" and not item["selected"]
     assert item["error"] == "crm_contact_deleted"
+
+
+def test_confirming_crm_deletion_blocks_all_prior_phone_mappings(logged, factory, sync_crm):
+    crm, _ = sync_crm
+    for phone in ["+79855772554", "+79165833868"]:
+        logged.post("/api/v2/contacts/save", json={
+            "name": "Historical fixture", "phone": phone, "crm_contact_id": 123, "consent": True,
+        })
+    crm.rows = [{"crm_contact_id": 123, "archived": True}]
+    preview = logged.post(BASE + "/amo/sync/preview", json={"contact_ids": [123]}).json()
+    item = preview["items"][0]
+    assert item["action"] == "block" and item["selected"]
+    result = logged.post(BASE + f"/amo/sync/{preview['job_id']}/confirm", json={
+        "item_ids": [item["id"]], "consent_source": "Reviewed CRM deletion",
+    })
+    assert result.status_code == 200 and result.json()["applied"] == 1
+    with factory() as db:
+        assert all(row.blocked and not row.consent and not row.archived
+                   for row in db.scalars(select(Contact)))
+
+
+@pytest.mark.parametrize("body_kind", ["form", "json"])
+def test_authenticated_amo_webhook_excludes_deleted_contact_without_browser_session(
+    logged, factory, tenants, sync_crm, monkeypatch, body_kind
+):
+    _, worker = sync_crm
+    saved = logged.post("/api/v2/contacts/save", json={
+        "name": "Webhook fixture", "phone": "+79855772554", "crm_contact_id": 123,
+        "consent": True,
+    }).json()
+    monkeypatch.setenv("ATS_AMO_WEBHOOK_TOKEN", "synthetic-webhook-token")
+    settings.cache_clear()
+    logged.cookies.clear()
+    logged.headers.pop("Origin", None)
+    logged.headers.pop("X-CSRF-Token", None)
+    url = BASE + f"/amo/webhook/{tenants[0]}"
+    body = {"data": {"contacts[delete][0][id]": "123"}} if body_kind == "form" else {
+        "json": {"contacts": {"delete": [{"id": 123}]}},
+    }
+    denied = logged.post(url, **body)
+    assert denied.status_code == 401
+    response = logged.post(url, **body, headers={"X-Amo-Webhook-Token": "synthetic-webhook-token"})
+    assert response.status_code == 200 and response.json()["accepted"]
+    duplicate = logged.post(url, **body, headers={"X-Amo-Webhook-Token": "synthetic-webhook-token"})
+    assert duplicate.status_code == 200 and duplicate.json()["duplicate"]
+    assert worker.crm_sync_job()
+    with factory() as db:
+        row = db.get(Contact, UUID(saved["id"]))
+        assert row.blocked and not row.consent and not row.archived
+
+
+def test_concurrent_amo_webhooks_enqueue_one_sync_job(logged, factory, tenants, sync_crm, monkeypatch):
+    monkeypatch.setenv("ATS_AMO_WEBHOOK_TOKEN", "synthetic-webhook-token")
+    settings.cache_clear()
+
+    def send(_):
+        return logged.post(BASE + f"/amo/webhook/{tenants[0]}",
+                           data={"contacts[delete][0][id]": "123"},
+                           headers={"X-Amo-Webhook-Token": "synthetic-webhook-token"})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(send, range(2)))
+    assert [response.status_code for response in responses] == [200, 200]
+    assert {response.json()["duplicate"] for response in responses} == {True, False}
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(AmoSyncJob)) == 1
+        assert db.scalar(select(func.count()).select_from(Outbox).where(Outbox.kind == "crm_sync")) == 1
 
 
 def test_crm_import_finds_hidden_phone_and_preserves_its_restrictions(

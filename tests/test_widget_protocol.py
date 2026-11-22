@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 from uuid import uuid4
 
 import jwt
@@ -7,6 +9,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy import func, select
 from test_mobile_callback import callback as mobile_callback_fixture
 
+from ats.adapters import AmoCRM
 from ats.config import settings
 from ats.connections import save_provider_config
 from ats.models import (
@@ -15,6 +18,7 @@ from ats.models import (
     BlacklistEntry,
     CallLeg,
     Campaign,
+    CampaignItem,
     Contact,
     Operator,
     Outbox,
@@ -45,16 +49,19 @@ def widget(factory, callback, client, monkeypatch):
             "client_secret": SECRET, "operator_user_map": {"704": 7654321},
         }})
 
-    class CRM:
+    raw_contact = {"id": 123, "name": "Client", "custom_fields_values": [
+        {"field_code": "PHONE", "values": [{"value": "+79990000101"}]},
+    ]}
+    raw_card = {"_embedded": {"contacts": [{"id": 123}]}}
+
+    class CRM(AmoCRM):
         def __init__(self, config):
             pass
 
         def read(self, path, params=None):
             if path == "/api/v4/contacts/123":
-                return {"id": 123, "name": "Client", "custom_fields_values": [
-                    {"field_code": "PHONE", "values": [{"value": "+79990000101"}]},
-                ]}
-            return {"_embedded": {"contacts": [{"id": 123}]}}
+                return raw_contact
+            return raw_card
 
         def close(self):
             pass
@@ -64,7 +71,8 @@ def widget(factory, callback, client, monkeypatch):
               "client_uuid": CLIENT_ID, "account_id": 12345, "user_id": 7654321,
               "subdomain": "omkr", "jti": str(uuid4()), "iss": "amocrm.ru", "is_admin": False}
     headers = {"Origin": "https://omkr.amocrm.ru", "X-Auth-Token": jwt.encode(claims, SECRET, algorithm="HS256")}
-    return {**callback, "client": client, "headers": headers, "claims": claims}
+    return {**callback, "client": client, "headers": headers, "claims": claims,
+            "raw_contact": raw_contact, "raw_card": raw_card}
 
 
 def payload(**updates):
@@ -165,6 +173,119 @@ def test_widget_binds_an_admitted_manual_contact_after_crm_verification(factory,
         assert db.scalar(select(func.count()).select_from(Attempt)) == 0
 
 
+@pytest.mark.parametrize("entity_type,entity_id", [("leads", 101), ("companies", 202), ("contacts", 123)])
+def test_widget_imports_a_missing_contact_and_retries_without_duplicates(factory, widget, entity_type, entity_id):
+    with factory.begin() as db:
+        previous = db.get(Contact, widget["contact_id"])
+        previous.phone, previous.crm_contact_id = "+79990000999", 456
+    widget["raw_contact"]["custom_fields_values"].append({
+        "field_code": "EMAIL", "values": [{"value": "client@example.invalid"}],
+    })
+    widget["raw_contact"]["_embedded"] = {"tags": [{"name": "CRM group"}]}
+    command = payload(entity_type=entity_type, entity_id=entity_id)
+    first = create(widget, command)
+    assert create(widget, command)["call_id"] == first["call_id"]
+    Worker(factory).schedule()
+    with factory() as db:
+        contact = db.scalar(select(Contact).where(Contact.phone == command["phone"]))
+        assert contact.tenant_id == widget["tenant_id"] and contact.crm_contact_id == 123
+        assert contact.name == "Client" and contact.email == "client@example.invalid"
+        assert contact.source == "amoCRM" and contact.group == "CRM group"
+        assert contact.tags == ["CRM group"]
+        assert contact.consent and contact.consent_source == "amoCRM" and not contact.blocked
+        call = db.scalar(select(WidgetCall))
+        item = db.scalar(select(CampaignItem).where(CampaignItem.campaign_id == call.campaign_id))
+        assert item.contact_id == contact.id and call.crm_context["contact_id"] == 123
+        assert db.scalar(select(func.count()).select_from(Contact)) == 2
+        assert db.scalar(select(func.count()).select_from(Attempt)) == 0
+        assert db.scalar(select(func.count()).select_from(Audit).where(
+            Audit.action == "contact.created", Audit.entity_id == contact.id,
+        )) == 1
+
+
+def test_widget_imports_the_selected_crm_phone_instead_of_the_first_phone(factory, widget):
+    phone = "+79990000102"
+    widget["raw_contact"]["custom_fields_values"][0]["values"].append({"value": phone})
+    create(widget, payload(phone=phone))
+    with factory() as db:
+        assert db.scalar(select(Contact).where(Contact.phone == phone)).crm_contact_id == 123
+        assert db.get(Contact, widget["contact_id"]).phone == "+79990000101"
+
+
+def test_concurrent_widget_retries_import_one_contact_and_prepare_one_call(factory, widget, monkeypatch):
+    from ats.api_widget import AmoCRM as WidgetCRM
+
+    with factory.begin() as db:
+        db.get(Contact, widget["contact_id"]).phone = "+79990000999"
+    command = payload()
+    reads = Barrier(2)
+    original_read = WidgetCRM.read
+
+    def simultaneous_read(self, path, params=None):
+        if path == "/api/v4/contacts/123":
+            reads.wait(timeout=5)
+        return original_read(self, path, params)
+
+    monkeypatch.setattr(WidgetCRM, "read", simultaneous_read)
+
+    def prepare(_):
+        return widget["client"].post("/api/v1/amo/widget/v2/calls", json=command, headers=widget["headers"])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(prepare, range(2)))
+    assert all(response.status_code == 202 for response in responses)
+    assert responses[0].json()["call_id"] == responses[1].json()["call_id"]
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Contact)) == 2
+        assert db.scalar(select(func.count()).select_from(WidgetCall)) == 1
+
+
+@pytest.mark.parametrize("restriction", ["archived", "blocked", "no_consent", "blacklist"])
+def test_widget_auto_import_cannot_bypass_restrictions_after_a_phone_change(factory, widget, restriction):
+    with factory.begin() as db:
+        contact = db.get(Contact, widget["contact_id"])
+        contact.phone = "+79990000999"
+        if restriction == "no_consent":
+            contact.consent = False
+        elif restriction == "blacklist":
+            db.add(BlacklistEntry(tenant_id=contact.tenant_id, phone=payload()["phone"], reason="Test opt-out"))
+        else:
+            setattr(contact, restriction, True)
+    response = widget["client"].post("/api/v1/amo/widget/v2/calls", json=payload(), headers=widget["headers"])
+    assert response.status_code == 409 and response.json()["error"] == "no_consent"
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Contact)) == 1
+        assert db.scalar(select(func.count()).select_from(WidgetCall)) == 0
+
+
+def test_widget_auto_import_requires_the_contact_to_belong_to_the_card(factory, widget):
+    with factory.begin() as db:
+        db.get(Contact, widget["contact_id"]).phone = "+79990000999"
+    widget["raw_card"]["_embedded"]["contacts"] = [{"id": 456}]
+    response = widget["client"].post("/api/v1/amo/widget/v2/calls", json=payload(), headers=widget["headers"])
+    assert response.status_code == 403 and response.json()["error"] == "contact_not_in_card"
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Contact)) == 1
+
+
+def test_widget_auto_import_keeps_another_tenants_contact_unchanged(factory, widget, tenants):
+    with factory.begin() as db:
+        db.get(Contact, widget["contact_id"]).phone = "+79990000999"
+        foreign = Contact(tenant_id=tenants[1], name="Foreign fixture", phone=payload()["phone"],
+                          crm_contact_id=456, blocked=True, consent=False)
+        db.add(foreign)
+        db.flush()
+        foreign_id = foreign.id
+    create(widget)
+    with factory() as db:
+        own = db.scalar(select(Contact).where(
+            Contact.tenant_id == widget["tenant_id"], Contact.phone == payload()["phone"],
+        ))
+        assert own.crm_contact_id == 123 and own.id != foreign_id
+        assert db.get(Contact, foreign_id).blocked
+        assert db.get(Contact, foreign_id).crm_contact_id == 456
+
+
 @pytest.mark.parametrize("restriction", ["archived", "blocked", "no_consent", "blacklist"])
 def test_widget_contact_resolution_preserves_local_restrictions(factory, widget, restriction):
     with factory.begin() as db:
@@ -193,6 +314,17 @@ def test_widget_does_not_replace_a_different_crm_identity(factory, widget):
         assert db.scalar(select(func.count()).select_from(WidgetCall)) == 0
 
 
+def test_widget_reports_a_blocked_existing_phone_instead_of_a_missing_contact(factory, widget):
+    with factory.begin() as db:
+        contact = db.get(Contact, widget["contact_id"])
+        contact.crm_contact_id, contact.archived, contact.blocked = 456, True, True
+    response = widget["client"].post("/api/v1/amo/widget/v2/calls", json=payload(), headers=widget["headers"])
+    assert response.status_code == 409 and response.json()["error"] == "no_consent"
+    with factory() as db:
+        assert db.get(Contact, widget["contact_id"]).crm_contact_id == 456
+        assert db.scalar(select(func.count()).select_from(WidgetCall)) == 0
+
+
 def test_widget_cannot_bind_a_contact_outside_the_requested_card(factory, widget):
     with factory.begin() as db:
         db.get(Contact, widget["contact_id"]).crm_contact_id = None
@@ -204,31 +336,10 @@ def test_widget_cannot_bind_a_contact_outside_the_requested_card(factory, widget
         assert db.get(Contact, widget["contact_id"]).crm_contact_id is None
 
 
-def test_widget_follows_changed_crm_phone_without_rewriting_old_contacts(factory, widget, monkeypatch):
+def test_widget_follows_changed_crm_phone_without_rewriting_old_contacts(factory, widget):
     phones = ["+79990000101", "+79990000102", "+79990000103"]
-    current = {"phone": phones[0]}
-
-    class CRM:
-        def __init__(self, config):
-            pass
-
-        def read(self, path, params=None):
-            if path == "/api/v4/contacts/123":
-                return {"id": 123, "custom_fields_values": [
-                    {"field_code": "PHONE", "values": [{"value": current["phone"]}]},
-                ]}
-            return {"_embedded": {"contacts": [{"id": 123}]}}
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr("ats.api_widget.AmoCRM", CRM)
     for phone in phones:
-        current["phone"] = phone
-        response = widget["client"].post("/api/v2/contacts/save", json={
-            "name": "Updated client", "phone": phone, "consent": True,
-        })
-        assert response.status_code == 200, response.text
+        widget["raw_contact"]["custom_fields_values"][0]["values"][0]["value"] = phone
         call_id = create(widget, payload(phone=phone))["call_id"]
         result = widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/hangup", headers=widget["headers"])
         assert result.status_code == 202
