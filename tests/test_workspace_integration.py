@@ -60,6 +60,8 @@ def test_inbound_ami_observer_requires_enabled_context(factory, tenants, monkeyp
             "Event": "Newchannel",
             "Context": "from-mcm",
             "Uniqueid": "123",
+            "Linkedid": "123",
+            "Channel": "PJSIP/mcm-00000001",
             "CallerIDNum": "89990000202",
         }
     )
@@ -70,6 +72,27 @@ def test_inbound_ami_observer_requires_enabled_context(factory, tenants, monkeyp
     with factory() as db:
         calls = db.scalars(select(InboundCall)).all()
         assert len(calls) == 1 and calls[0].status == "completed"
+
+
+def test_ami_outgoing_legs_in_multicom_context_do_not_create_inbound_calls(factory, tenants, monkeypatch):
+    monkeypatch.setenv("ATS_TELEPHONY_TENANT_ID", str(tenants[0]))
+    monkeypatch.setenv("ATS_INBOUND_ENABLED", "true")
+    settings.cache_clear()
+    worker = Worker(factory)
+    for uniqueid, linkedid, channel in [
+        ("123.2", "123.1", "PJSIP/mcm-00000002"),
+        ("123.3", "123.3", "PJSIP/mcm-cli-9990000101-00000003"),
+    ]:
+        frame = {
+            "Context": "from-mcm", "Exten": "s", "Channel": channel,
+            "CallerIDNum": "9990000101", "Uniqueid": uniqueid, "Linkedid": linkedid,
+        }
+        worker.ami_event({"Event": "Newchannel", **frame})
+        worker.ami_event({"Event": "Newstate", "ChannelStateDesc": "Up", **frame})
+    with factory() as db:
+        assert db.scalar(select(InboundCall)) is None
+        assert db.scalar(select(Contact)) is None
+        assert db.scalar(select(Outbox)) is None
 
 
 def test_request_log_correlates_validation_without_input(logged):

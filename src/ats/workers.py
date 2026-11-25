@@ -119,7 +119,15 @@ class Worker:
             from ats.inbound import ingest_inbound
 
             kind, state = frame.get("Event"), None
-            if frame.get("Context") in {s.strip() for s in config.inbound_contexts.split(",")}:
+            uniqueid, linkedid = frame.get("Uniqueid"), frame.get("Linkedid")
+            # A Dial leg can inherit an endpoint's inbound context without
+            # being an inbound call. Multicom CLI aliases are outbound-only.
+            if (
+                uniqueid
+                and (not linkedid or linkedid == uniqueid)
+                and not frame.get("Channel", "").startswith("PJSIP/mcm-cli-")
+                and frame.get("Context") in {s.strip() for s in config.inbound_contexts.split(",")}
+            ):
                 state = (
                     "ringing"
                     if kind == "Newchannel"
@@ -134,12 +142,12 @@ class Worker:
                         select(InboundCall).where(
                             InboundCall.tenant_id == config.telephony_tenant_id,
                             InboundCall.route == "multicom_ami",
-                            InboundCall.external_id == frame.get("Uniqueid"),
+                            InboundCall.external_id == uniqueid,
                         )
                     )
                     if existing:
                         state = "completed" if existing.status == "answered" else "failed"
-            if state and frame.get("Uniqueid"):
+            if state and uniqueid:
                 with self.factory.begin() as db:
                     if kind == "Hangup":
                         from ats.inbound_callback import release_route
@@ -153,7 +161,7 @@ class Worker:
                         db,
                         config.telephony_tenant_id,
                         "multicom_ami",
-                        frame["Uniqueid"],
+                        uniqueid,
                         frame.get("CallerIDNum", ""),
                         frame.get("Exten", ""),
                         state,

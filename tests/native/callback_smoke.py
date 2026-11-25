@@ -14,7 +14,7 @@ from sqlalchemy import select
 from test_mobile_callback import start
 
 from ats.config import settings
-from ats.models import Attempt, CallLeg, Contact, Operator, Outbox, now
+from ats.models import Attempt, CallLeg, Contact, InboundCall, Operator, Outbox, now
 
 IMAGE = "andrius/asterisk:20@sha256:05391d46660b1dcadd193e265758fb06a785ad484b7add2a0cb0ba5e50a76929"
 
@@ -41,6 +41,7 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
         "[transport-udp]\ntype=transport\nprotocol=udp\nbind=127.0.0.1:5060\n"
         "[fixture-aor]\ntype=aor\ncontact=sip:127.0.0.1:5070\n"
         "[mcm-cli-9990000101]\ntype=endpoint\ntransport=transport-udp\naors=fixture-aor\n"
+        "context=from-mcm\n"
         "disallow=all\nallow=alaw,ulaw\nfrom_user=9990000101\nfrom_domain=127.0.0.1\n"
         "direct_media=no\ndtmf_mode=rfc4733\n"
     )
@@ -107,6 +108,7 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
         ], check=True)
         time.sleep(0.3)
         monkeypatch.setenv("ATS_AMI_PORT", str(port))
+        monkeypatch.setenv("ATS_INBOUND_ENABLED", "true")
         settings.cache_clear()
         yield name
     finally:
@@ -139,6 +141,7 @@ def test_real_asterisk_callback_without_keypress_and_bidirectional_rtp(factory, 
         assert call.manager_confirmed_at and call.bridged_at and call.bridge_ended_at
         legs = db.scalars(select(CallLeg).where(CallLeg.attempt_id == call.id)).all()
         assert all(leg.ended_at and leg.entered_bridge_at for leg in legs)
+        assert db.scalar(select(InboundCall)) is None
     state = json.loads(subprocess.check_output([
         "docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json",
     ], text=True))
