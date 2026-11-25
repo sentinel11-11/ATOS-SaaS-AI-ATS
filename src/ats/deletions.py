@@ -1,8 +1,9 @@
 """Delete address-book and login records while keeping independent call history."""
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from ats.domain import ACTIVE, Problem
+from ats.inbound_callback import expire_routes, is_operator_reserved
 from ats.models import (
     AmoSyncItem,
     Attempt,
@@ -10,6 +11,7 @@ from ats.models import (
     CampaignItem,
     Contact,
     InboundCall,
+    InboundCallback,
     ListMember,
     Operator,
     OperatorDevice,
@@ -87,6 +89,7 @@ def delete_contact(db, p, ident):
 
 def delete_user(db, p, ident):
     db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
+    expire_routes(db, p.tenant_id)
     repo = TenantRepository(db, p.tenant_id)
     user = repo.get(User, ident, lock=True)
     if user.role == "admin" and user.active:
@@ -104,7 +107,7 @@ def delete_user(db, p, ident):
             .join(WidgetCall, WidgetCall.campaign_id == CampaignItem.campaign_id).where(
                 WidgetCall.operator_id == operator.id, Attempt.status.in_(ACTIVE),
             ).limit(1))
-        if busy or widget_busy:
+        if busy or widget_busy or is_operator_reserved(db, operator):
             raise Problem(409, "finish_operator_calls_first")
         for entry in db.scalars(repo.query(QueueEntry).where(QueueEntry.operator_id == operator.id)):
             attempt = repo.get(Attempt, entry.attempt_id)
@@ -127,6 +130,9 @@ def delete_user(db, p, ident):
                 item.status = "cancelled"
         db.execute(delete(OperatorDevice).where(OperatorDevice.tenant_id == p.tenant_id,
                                                OperatorDevice.operator_id == operator.id))
+        db.execute(update(InboundCallback).where(
+            InboundCallback.tenant_id == p.tenant_id, InboundCallback.operator_id == operator.id,
+        ).values(operator_id=None, browser_session_id=None, browser_token=None))
         db.flush()
         complete_empty_campaigns(db, p.tenant_id, affected)
         db.delete(operator)

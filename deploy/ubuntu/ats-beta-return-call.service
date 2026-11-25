@@ -1,0 +1,21 @@
+[Unit]
+Description=ATOS return call routing service
+After=postgresql.service ats-beta-return-call.socket
+Requires=postgresql.service ats-beta-return-call.socket
+
+[Service]
+Type=simple
+User=ats-beta
+Group=ats-beta
+WorkingDirectory=/opt/ats-beta
+EnvironmentFile=/etc/ats-beta/ats.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/ats-beta/.venv/bin/python -m uvicorn ats.return_call_agi:app --fd 3 --no-proxy-headers --no-access-log
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

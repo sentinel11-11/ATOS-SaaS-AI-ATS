@@ -1,0 +1,12 @@
+[Unit]
+Description=ATOS return call lookup for local Asterisk
+
+[Socket]
+ListenStream=/run/ats-beta-return-call.sock
+SocketUser=root
+SocketGroup=asterisk
+SocketMode=0660
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

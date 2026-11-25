@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from sqlalchemy import func, select
 
-from ats.models import Attempt, CallerNumber, now
+from ats.models import Attempt, CallerNumber, InboundCallback, now
 
 
 def reset_expired(number, timestamp):
@@ -14,7 +14,12 @@ def reset_expired(number, timestamp):
 
 def usages(db, tenant_id, numbers, timestamp=None):
     timestamp = timestamp or now()
-    result = dict(db.execute(select(CallerNumber.phone, func.coalesce(func.sum(Attempt.channel_units), 0))
+    forwards = select(func.count()).where(
+        InboundCallback.tenant_id == CallerNumber.tenant_id,
+        InboundCallback.caller_number == CallerNumber.phone,
+        InboundCallback.created_at >= CallerNumber.quota_started_at,
+    ).correlate(CallerNumber).scalar_subquery()
+    result = dict(db.execute(select(CallerNumber.phone, func.coalesce(func.sum(Attempt.channel_units), 0) + forwards)
         .outerjoin(Attempt, (Attempt.tenant_id == CallerNumber.tenant_id)
                    & (Attempt.caller_number == CallerNumber.phone)
                    & (Attempt.created_at >= CallerNumber.quota_started_at))

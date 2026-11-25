@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ats.config import settings
 
+SCHEMA_REVISION = "0017"
+
 
 @lru_cache
 def engine():

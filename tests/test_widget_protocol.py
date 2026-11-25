@@ -12,6 +12,7 @@ import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import func, select, text
 from test_mobile_callback import callback as mobile_callback_fixture
+from test_mobile_callback import leg_event
 
 from ats.adapters import AmoCRM
 from ats.config import settings
@@ -20,6 +21,7 @@ from ats.models import (
     Attempt,
     Audit,
     BlacklistEntry,
+    CallbackAffinity,
     CallLeg,
     Campaign,
     CampaignItem,
@@ -843,6 +845,13 @@ def test_card_responsible_receives_both_modes_and_owns_resources_and_result(
         assert frame["Channel"] == [f"Local/{other_id}@ats-beta-callback-browser/n"]
         assert f"__ATS_OPERATOR_ENDPOINT={other_endpoint}" in frame["Variable"]
         assert f"__ATS_OPERATOR_ENDPOINT={own_endpoint}" not in frame["Variable"]
+    with factory() as db:
+        assert not db.scalar(select(CallbackAffinity))
+    leg_event(worker, str(attempt.id), "customer", "created")
+    with factory() as db:
+        affinity = db.get(CallbackAffinity, (widget["tenant_id"], attempt.phone))
+        assert affinity.last_operator_id == other_id
+        assert affinity.expires_at - affinity.dialed_at == timedelta(days=7)
     with factory.begin() as db:
         finish_attempt(db, db.scalar(select(Attempt)), "failed", "fixture_finished")
     with factory() as db:

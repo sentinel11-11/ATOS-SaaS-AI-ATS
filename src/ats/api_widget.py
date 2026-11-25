@@ -19,11 +19,14 @@ from ats.config import settings
 from ats.connections import settings_for_tenant
 from ats.db import session
 from ats.domain import ACTIVE, Problem
+from ats.inbound_callback import active_route, browser_projection
 from ats.models import (
     Attempt,
     Campaign,
     CampaignItem,
     Contact,
+    InboundCall,
+    InboundCallback,
     Operator,
     Tenant,
     WidgetCall,
@@ -112,7 +115,7 @@ class AvailabilityCommand(BaseModel):
     status: Literal["free", "break"]
 
 
-def owned_call(db, auth, ident, lock=False, participant=False, initiator=False):
+def owned_call(db, auth, ident, lock=False, participant=False, initiator=False, required=True):
     allowed = or_(WidgetCall.operator_id == auth.operator_id,
                   WidgetCall.initiator_user_id == auth.p.user_id)
     if participant:
@@ -124,9 +127,23 @@ def owned_call(db, auth, ident, lock=False, participant=False, initiator=False):
         allowed,
     )
     call = db.scalar(query.with_for_update() if lock else query)
-    if not call:
+    if required and not call:
         raise Problem(404, "not_found")
     return call
+
+
+def browser_return_calls(auth):
+    return select(InboundCallback, InboundCall).join(InboundCall, InboundCall.id == InboundCallback.inbound_id).where(
+        InboundCallback.tenant_id == auth.p.tenant_id, InboundCallback.operator_id == auth.operator_id,
+        InboundCallback.browser_session_id.is_not(None),
+    )
+
+
+def owned_browser_return(db, auth, ident):
+    row = db.execute(browser_return_calls(auth).where(InboundCallback.inbound_id == ident)).one_or_none()
+    if not row:
+        raise Problem(404, "not_found")
+    return row
 
 
 def attempt_for(db, call):
@@ -283,6 +300,10 @@ def agent_lease(data: AgentCommand, auth=Depends(widget_principal), db=Depends(s
     if device is None:
         calls = pending_calls(db, operator)
         protected = {call.browser_session_id for call in calls if attempt_for(db, call)}
+        protected.update(db.scalars(select(InboundCallback.browser_session_id).where(
+            *active_route(auth.p.tenant_id, now()), InboundCallback.operator_id == operator.id,
+            InboundCallback.browser_session_id.is_not(None),
+        )))
         device = next((row for row in devices_for(db, auth.p.tenant_id, operator.id)
                        if (not row.agent_expires_at or row.agent_expires_at <= now())
                        and row.agent_session_id not in protected), None)
@@ -338,9 +359,18 @@ def agent_invite(data: InviteCommand, auth=Depends(widget_principal), db=Depends
         WidgetCall.browser_session_id == data.session_id, WidgetCall.operator_token == data.token,
         ~WidgetCall.cancel_requested,
     ))
-    if not call or projection(db, call)["state"] in {"ended", "failed", "reconciliation_required"}:
-        raise Problem(403, "browser_call_mismatch")
-    return {**projection(db, call), "operator_call_token": call.operator_token}
+    if call:
+        projected = projection(db, call)
+        if projected["state"] not in {"ended", "failed", "reconciliation_required"}:
+            return {**projected, "operator_call_token": call.operator_token}
+    else:
+        incoming = db.execute(browser_return_calls(auth).where(
+            *active_route(auth.p.tenant_id, now()), InboundCallback.browser_session_id == data.session_id,
+            InboundCallback.browser_token == data.token, ~InboundCallback.cancel_requested,
+        )).one_or_none()
+        if incoming:
+            return {**browser_projection(db, *incoming), "operator_call_token": data.token}
+    raise Problem(403, "browser_call_mismatch")
 
 
 @router.post("/agent/availability")
@@ -374,7 +404,21 @@ def agent_disconnect(request: Request, data: DisconnectCommand = Depends(read_di
     # participant holds a random, single-call SIP nonce; this capability can only
     # cancel that browser call, never initiate calls or access SIP credentials.
     call = db.get(WidgetCall, data.call_id)
-    if (not call or call.mode != "browser" or call.browser_session_id != data.session_id
+    if not call:
+        route = db.get(InboundCallback, data.call_id)
+        if (not route or route.browser_session_id != data.session_id or not route.browser_token
+            or not secrets.compare_digest(route.browser_token, data.token)):
+            raise Problem(403, "browser_call_mismatch")
+        config = settings_for_tenant(db, route.tenant_id)
+        if request.headers.get("origin") != config.amo_url.rstrip("/"):
+            raise Problem(403, "amo_widget_origin_rejected")
+        db.scalar(select(Tenant).where(Tenant.id == route.tenant_id).with_for_update())
+        route = db.get(InboundCallback, data.call_id, populate_existing=True)
+        if route and not route.released_at:
+            route.cancel_requested = True
+        db.commit()
+        return {"ok": True, "state": "ending"}
+    if (call.mode != "browser" or call.browser_session_id != data.session_id
         or not secrets.compare_digest(call.operator_token, data.token)):
         raise Problem(403, "browser_call_mismatch")
     config = settings_for_tenant(db, call.tenant_id)
@@ -568,13 +612,24 @@ def activate(ident: UUID, auth=Depends(widget_principal), db=Depends(session)):
 
 @router.get("/calls/{ident}")
 def call_state(ident: UUID, auth=Depends(widget_principal), db=Depends(session)):
-    return call_response(db, owned_call(db, auth, ident), auth)
+    call = owned_call(db, auth, ident, required=False)
+    return call_response(db, call, auth) if call else browser_projection(db, *owned_browser_return(db, auth, ident))
 
 
 @router.post("/calls/{ident}/ready")
 def media_ready(ident: UUID, data: ReadyCommand = ReadyCommand(), auth=Depends(widget_principal), db=Depends(session)):
     db.scalar(select(Tenant).where(Tenant.id == auth.p.tenant_id).with_for_update())
-    call = owned_call(db, auth, ident, lock=True, participant=True)
+    call = owned_call(db, auth, ident, lock=True, participant=True, required=False)
+    if not call:
+        route, _ = owned_browser_return(db, auth, ident)
+        require_agent(db, auth, data.session_id)
+        if route.browser_session_id != data.session_id or not secrets.compare_digest(route.browser_token, data.token):
+            raise Problem(403, "browser_call_mismatch")
+        if route.released_at or route.expires_at <= now() or route.cancel_requested:
+            raise Problem(409, "call_not_ready")
+        # The PSTN side already exists. Asterisk bridges it when the browser answers.
+        db.commit()
+        return {"ok": True}
     if call.browser_session_id:
         require_agent(db, auth, data.session_id)
         if call.browser_session_id != data.session_id or not secrets.compare_digest(call.operator_token, data.token):
@@ -595,7 +650,14 @@ def media_ready(ident: UUID, data: ReadyCommand = ReadyCommand(), auth=Depends(w
 @router.post("/calls/{ident}/hangup", status_code=202)
 def hangup(ident: UUID, auth=Depends(widget_principal), db=Depends(session)):
     db.scalar(select(Tenant).where(Tenant.id == auth.p.tenant_id).with_for_update())
-    call = owned_call(db, auth, ident, lock=True)
+    call = owned_call(db, auth, ident, lock=True, required=False)
+    if not call:
+        route, _ = owned_browser_return(db, auth, ident)
+        if not route.released_at:
+            route.cancel_requested = True
+        db.commit()
+        # The widget also terminates the SIP leg, which makes Asterisk close the offer.
+        return {"ok": True, "state": "ending"}
     cancel_call(db, call)
     audit(db, auth.p, "widget.hangup_requested", call.id)
     db.commit()

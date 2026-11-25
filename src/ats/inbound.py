@@ -11,11 +11,13 @@ from ats.schemas import phone_e164
 
 
 def normalize_phone(raw):
-    digits = "".join(c for c in str(raw) if c.isdigit())
-    if len(digits) == 10:
-        digits = "7" + digits
-    elif len(digits) == 11 and digits.startswith("8"):
-        digits = "7" + digits[1:]
+    value = str(raw).strip()
+    digits = "".join(c for c in value if c.isdigit())
+    if not value.startswith("+"):
+        if len(digits) == 10:
+            digits = "7" + digits
+        elif len(digits) == 11 and digits.startswith("8"):
+            digits = "7" + digits[1:]
     try:
         return phone_e164("+" + digits)
     except ValueError:

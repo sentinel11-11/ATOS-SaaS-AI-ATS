@@ -26,7 +26,7 @@ from ats.compat_observability import router as compat_observability_router
 from ats.compat_resources import router as compat_resources_router
 from ats.compat_settings import router as compat_settings_router
 from ats.config import settings
-from ats.db import session
+from ats.db import SCHEMA_REVISION, session
 from ats.domain import Problem
 from ats.events import router as events_router
 from ats.models import (
@@ -368,7 +368,7 @@ def live():
 def ready(db=Depends(session)):
     # Verify required schema, not merely TCP/Postgres availability.
     version = db.scalar(text("SELECT version_num FROM alembic_version"))
-    if version != "0016":
+    if version != SCHEMA_REVISION:
         raise Problem(503, "schema_migration_required")
     db.scalar(select(func.count()).select_from(Tenant))
     config = settings()

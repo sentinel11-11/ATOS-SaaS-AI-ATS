@@ -328,6 +328,22 @@ class Operator(Owned, Base):
     )
 
 
+class CallbackAffinity(Base):
+    __tablename__ = "callback_affinity"
+    tenant_id: Mapped[UUID] = mapped_column(primary_key=True)
+    phone: Mapped[str] = mapped_column(String(16), primary_key=True)
+    last_operator_id: Mapped[UUID]
+    call_flow: Mapped[str] = mapped_column(String(24))
+    dialed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "last_operator_id"], ["operators.tenant_id", "operators.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+
 class CallLeg(Owned, Base):
     __tablename__ = "call_legs"
     attempt_id: Mapped[UUID]
@@ -534,10 +550,42 @@ class InboundCall(Owned, Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     hidden_from_journal: Mapped[bool] = mapped_column(default=False, server_default="false")
     __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_inbound_tenant_id"),
         UniqueConstraint("tenant_id", "route", "external_id"),
         ForeignKeyConstraint(["tenant_id", "contact_id"], ["contacts.tenant_id", "contacts.id"]),
         Index("ix_inbound_tenant_created", "tenant_id", "created_at"),
         Index("ix_inbound_analytics_period", "tenant_id", "created_at", "route"),
+    )
+
+
+class InboundCallback(Base):
+    """One preferred-operator offer for the lifetime of an inbound call."""
+
+    __tablename__ = "inbound_callbacks"
+    inbound_id: Mapped[UUID] = mapped_column(primary_key=True)
+    tenant_id: Mapped[UUID]
+    operator_id: Mapped[UUID | None]
+    browser_session_id: Mapped[UUID | None]
+    browser_token: Mapped[str | None] = mapped_column(String(48), unique=True)
+    caller_number: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_requested: Mapped[bool] = mapped_column(default=False, server_default="false")
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "inbound_id"], ["inbound_calls.tenant_id", "inbound_calls.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "operator_id"], ["operators.tenant_id", "operators.id"],
+        ),
+        Index(
+            "ix_inbound_callbacks_active", "tenant_id", "expires_at",
+            postgresql_where=released_at.is_(None),
+        ),
+        Index("ix_inbound_callbacks_caller_usage", "tenant_id", "caller_number", "created_at"),
     )
 
 

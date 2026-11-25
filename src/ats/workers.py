@@ -8,10 +8,11 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 
 from ats.adapters import AMI, AmoCRM, DeliveryUnknown, Megafon, Rejected, Retryable
 from ats.amo_context import contact_context, reference_data
+from ats.callback_affinity import remember_outbound
 from ats.config import settings
 from ats.db import session_factory
 from ats.domain import ACTIVE, DIAL_STATUSES, EVIDENCE_REQUIRED, Problem, next_state
@@ -19,12 +20,14 @@ from ats.models import (
     AmoSyncJob,
     Attempt,
     BlacklistEntry,
+    CallbackAffinity,
     CallerNumber,
     CallLeg,
     Campaign,
     CampaignItem,
     Contact,
     InboundCall,
+    InboundCallback,
     Inbox,
     Operator,
     Outbox,
@@ -126,8 +129,6 @@ class Worker:
                 )
             if kind == "Hangup":
                 # Only match a previously observed inbound leg; never capture arbitrary channels.
-                from ats.models import InboundCall
-
                 with self.factory() as db:
                     existing = db.scalar(
                         select(InboundCall).where(
@@ -140,6 +141,14 @@ class Worker:
                         state = "completed" if existing.status == "answered" else "failed"
             if state and frame.get("Uniqueid"):
                 with self.factory.begin() as db:
+                    if kind == "Hangup":
+                        from ats.inbound_callback import release_route
+
+                        db.scalar(select(Tenant).where(Tenant.id == config.telephony_tenant_id).with_for_update())
+                        route = db.get(InboundCallback, existing.id)
+                        if route and not route.released_at:
+                            release_route(db, route, hangup=True)
+                            return
                     ingest_inbound(
                         db,
                         config.telephony_tenant_id,
@@ -475,7 +484,8 @@ class Worker:
                 attempt.reason = e.code
                 complete_job(db, job_id, token, "dead", e.code)
                 return True
-            attempt.status, attempt.updated_at = "dispatching", now()
+            dispatched_at = now()
+            attempt.status, attempt.updated_at = "dispatching", dispatched_at
             from ats.workspace_service import event
 
             event(db, attempt, "dispatching")
@@ -536,9 +546,13 @@ class Worker:
                 )
             return True
         with self.factory.begin() as db:
+            if not mobile_callback and not browser_callback:
+                db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
             row = TenantRepository(db, tenant_id).get(Attempt, attempt_id, lock=True)
             row.external_id = external_id
             row.status, row.updated_at = next_state(row.status, "accepted"), now()
+            if not mobile_callback and not browser_callback:
+                remember_outbound(db, row, dispatched_at)
             complete_job(db, job_id, token)
         return True
 
@@ -861,6 +875,8 @@ class Worker:
         return crm_id
 
     def watchdog(self):
+        with self.factory.begin() as db:
+            db.execute(delete(CallbackAffinity).where(CallbackAffinity.expires_at <= now()))
         with self.factory.begin() as db:
             tenants = list(db.scalars(select(Tenant.id)).all())
             for tenant_id in tenants:

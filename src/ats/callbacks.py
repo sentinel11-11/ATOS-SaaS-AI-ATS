@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from ats.callback_affinity import remember_outbound
 from ats.domain import ACTIVE, DIAL_STATUSES, Problem
 from ats.models import (
     Attempt,
@@ -230,6 +231,7 @@ def handle_frame(factory, tenant_id, frame):
     native = frame.get("Event") in {"BridgeEnter", "BridgeLeave", "Hangup", "Newstate"}
     if not (custom or response or native):
         return False
+    observed_at = now()
     with factory.begin() as db:
         if custom or response:
             try:
@@ -284,7 +286,8 @@ def handle_frame(factory, tenant_id, frame):
                 if leg.channel and (leg.channel != channel or leg.uniqueid != uniqueid):
                     _uncertain(db, attempt, "callback_leg_identity_conflict")
                     return True
-                changed = not leg.channel or (state == "answered" and not leg.answered_at)
+                first_channel = not leg.channel
+                changed = first_channel or (state == "answered" and not leg.answered_at)
                 leg.channel, leg.uniqueid = channel, uniqueid
                 leg.linkedid = _identity(frame.get("Linkedid"))
                 if leg.status == "cancelled":
@@ -295,6 +298,8 @@ def handle_frame(factory, tenant_id, frame):
                     leg.answered_at = now()
                 if changed:
                     event(db, attempt, f"callback_{role}_{state}")
+                if role == "customer" and first_channel:
+                    remember_outbound(db, attempt, observed_at)
                 widget_id = attempt.route_snapshot.get("widget_call_id")
                 widget = db.get(WidgetCall, UUID(widget_id)) if widget_id else None
                 if widget and widget.cancel_requested:

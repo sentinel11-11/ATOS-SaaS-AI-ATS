@@ -203,15 +203,13 @@ def schedule_one(db, tenant_id):
     if not tenant:
         return False
     from ats.connections import settings_for_tenant
+    from ats.inbound_callback import active_channel_units, expire_routes
 
     config = settings_for_tenant(db, tenant_id)
     repo = TenantRepository(db, tenant_id)
     hour = now().astimezone(ZoneInfo(tenant.timezone)).hour
-    active = db.scalar(
-        select(func.coalesce(func.sum(Attempt.channel_units), 0))
-        .select_from(Attempt)
-        .where(Attempt.tenant_id == tenant_id, Attempt.status.in_(ACTIVE))
-    )
+    expire_routes(db, tenant_id)
+    active = active_channel_units(db, tenant_id)
     for campaign in db.scalars(
         repo.query(Campaign)
         .where(Campaign.status == "running", ~Campaign.archived)

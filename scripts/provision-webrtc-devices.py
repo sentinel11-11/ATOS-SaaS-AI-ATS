@@ -41,14 +41,14 @@ def main():
         parser.error("Run this helper as ats-beta, through install-widget-webrtc.py")
     load_dotenv(args.env_file, override=True, interpolate=False)
     from ats.config import settings
-    from ats.db import session_factory
+    from ats.db import SCHEMA_REVISION, session_factory
 
     config = settings()
     if not config.amo_tenant_id or config.amo_tenant_id != config.telephony_tenant_id:
         parser.error("Bind amoCRM and telephony to the same tenant before provisioning")
     with session_factory()() as db:
-        if db.scalar(text("SELECT version_num FROM alembic_version")) != "0016":
-            parser.error("Update the beta database to schema 0016 first")
+        if db.scalar(text("SELECT version_num FROM alembic_version")) != SCHEMA_REVISION:
+            parser.error(f"Update the beta database to schema {SCHEMA_REVISION} first")
         devices = provision(db, config.amo_tenant_id)
         if not devices:
             parser.error("No active operator users in the configured tenant")
