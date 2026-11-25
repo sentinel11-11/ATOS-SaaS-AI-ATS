@@ -152,13 +152,9 @@ class IdCommand(BaseModel):
 
 @router.post("/users/delete")
 def delete_user(data: IdCommand, p=Depends(admin), db=Depends(session)):
-    user = TenantRepository(db, p.tenant_id).get(User, data.id)
-    from ats.models import Operator
-    op = db.scalar(select(Operator).where(Operator.tenant_id == p.tenant_id, Operator.user_id == user.id))
-    command = UserSave(login=user.login, role=user.role, active=False, name=op.name if op else "", extension=op.extension if op else "")
-    write_user(db, p, command, user.id)  # Includes last-admin and busy-call guards.
-    user.archived = True
-    audit(db, p, "user.archived", user.id)
+    from ats.deletions import delete_user as remove_user
+
+    remove_user(db, p, data.id)
     db.commit()
     return {"ok": True}
 

@@ -272,7 +272,10 @@ export default function Settings({ addToast, refreshKey }) {
       addToast('Пользователь удалён', 'ok');
       loadAll();
     } else {
-      addToast('Ошибка удаления', 'err');
+      addToast(res?.error === 'finish_operator_calls_first'
+        ? 'У оператора есть незавершённый звонок. Сначала завершите разговор или сверку Asterisk.'
+        : res?.error === 'last_admin_required' ? 'В системе должен остаться хотя бы один активный администратор.'
+        : 'Ошибка удаления: ' + (res?.error || '?'), 'err');
     }
   };
 

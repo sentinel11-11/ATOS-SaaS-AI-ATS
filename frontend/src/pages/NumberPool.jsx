@@ -4,6 +4,7 @@ import { api } from '../api';
 import Modal from '../components/Modal';
 
 const validCooldown = (value) => Number.isInteger(value) && value >= 0 && value <= 86400;
+const validQuotaCooldown = (value) => Number.isInteger(value) && value >= 0 && value <= 604800;
 
 export default function NumberPool({ addToast, refreshKey }) {
   const [numbers, setNumbers] = useState([]);
@@ -20,7 +21,8 @@ export default function NumberPool({ addToast, refreshKey }) {
     label: '',
     provider: 'multicom_ami',
     kind: 'sip',
-    daily_limit: 100,
+    daily_limit: 150,
+    quota_cooldown_seconds: 3600,
     weight: 1,
     cooldown_seconds: 60,
   });
@@ -97,6 +99,9 @@ export default function NumberPool({ addToast, refreshKey }) {
     if (!validCooldown(newNumber.cooldown_seconds)) {
       return addToast('Охлаждение должно быть целым числом от 0 до 86400 секунд', 'warn');
     }
+    if (!validQuotaCooldown(newNumber.quota_cooldown_seconds)) {
+      return addToast('Охлаждение после лимита должно быть целым числом от 0 до 604800 секунд', 'warn');
+    }
 
     const res = await api('/numbers/save', {
       body: {
@@ -107,13 +112,14 @@ export default function NumberPool({ addToast, refreshKey }) {
         daily_limit: newNumber.daily_limit,
         weight: newNumber.weight,
         cooldown_seconds: newNumber.cooldown_seconds,
+        quota_cooldown_seconds: newNumber.quota_cooldown_seconds,
       },
     });
 
     if (res && res.ok) {
       addToast('Номер добавлен в пул', 'ok');
       setShowAddModal(false);
-      setNewContactNumber({ phone: '', label: '', provider: 'multicom_ami', kind: 'sip', daily_limit: 100, weight: 1, cooldown_seconds: 60 });
+      setNewContactNumber({ phone: '', label: '', provider: 'multicom_ami', kind: 'sip', daily_limit: 150, weight: 1, cooldown_seconds: 60, quota_cooldown_seconds: 3600 });
       loadNumbers();
     } else {
       addToast('Ошибка добавления: ' + (res?.error || '?'), 'err');
@@ -123,6 +129,10 @@ export default function NumberPool({ addToast, refreshKey }) {
   const handleSaveEditedNumber = async () => {
     if (!editingNumber) return;
     const cooldown = editingNumber.cooldown_seconds ?? 60;
+    const quotaCooldown = editingNumber.quota_cooldown_seconds ?? 3600;
+    if (!validQuotaCooldown(quotaCooldown)) {
+      return addToast('Охлаждение после лимита должно быть целым числом от 0 до 604800 секунд', 'warn');
+    }
     if (!validCooldown(cooldown)) {
       return addToast('Охлаждение должно быть целым числом от 0 до 86400 секунд', 'warn');
     }
@@ -139,6 +149,7 @@ export default function NumberPool({ addToast, refreshKey }) {
         daily_limit: editingNumber.daily_limit,
         weight: editingNumber.weight,
         cooldown_seconds: cooldown,
+        quota_cooldown_seconds: quotaCooldown,
         active: editingNumber.active,
         verified: editingNumber.verified,
         enabled_outgoing: editingNumber.enabled_outgoing,
@@ -176,7 +187,7 @@ export default function NumberPool({ addToast, refreshKey }) {
           <p className="text-xs text-muted">
             В пуле {numbersList.length} · подтверждены {numbersList.filter((n) => n.verified).length} ·
             активны {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false).length} ·
-            доступны по лимитам {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false && !n.cooling && (n.daily_count || 0) < (n.daily_limit || 100)).length}
+            доступны по лимитам {numbersList.filter((n) => n.active && n.verified && !n.quarantined && n.enabled_outgoing !== false && !n.cooling && (n.cycle_count ?? n.daily_count ?? 0) < (n.daily_limit || 150)).length}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -249,9 +260,9 @@ export default function NumberPool({ addToast, refreshKey }) {
                           Остывает{n.cooldown_remaining_seconds != null ? ` · ${n.cooldown_remaining_seconds} с` : ''}
                         </span>
                       )}
-                      {n.daily_count >= n.daily_limit && (
+                      {(n.cycle_count ?? n.daily_count ?? 0) >= n.daily_limit && (
                         <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-warn/20 text-warn border border-warn/30">
-                          Суточный лимит исчерпан
+                          Лимит до охлаждения исчерпан
                         </span>
                       )}
                     </div>
@@ -288,9 +299,9 @@ export default function NumberPool({ addToast, refreshKey }) {
                   </div>
 
                   <div>
-                    <span className="text-dim text-[11px] block">Суточный лимит</span>
+                    <span className="text-dim text-[11px] block">Лимит до охлаждения</span>
                     <span className="font-semibold text-white">
-                      {n.daily_count || 0} / {n.daily_limit || 100}
+                      {n.cycle_count ?? n.daily_count ?? 0} / {n.daily_limit || 150}
                     </span>
                   </div>
 
@@ -309,8 +320,12 @@ export default function NumberPool({ addToast, refreshKey }) {
                     <span className="font-semibold text-ok">{n.answered_total || 0}</span>
                   </div>
                   <div>
-                    <span className="text-dim text-[11px] block">Охлаждение между попытками</span>
+                    <span className="text-dim text-[11px] block">Пауза между попытками</span>
                     <span className="font-semibold text-white">{n.cooldown_seconds ?? 60} с</span>
+                  </div>
+                  <div>
+                    <span className="text-dim text-[11px] block">Охлаждение после лимита</span>
+                    <span className="font-semibold text-white">{n.quota_cooldown_seconds ?? 3600} с</span>
                   </div>
                   <div>
                     <span className="text-dim text-[11px] block">Попыток за период</span>
@@ -403,13 +418,14 @@ export default function NumberPool({ addToast, refreshKey }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="font-semibold text-muted block mb-1">Дневной лимит вызовов</label>
+              <label htmlFor="new-number-limit" className="font-semibold text-muted block mb-1">Лимит до охлаждения</label>
               <input
+                id="new-number-limit"
                 type="number"
                 min="1"
                 className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
                 value={newNumber.daily_limit}
-                onChange={(e) => setNewContactNumber({ ...newNumber, daily_limit: parseInt(e.target.value) || 100 })}
+                onChange={(e) => setNewContactNumber({ ...newNumber, daily_limit: parseInt(e.target.value) || 150 })}
               />
             </div>
 
@@ -426,7 +442,7 @@ export default function NumberPool({ addToast, refreshKey }) {
               <p className="text-[11px] text-muted mt-1">Вес задаёт относительную долю попыток среди доступных номеров.</p>
             </div>
             <div>
-              <label htmlFor="new-number-cooldown" className="font-semibold text-muted block mb-1">Охлаждение номера, секунд</label>
+              <label htmlFor="new-number-cooldown" className="font-semibold text-muted block mb-1">Пауза между попытками, секунд</label>
               <input
                 id="new-number-cooldown"
                 type="number"
@@ -438,6 +454,14 @@ export default function NumberPool({ addToast, refreshKey }) {
                 onChange={(e) => setNewContactNumber({ ...newNumber, cooldown_seconds: e.target.value === '' ? '' : Number(e.target.value) })}
               />
               <p className="text-[11px] text-muted mt-1">Минимальный интервал от начала предыдущей попытки с этого А-номера.</p>
+            </div>
+            <div>
+              <label htmlFor="new-number-quota-cooldown" className="font-semibold text-muted block mb-1">Охлаждение после лимита, секунд</label>
+              <input id="new-number-quota-cooldown" type="number" min="0" max="604800" step="1"
+                className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
+                value={newNumber.quota_cooldown_seconds ?? 3600}
+                onChange={(e) => setNewContactNumber({ ...newNumber, quota_cooldown_seconds: e.target.value === '' ? '' : Number(e.target.value) })} />
+              <p className="text-[11px] text-muted mt-1">После охлаждения счётчик сбрасывается. 3600 секунд = 1 час.</p>
             </div>
           </div>
 
@@ -502,13 +526,14 @@ export default function NumberPool({ addToast, refreshKey }) {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="font-semibold text-muted block mb-1">Дневной лимит вызовов</label>
+                <label htmlFor="edit-number-limit" className="font-semibold text-muted block mb-1">Лимит до охлаждения</label>
                 <input
+                  id="edit-number-limit"
                   type="number"
                   min="1"
                   className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc font-semibold"
-                  value={editingNumber.daily_limit || 100}
-                  onChange={(e) => setEditingNumber({ ...editingNumber, daily_limit: parseInt(e.target.value) || 100 })}
+                  value={editingNumber.daily_limit || 150}
+                  onChange={(e) => setEditingNumber({ ...editingNumber, daily_limit: parseInt(e.target.value) || 150 })}
                 />
               </div>
 
@@ -525,7 +550,7 @@ export default function NumberPool({ addToast, refreshKey }) {
                 <p className="text-[11px] text-muted mt-1">Вес задаёт относительную долю попыток среди доступных номеров.</p>
               </div>
               <div>
-                <label htmlFor="edit-number-cooldown" className="font-semibold text-muted block mb-1">Охлаждение номера, секунд</label>
+                <label htmlFor="edit-number-cooldown" className="font-semibold text-muted block mb-1">Пауза между попытками, секунд</label>
                 <input
                   id="edit-number-cooldown"
                   type="number"
@@ -538,6 +563,14 @@ export default function NumberPool({ addToast, refreshKey }) {
                 />
                 <p className="text-[11px] text-muted mt-1">Минимальный интервал от начала предыдущей попытки с этого А-номера.</p>
               </div>
+            <div>
+              <label htmlFor="edit-number-quota-cooldown" className="font-semibold text-muted block mb-1">Охлаждение после лимита, секунд</label>
+              <input id="edit-number-quota-cooldown" type="number" min="0" max="604800" step="1"
+                className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
+                value={editingNumber.quota_cooldown_seconds ?? 3600}
+                onChange={(e) => setEditingNumber({ ...editingNumber, quota_cooldown_seconds: e.target.value === '' ? '' : Number(e.target.value) })} />
+              <p className="text-[11px] text-muted mt-1">После охлаждения счётчик сбрасывается. 3600 секунд = 1 час.</p>
+            </div>
             </div>
 
             <div className="flex flex-col gap-2 pt-2 border-t border-line">

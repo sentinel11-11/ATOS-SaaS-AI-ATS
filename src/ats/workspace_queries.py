@@ -48,7 +48,7 @@ def calls_query(p, q="", status="", campaign_id=None, since=None, until=None):
             CampaignItem,
             (CampaignItem.id == Attempt.item_id) & (CampaignItem.tenant_id == Attempt.tenant_id),
         )
-        .join(
+        .outerjoin(
             Contact,
             (Contact.id == CampaignItem.contact_id) & (Contact.tenant_id == Attempt.tenant_id),
         )
@@ -77,9 +77,9 @@ def calls_query(p, q="", status="", campaign_id=None, since=None, until=None):
 def call_dict(attempt, contact, campaign):
     return {
         **jsonable_encoder(attempt),
-        "contact_name": attempt.contact_name or contact.name,
-        "phone": attempt.phone or contact.phone,
-        "contact_id": contact.id,
+        "contact_name": attempt.contact_name or (contact.name if contact else ""),
+        "phone": attempt.phone or (contact.phone if contact else ""),
+        "contact_id": contact.id if contact else None,
         "campaign_name": campaign.name,
         "campaign_id": campaign.id,
         "duration_seconds": max(0, int(((attempt.bridge_ended_at or attempt.ended_at) - attempt.answered_at).total_seconds()))

@@ -112,7 +112,7 @@ def numbers_import_multicom(data: commands.MulticomNumberImport, p=Depends(admin
             verified=False,
             enabled_outgoing=True,
             quarantined=False,
-            daily_limit=30,
+            daily_limit=150,
             cooldown_seconds=60,
         )
         db.flush()
@@ -142,10 +142,14 @@ def number_update(
 ):
     db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
     row = TenantRepository(db, p.tenant_id).get(CallerNumber, number_id, lock=True)
+    previous_quota = row.daily_limit, row.quota_cooldown_seconds, row.quota_cooldown_until
     if row.provider == "multicom_ami" and data.enabled and not data.verified:
         raise Problem(409, "caller_number_not_verified")
     for key, value in data.model_dump().items():
         setattr(row, key, value)
+    from ats.caller_quota import settings_changed
+
+    settings_changed(db, row, *previous_quota)
     audit(db, p, "number.updated", row.id)
     db.commit()
     return row

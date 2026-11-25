@@ -37,7 +37,7 @@ def contact(logged, **changes):
     return response.json()
 
 
-def test_contacts_search_edit_archive_preserves_history(logged, prepared, factory):
+def test_contacts_search_edit_delete_preserves_independent_history(logged, prepared, factory):
     from ats.services import ingest
 
     _, cid, _ = prepared
@@ -62,11 +62,13 @@ def test_contacts_search_edit_archive_preserves_history(logged, prepared, factor
     worker.inbox()
     assert logged.delete(BASE + f"/contacts/{cid}").status_code == 204
     assert logged.get(BASE + "/contacts").json()["total"] == 0
-    assert len(logged.get(BASE + f"/contacts/{cid}/history").json()["calls"]) == 1
+    assert logged.get(BASE + f"/contacts/{cid}/history").status_code == 404
+    assert logged.get(BASE + "/calls").json()["total"] == 1
+    assert logged.post("/api/v2/calls", json={}).json()["total"] == 1
     with factory() as db:
         row = db.get(Contact, UUID(cid))
-        assert row.archived and row.blocked and not row.consent
-        assert db.scalar(select(CampaignItem)).contact_id == row.id
+        assert row is None
+        assert db.scalar(select(CampaignItem)).contact_id is None
         assert db.scalar(select(Attempt)).status == "completed"
 
 

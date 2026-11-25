@@ -80,6 +80,7 @@ class NumberCommand(LegacyInput):
     daily_limit: int | None = Field(default=None, ge=1, le=100000)
     weight: int | None = Field(default=None, ge=1, le=100000)
     cooldown_seconds: int | None = Field(default=None, ge=0, le=86400)
+    quota_cooldown_seconds: int | None = Field(default=None, ge=0, le=604800)
     carrier: str | None = Field(default=None, max_length=50)
     provider_ref: str | None = Field(default=None, max_length=64)
 
@@ -183,6 +184,8 @@ def number_projection(row, stats, tenant, timestamp):
     timezone = ZoneInfo(tenant.timezone)
     day_start = timestamp.astimezone(timezone).replace(hour=0, minute=0, second=0, microsecond=0)
     cooldown = row.last_used_at + timedelta(seconds=row.cooldown_seconds) if row.last_used_at else None
+    if row.quota_cooldown_until and (cooldown is None or row.quota_cooldown_until > cooldown):
+        cooldown = row.quota_cooldown_until
     counts = stats.get(row.phone, (0, 0, 0, 0))
     return {
         "id": row.id,
@@ -195,6 +198,8 @@ def number_projection(row, stats, tenant, timestamp):
         "verified": row.verified,
         "enabled_outgoing": row.enabled_outgoing,
         "daily_limit": row.daily_limit,
+        "quota_cooldown_until": row.quota_cooldown_until,
+        "quota_cooldown_seconds": row.quota_cooldown_seconds,
         "weight": row.weight,
         "quarantined": row.quarantined,
         "cooldown_until": cooldown.isoformat() if cooldown else "",
@@ -252,9 +257,12 @@ def numbers(
             .group_by(CallerNumber.id, CallerNumber.phone)
         )
     }
+    from ats.caller_quota import usages
+
+    usage = usages(db, p.tenant_id, rows, timestamp)
     return {
         "ok": True,
-        "numbers": [number_projection(row, stats, tenant, timestamp) for row in rows],
+        "numbers": [{**number_projection(row, stats, tenant, timestamp), "cycle_count": usage.get(row.phone, 0)} for row in rows],
     }
 
 
@@ -263,6 +271,7 @@ def number_save(data: NumberCommand, p=Depends(admin), db=Depends(session)):
     db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
     repo = TenantRepository(db, p.tenant_id)
     row = repo.get(CallerNumber, data.id, lock=True) if data.id else None
+    previous_quota = (row.daily_limit, row.quota_cooldown_seconds, row.quota_cooldown_until) if row else None
     if row is None:
         phone = caller_phone(data.number or data.phone)
         if db.scalar(repo.query(CallerNumber).where(CallerNumber.phone == phone)):
@@ -279,12 +288,16 @@ def number_save(data: NumberCommand, p=Depends(admin), db=Depends(session)):
         row.verified = values.pop("verified")
     for key in (
         "label", "provider", "kind", "enabled_outgoing", "quarantined", "daily_limit",
-        "weight", "cooldown_seconds", "carrier", "provider_ref",
+        "weight", "cooldown_seconds", "quota_cooldown_seconds", "carrier", "provider_ref",
     ):
         if key in values:
             setattr(row, key, values[key])
     if row.provider == "multicom_ami" and row.enabled and not row.verified:
         raise Problem(409, "caller_number_not_verified")
+    if previous_quota and ("daily_limit" in values or "quota_cooldown_seconds" in values):
+        from ats.caller_quota import settings_changed
+
+        settings_changed(db, row, *previous_quota)
     db.flush()
     audit(db, p, "number.updated" if data.id else "number.created", row.id)
     db.commit()

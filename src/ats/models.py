@@ -140,7 +140,7 @@ class Campaign(Owned, Base):
 class CampaignItem(Owned, Base):
     __tablename__ = "campaign_items"
     campaign_id: Mapped[UUID]
-    contact_id: Mapped[UUID]
+    contact_id: Mapped[UUID | None]
     status: Mapped[str] = mapped_column(String(24), default="queued")
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now, server_default=func.now()
@@ -286,7 +286,7 @@ class CallerNumber(Owned, Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     verified: Mapped[bool] = mapped_column(default=False)
     quarantined: Mapped[bool] = mapped_column(default=False)
-    daily_limit: Mapped[int] = mapped_column(default=30)
+    daily_limit: Mapped[int] = mapped_column(default=150)
     cooldown_seconds: Mapped[int] = mapped_column(default=60)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     provider: Mapped[str] = mapped_column(String(24), default="megafon_vats", server_default="megafon_vats")
@@ -296,6 +296,9 @@ class CallerNumber(Owned, Base):
     carrier: Mapped[str] = mapped_column(String(120), default="", server_default="")
     provider_ref: Mapped[str] = mapped_column(String(120), default="", server_default="")
     counters_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quota_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, server_default=func.now())
+    quota_cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quota_cooldown_seconds: Mapped[int] = mapped_column(default=3600, server_default="3600")
     __table_args__ = (UniqueConstraint("tenant_id", "phone"),)
 
 
@@ -372,8 +375,8 @@ class OperatorDevice(Owned, Base):
 
 class WidgetCall(Owned, Base):
     __tablename__ = "widget_calls"
-    operator_id: Mapped[UUID]
-    initiator_user_id: Mapped[UUID]
+    operator_id: Mapped[UUID | None]
+    initiator_user_id: Mapped[UUID | None]
     browser_session_id: Mapped[UUID | None]
     campaign_id: Mapped[UUID]
     client_request_id: Mapped[UUID]
@@ -524,6 +527,7 @@ class InboundCall(Owned, Base):
     phone: Mapped[str] = mapped_column(String(32))
     destination: Mapped[str] = mapped_column(String(32), default="")
     contact_id: Mapped[UUID | None]
+    contact_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     status: Mapped[str] = mapped_column(String(24), default="ringing")
     duration_seconds: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

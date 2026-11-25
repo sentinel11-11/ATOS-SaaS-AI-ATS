@@ -4,7 +4,6 @@ import csv
 import io
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
-from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
@@ -235,7 +234,7 @@ def retry_failed(db, p, campaign):
 
 
 def select_caller(db, tenant, route, config=None, operator=None, *, units=1):
-    """Reserve under the tenant lock. Multicom uses daily weighted-least-used selection."""
+    """Reserve under the tenant lock, balancing usage within each number's cycle."""
     if route not in {"multicom_ami", "megafon_vats"}:
         return ""
     rules = getattr(config, "ami_operator_number_map", {}) if route == "multicom_ami" else {}
@@ -258,20 +257,11 @@ def select_caller(db, tenant, route, config=None, operator=None, *, units=1):
             raise Problem(409, "operator_caller_mapping_missing")
         return fallback
     timestamp = now()
-    day_start = (
-        timestamp
-        .astimezone(ZoneInfo(tenant.timezone))
-        .replace(hour=0, minute=0, second=0, microsecond=0)
-    )
-    usage = dict(db.execute(
-        select(Attempt.caller_number, func.sum(Attempt.channel_units))
-        .where(
-            Attempt.tenant_id == tenant.id,
-            Attempt.created_at >= day_start,
-            Attempt.caller_number.in_([number.phone for number in numbers]),
-        )
-        .group_by(Attempt.caller_number)
-    ).all())
+    from ats.caller_quota import reset_expired, usages
+
+    for number in numbers:
+        reset_expired(number, timestamp)
+    usage = usages(db, tenant.id, numbers, timestamp)
     eligible = []
     for number in numbers:
         if not number.enabled or not number.verified or number.quarantined:
@@ -279,6 +269,11 @@ def select_caller(db, tenant, route, config=None, operator=None, *, units=1):
         if route == "multicom_ami" and getattr(config, "ami_cli_endpoint_prefix", "") and number.provider != "multicom_ami":
             continue
         if not number.enabled_outgoing or (allowed is not None and number.phone not in allowed):
+            continue
+        if number.quota_cooldown_until and number.quota_cooldown_until > timestamp:
+            continue
+        if usage.get(number.phone, 0) + units > number.daily_limit:
+            number.quota_cooldown_until = timestamp + timedelta(seconds=number.quota_cooldown_seconds)
             continue
         if (
             number.last_used_at
@@ -298,6 +293,8 @@ def select_caller(db, tenant, route, config=None, operator=None, *, units=1):
     else:
         selected = eligible[0]
     selected.last_used_at = timestamp
+    if usage.get(selected.phone, 0) + units >= selected.daily_limit:
+        selected.quota_cooldown_until = timestamp + timedelta(seconds=selected.quota_cooldown_seconds)
     return selected.phone
 
 

@@ -121,7 +121,7 @@ def legacy_call(attempt, contact, campaign):
         **data,
         "id": str(attempt.id),
         "campaign_id": str(campaign.id),
-        "contact_id": str(contact.id),
+        "contact_id": str(contact.id) if contact else None,
         "camp_name": campaign.name,
         "contact_phone": data["phone"],
         "caller_id": attempt.caller_number,
@@ -235,9 +235,10 @@ def contact_delete(data: Ids, p=Depends(admin), db=Depends(session)):
     rows = db.scalars(repo.query(Contact).where(Contact.id.in_(ids)).with_for_update()).all()
     if len(rows) != len(ids):
         raise Problem(404, "not_found")
+    from ats.deletions import delete_contact
+
     for row in rows:
-        row.archived, row.consent, row.blocked = True, False, True
-        audit(db, p, "contact.archived", row.id)
+        delete_contact(db, p, row.id)
     db.commit()
     return {"ok": True, "deleted": len(rows)}
 
@@ -364,8 +365,9 @@ def database_delete(data: DatabaseDelete, p=Depends(admin), db=Depends(session))
         if data.delete_contacts:
             members = select(ListMember.contact_id).where(ListMember.tenant_id == p.tenant_id, ListMember.list_id == row.id)
             for contact in db.scalars(repo.query(Contact).where(Contact.id.in_(members)).with_for_update()):
-                contact.archived, contact.consent, contact.blocked = True, False, True
-                audit(db, p, "contact.archived", contact.id)
+                from ats.deletions import delete_contact
+
+                delete_contact(db, p, contact.id)
         db.execute(delete(ListMember).where(ListMember.tenant_id == p.tenant_id, ListMember.list_id == row.id))
         db.delete(row)
         audit(db, p, "list.deleted", row.id)

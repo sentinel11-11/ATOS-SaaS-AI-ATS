@@ -116,8 +116,9 @@ class NumberSave(Input):
     enabled: bool = True
     verified: bool = False
     quarantined: bool = False
-    daily_limit: int = Field(default=30, ge=1, le=100000)
+    daily_limit: int = Field(default=150, ge=1, le=100000)
     cooldown_seconds: int = Field(default=60, ge=0, le=86400)
+    quota_cooldown_seconds: int = Field(default=3600, ge=0, le=604800)
 
 
 

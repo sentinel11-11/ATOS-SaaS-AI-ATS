@@ -1,0 +1,60 @@
+{
+  "recorded_at": "2026-11-25T15:17:06.962341+03:00",
+  "schema": "0016",
+  "widget_version": "5.4.0",
+  "backend_full": {
+    "tests": 368,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "followup_history_and_deletion": {
+    "tests": 20,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "native_forwarding": {
+    "tests": 8,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "native_browser": {
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "frontend": {
+    "tests": 54,
+    "failures": 0,
+    "build": "passed"
+  },
+  "ruff": "passed",
+  "widget_archive_check": "passed",
+  "scenarios": [
+    "independent caller quotas and configurable post-limit cooldown",
+    "admin changes during active cooldown retain used units",
+    "no midnight reset, cooldown expiry resets cycle",
+    "24/7 CRM calls beyond former global quota, normal campaign windows retained",
+    "operator count excludes inactive/archived accounts",
+    "physical deletion keeps call journal and CRM delivery, permits identity recreation",
+    "active and unknown calls prevent identity deletion",
+    "queued campaign removal without fabricated attempts",
+    "log archive enrollment preserves old gzip timestamps; open/incomplete archives retained"
+  ],
+  "notes": [
+    "The full backend suite ran before the final nullable-contact campaign detail and late browser disconnect guards; the 20 follow-up tests cover the final guards.",
+    "Native tests use isolated Asterisk/Chromium/coturn, PostgreSQL and loopback SIP, with synthetic CRM data. No paid calls.",
+    "VPS deployment is not performed from this workspace. Actual VPS logrotate rule will be validated by the installer before application."
+  ],
+  "sha256": {
+    "src/ats/caller_quota.py": "381bafb9c5e933e7e746805e949c0fe7eb9f50e7f3f7f8548fe8a8d1aedc0392",
+    "src/ats/deletions.py": "b6f1cfe65fd9cf2606b43ecefd02d6a1677d5f126d41e1e2526e429a49ce3f65",
+    "frontend/src/pages/NumberPool.jsx": "5111f7f4bc225e206dea7de0d1072c1abffea62ae2df32215cd099eec3336203",
+    "migrations/versions/0016_detach_deleted_identities.py": "c8ff685cf53e19f7fd6bdea3e29f91b57a794e3a6dc0fdd19497875af22dfd14",
+    "scripts/install-asterisk-log-retention.py": "5de2ae115f47c90bc9023f1c06da3c89c630268bcfa99142c7a41e2058a9a41d",
+    "widget.zip": "7108d2e814ee20db01ce367c7debf3edd144dc3d0d3ce262292f3c3c1809ace9"
+  }
+}

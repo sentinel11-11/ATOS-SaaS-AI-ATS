@@ -55,6 +55,12 @@ def write_user(db, p, data, user_id=None):
     db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
     repo = TenantRepository(db, p.tenant_id)
     user = repo.get(User, user_id, lock=True) if user_id else None
+    if user is None:
+        old = db.scalar(repo.query(User).where(User.login == data.login.lower(), User.archived))
+        if old:
+            from ats.deletions import delete_user
+
+            delete_user(db, p, old.id)
     if user and user.role == "admin" and user.active and (data.role != "admin" or not data.active):
         admins = db.scalar(
             select(func.count())

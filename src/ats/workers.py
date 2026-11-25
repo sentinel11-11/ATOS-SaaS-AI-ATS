@@ -370,18 +370,17 @@ class Worker:
             item = repo.get(CampaignItem, attempt.item_id)
             contact = repo.get(Contact, item.contact_id, lock=True)
             campaign = repo.get(Campaign, item.campaign_id)
-            widget_id = (campaign.schedule or {}).get("widget_call_id")
-            widget_call = repo.get(WidgetCall, UUID(widget_id)) if widget_id else None
+            widget_call = db.scalar(repo.query(WidgetCall).where(WidgetCall.campaign_id == campaign.id))
             if widget_call and (widget_call.cancel_requested or widget_call.expires_at <= now()):
                 finish_attempt(db, attempt, "failed", "cancelled_by_user" if widget_call.cancel_requested else "widget_queue_timeout")
                 complete_job(db, job_id, token)
                 return True
             local = now().astimezone(ZoneInfo(tenant.timezone))
             hour = local.hour
-            if campaign.status != "running" or not (
+            if campaign.status != "running" or (not widget_call and not (
                 campaign.window_start <= hour < campaign.window_end
                 and local.weekday() in campaign.weekdays
-            ):
+            )):
                 complete_job(db, job_id, token, "pending", delay=5)
                 return True
             if (
@@ -633,14 +632,16 @@ class Worker:
                 is_widget_call = False
                 if "inbound_id" in payload:
                     attempt = repo.get(InboundCall, UUID(payload["inbound_id"]))
-                    if not attempt.contact_id:
+                    contact = repo.get(Contact, attempt.contact_id) if attempt.contact_id else None
+                    deleted = attempt.contact_snapshot or {}
+                    if contact is None and not deleted:
                         raise Rejected("inbound_contact_missing")
-                    contact = repo.get(Contact, attempt.contact_id)
                     direction, duration = "inbound", attempt.duration_seconds
                 else:
                     attempt = repo.get(Attempt, UUID(payload["attempt_id"]))
                     item = repo.get(CampaignItem, attempt.item_id)
-                    contact = repo.get(Contact, item.contact_id)
+                    contact = repo.get(Contact, item.contact_id) if item.contact_id else None
+                    deleted = attempt.agent_result or {}
                     widget_call = db.scalar(repo.query(WidgetCall).where(WidgetCall.campaign_id == item.campaign_id))
                     is_widget_call = widget_call is not None
                     widget_context = (widget_call.crm_context or {}) if widget_call else {}
@@ -650,9 +651,11 @@ class Worker:
                         if attempt.ended_at and attempt.answered_at and not (attempt.agent_result or {}).get("duration_unconfirmed")
                         else 0
                     )
-                crm_id = widget_context.get("contact_id") or contact.crm_contact_id
+                crm_id = widget_context.get("contact_id") or (contact.crm_contact_id if contact else deleted.get("crm_contact_id"))
                 status, attempt_id = attempt.status, attempt.id
-                contact_id, phone, name = contact.id, attempt.phone or contact.phone, contact.name
+                contact_id = contact.id if contact else None
+                phone = attempt.phone or (contact.phone if contact else "")
+                name = contact.name if contact else (getattr(attempt, "contact_name", "") or deleted.get("name", ""))
                 created_at = attempt.created_at
                 provider = db.scalar(repo.query(WorkspaceSettings))
                 options = provider.values if provider else {}
@@ -661,7 +664,7 @@ class Worker:
                 crm = self.crm_drivers.get(str(tenant_id))
                 if crm is None:
                     crm = self.crm_drivers[str(tenant_id)] = AmoCRM(runtime_config)
-            if not crm_id and options.get("amo_auto_create_contacts") and not self.injected_crm:
+            if not crm_id and contact_id and options.get("amo_auto_create_contacts") and not self.injected_crm:
                 crm_id = self.resolve_crm_contact(
                     tenant_id,
                     contact_id,

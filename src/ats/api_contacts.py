@@ -135,10 +135,9 @@ def contact_update(
 
 @router.delete("/contacts/{contact_id}", status_code=204)
 def contact_archive(contact_id: UUID, p=Depends(admin), db=Depends(session)):
-    db.scalar(select(Tenant).where(Tenant.id == p.tenant_id).with_for_update())
-    row = TenantRepository(db, p.tenant_id).get(Contact, contact_id, lock=True)
-    row.archived, row.consent, row.blocked = True, False, True
-    audit(db, p, "contact.archived", contact_id)
+    from ats.deletions import delete_contact
+
+    delete_contact(db, p, contact_id)
     db.commit()
 
 

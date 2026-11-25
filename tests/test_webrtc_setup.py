@@ -48,7 +48,7 @@ def test_webrtc_provision_is_idempotent_and_keeps_credentials_private(factory, w
     rejected = subprocess.run([".venv/bin/alembic", "downgrade", "0014"], env=env, capture_output=True, text=True)
     assert rejected.returncode != 0 and "Parallel browser devices exist" in rejected.stderr
     with factory() as db:
-        assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0015"
+        assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0016"
         assert db.query(OperatorDevice).count() == SESSION_SLOTS
 
 

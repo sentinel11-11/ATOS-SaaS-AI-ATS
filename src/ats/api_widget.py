@@ -159,7 +159,7 @@ def projection(db, call):
         state, reason = "ended", "cancelled_by_user"
     elif call.expires_at <= now():
         state, reason = "failed", "widget_queue_timeout"
-    operator = db.get(Operator, call.operator_id)
+    operator = db.get(Operator, call.operator_id) if call.operator_id else None
     context = call.crm_context or {}
     return {
         "ok": True, "call_id": str(call.id), "attempt_id": str(attempt.id) if attempt else None,
@@ -168,9 +168,9 @@ def projection(db, call):
         "duration_sec": max(0, int(((attempt.bridge_ended_at or now()) - attempt.bridged_at).total_seconds()))
         if attempt and attempt.bridged_at and not (attempt.agent_result or {}).get("duration_unconfirmed") else 0,
         "participant": {
-            "operator_id": str(call.operator_id),
+            "operator_id": str(call.operator_id) if call.operator_id else None,
             "amo_user_id": context.get("responsible_user_id") or context.get("amo_user_id"),
-            "operator_name": context.get("responsible_name") or operator.name,
+            "operator_name": context.get("responsible_name") or (operator.name if operator else "Удалённый оператор"),
             "forward_number_masked": context.get("forward_number_masked", ""),
         },
         "context": {key: context.get(key) for key in (
@@ -382,6 +382,8 @@ def agent_disconnect(request: Request, data: DisconnectCommand = Depends(read_di
         raise Problem(403, "amo_widget_origin_rejected")
     db.scalar(select(Tenant).where(Tenant.id == call.tenant_id).with_for_update())
     call = db.scalar(select(WidgetCall).where(WidgetCall.id == data.call_id).with_for_update())
+    if call.operator_id is None:
+        return {"ok": True, "state": "ended"}
     cancel_call(db, call)
     operator = db.get(Operator, call.operator_id)
     actor = Principal(call.tenant_id, operator.user_id, "operator", "browser-session")

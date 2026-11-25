@@ -289,7 +289,9 @@ export default function Contacts({ addToast, refreshKey }) {
       setSelectedContactIds([]);
       loadContacts();
     } else {
-      addToast('Ошибка удаления', 'err');
+      addToast(res?.error === 'finish_contact_calls_first'
+        ? 'У контакта есть незавершённый звонок. Сначала завершите разговор или сверку Asterisk.'
+        : 'Ошибка удаления: ' + (res?.error || '?'), 'err');
     }
   };
 

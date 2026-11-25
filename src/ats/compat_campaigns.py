@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from ats.compat_contacts import legacy_call
 from ats.db import session
-from ats.domain import Problem
+from ats.domain import ACTIVE, Problem
 from ats.models import (
     Attempt,
     Campaign,
@@ -21,6 +21,7 @@ from ats.models import (
     Template,
     Tenant,
     User,
+    WidgetCall,
     now,
 )
 from ats.repositories import TenantRepository
@@ -95,7 +96,8 @@ def _crm_filter_ids(db, repo, data):
 
 def campaign_dict(row, template_name="", counts=None, call_count=0, call_ok=0):
     counts = counts or {}
-    schedule = getattr(row, "schedule", None) or {"start": f"{row.window_start:02d}:00", "end": f"{row.window_end:02d}:00", "days": row.weekdays}
+    schedule = {**(getattr(row, "schedule", None) or {}),
+                "start": f"{row.window_start:02d}:00", "end": f"{row.window_end:02d}:00", "days": row.weekdays}
     return {
         "id": str(row.id), "name": row.name, "template_id": str(row.template_id) if row.template_id else None,
         "template_name": template_name, "flow": row.mode, "route": row.route,
@@ -205,6 +207,12 @@ def campaign_save(data: CampaignSave, p=Depends(admin), db=Depends(session)):
         template = db.scalar(repo.query(Template).where(~Template.archived).order_by(Template.created_at).limit(1))
         template_id = template.id if template else None
     schedule, start, end = _schedule(data.schedule, defaults)
+    widget = db.scalar(repo.query(WidgetCall).where(WidgetCall.campaign_id == row.id)) if row else None
+    if widget:
+        schedule = {**row.schedule, "start": "00:00", "end": "24:00", "days": list(range(7))}
+        start, end = 0, 24
+        if data.operator_id and data.operator_id != widget.operator_id:
+            raise Problem(409, "responsible_changed")
     if data.operator_id:
         operator = repo.get(Operator, data.operator_id)
         user = repo.get(User, operator.user_id)
@@ -219,6 +227,9 @@ def campaign_save(data: CampaignSave, p=Depends(admin), db=Depends(session)):
         retry_max=data.retry_max if data.retry_max >= 0 else int(defaults.get("retry_max", 2)),
         retry_delay_minutes=data.retry_delay_min if data.retry_delay_min > 0 else int(defaults.get("retry_delay_min", 15)),
         connect_on_qualify=data.connect_on_qualify)
+    if widget:
+        command = command.model_copy(update={"route": row.route, "mode": row.mode, "template_id": row.template_id,
+                                             "retry_max": 0, "max_channels": 1})
     if data.scenario:
         Scenario.model_validate(data.scenario)
     if len(data.retry_map) > 30 or any(not isinstance(k, str) or len(k) > 80 or not isinstance(v, int) or isinstance(v, bool) or not 0 <= v <= 1440 for k, v in data.retry_map.items()):
@@ -331,6 +342,9 @@ def campaign_pause(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
 def campaign_stop(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
     row = lock_campaign(db, p, campaign_id)
     row.status = "draft"
+    call = db.scalar(TenantRepository(db, p.tenant_id).query(WidgetCall).where(WidgetCall.campaign_id == row.id))
+    if call:
+        call.cancel_requested = True
     for item in db.scalars(TenantRepository(db, p.tenant_id).query(CampaignItem).where(CampaignItem.campaign_id == row.id, CampaignItem.status == "queued").with_for_update()):
         item.status = "cancelled"
     audit(db, p, "campaign.stopped", row.id)
@@ -370,7 +384,19 @@ def campaign_clear(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
 @router.post("/campaigns/{campaign_id}/delete")
 def campaign_delete(campaign_id: UUID, p=Depends(admin), db=Depends(session)):
     row = lock_campaign(db, p, campaign_id)
-    require_idle(db, row)
+    active = db.scalar(TenantRepository(db, p.tenant_id).query(Attempt).join(
+        CampaignItem, CampaignItem.id == Attempt.item_id,
+    ).where(CampaignItem.campaign_id == row.id, Attempt.status.in_(ACTIVE)).limit(1))
+    if active:
+        raise Problem(409, "finish_operator_calls_first")
+    call = db.scalar(TenantRepository(db, p.tenant_id).query(WidgetCall).where(WidgetCall.campaign_id == row.id))
+    if call:
+        call.cancel_requested = True
+    for item in db.scalars(TenantRepository(db, p.tenant_id).query(CampaignItem).where(
+        CampaignItem.campaign_id == row.id, CampaignItem.status == "queued",
+    )):
+        item.status = "cancelled"
+    row.status = "completed"
     row.archived = True
     audit(db, p, "campaign.archived", row.id)
     db.commit()

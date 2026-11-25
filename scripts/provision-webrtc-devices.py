@@ -47,8 +47,8 @@ def main():
     if not config.amo_tenant_id or config.amo_tenant_id != config.telephony_tenant_id:
         parser.error("Bind amoCRM and telephony to the same tenant before provisioning")
     with session_factory()() as db:
-        if db.scalar(text("SELECT version_num FROM alembic_version")) != "0015":
-            parser.error("Update the beta database to schema 0015 first")
+        if db.scalar(text("SELECT version_num FROM alembic_version")) != "0016":
+            parser.error("Update the beta database to schema 0016 first")
         devices = provision(db, config.amo_tenant_id)
         if not devices:
             parser.error("No active operator users in the configured tenant")

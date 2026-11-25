@@ -1,7 +1,7 @@
 import hashlib
 import json
 from datetime import timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -212,27 +212,13 @@ def schedule_one(db, tenant_id):
         .select_from(Attempt)
         .where(Attempt.tenant_id == tenant_id, Attempt.status.in_(ACTIVE))
     )
-    if active >= tenant.max_channels:
-        return False
-    start_day = (
-        now()
-        .astimezone(ZoneInfo(tenant.timezone))
-        .replace(hour=0, minute=0, second=0, microsecond=0)
-    )
-    today = db.scalar(
-        select(func.count())
-        .select_from(Attempt)
-        .where(Attempt.tenant_id == tenant_id, Attempt.created_at >= start_day)
-    )
-    if today >= tenant.daily_limit:
-        return False
     for campaign in db.scalars(
         repo.query(Campaign)
         .where(Campaign.status == "running", ~Campaign.archived)
         .order_by(Campaign.created_at)
     ).all():
         schedule = campaign.schedule or {}
-        widget_call = db.get(WidgetCall, UUID(schedule["widget_call_id"])) if schedule.get("widget_call_id") else None
+        widget_call = db.scalar(repo.query(WidgetCall).where(WidgetCall.campaign_id == campaign.id))
         if widget_call and (widget_call.cancel_requested or widget_call.expires_at <= now()):
             dispatched = db.scalar(repo.query(Attempt).join(CampaignItem, CampaignItem.id == Attempt.item_id).where(
                 CampaignItem.campaign_id == campaign.id, Attempt.status.in_(ACTIVE - {"prepared"}),
@@ -249,9 +235,11 @@ def schedule_one(db, tenant_id):
                 for member in db.scalars(repo.query(CampaignItem).where(CampaignItem.campaign_id == campaign.id, CampaignItem.status == "queued")):
                     member.status = "cancelled"
             continue
+        if active >= tenant.max_channels:
+            continue
         if (
-            not campaign.window_start <= hour < campaign.window_end
-            or now().astimezone(ZoneInfo(tenant.timezone)).weekday() not in campaign.weekdays
+            not widget_call and (not campaign.window_start <= hour < campaign.window_end
+            or now().astimezone(ZoneInfo(tenant.timezone)).weekday() not in campaign.weekdays)
         ):
             continue
         count = db.scalar(

@@ -3,7 +3,7 @@
 import re
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from ats.domain import ACTIVE, DIAL_STATUSES, Problem
 from ats.models import (
@@ -84,8 +84,8 @@ def authorize_customer(db, attempt, config):
     if (
         not config.live_calls_enabled or config.telephony_tenant_id != tenant.id
         or campaign.status != "running" or campaign.archived
-        or not campaign.window_start <= local.hour < campaign.window_end
-        or local.weekday() not in campaign.weekdays
+        or (not widget and (not campaign.window_start <= local.hour < campaign.window_end
+                            or local.weekday() not in campaign.weekdays))
         or contact.phone != attempt.phone or not contact.consent or contact.blocked or contact.archived
         or db.scalar(select(BlacklistEntry.id).where(
             BlacklistEntry.tenant_id == tenant.id, BlacklistEntry.phone == contact.phone,
@@ -102,11 +102,9 @@ def authorize_customer(db, attempt, config):
     rules = config.ami_operator_number_map
     if rules and attempt.caller_number not in rules.get(str(operator.extension), []):
         return False
-    day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
-    usage = db.scalar(select(func.coalesce(func.sum(Attempt.channel_units), 0)).where(
-        Attempt.tenant_id == tenant.id, Attempt.caller_number == attempt.caller_number,
-        Attempt.created_at >= day_start,
-    ))
+    from ats.caller_quota import usages
+
+    usage = usages(db, tenant.id, [number]).get(number.phone, 0)
     if usage > number.daily_limit:
         return False
     try:

@@ -149,11 +149,15 @@ def test_weight_does_not_override_number_eligibility_or_quota(factory, prepared,
         assert select_caller(db, tenant, "multicom_ami", settings()) == rows[5].phone
 
 
-def test_rotation_uses_tenant_midnight_for_daily_quota(factory, prepared, tenants, monkeypatch):
+def test_midnight_does_not_reset_a_numbers_usage_cycle(factory, prepared, tenants, monkeypatch):
+    from ats.domain import Problem
+
     current = datetime(2026, 11, 21, 21, 5, tzinfo=UTC)
     monkeypatch.setattr("ats.workspace_service.now", lambda: current)
     with factory.begin() as db:
         rows = add_numbers(db, tenants[0], cooldown=0, daily_limit=1)
+        for row in rows:
+            row.quota_started_at = current - timedelta(hours=1)
         tenant = db.scalar(select(Tenant).where(Tenant.id == tenants[0]).with_for_update())
         tenant.timezone = "Europe/Moscow"
         item = db.scalar(select(CampaignItem))
@@ -164,7 +168,9 @@ def test_rotation_uses_tenant_midnight_for_daily_quota(factory, prepared, tenant
                 created_at=current - timedelta(minutes=10 if ordinal == 1 else 1),
             ))
         db.flush()
-        assert select_caller(db, tenant, "multicom_ami", settings()) == rows[0].phone
+        with pytest.raises(Problem, match="caller_pool_exhausted"):
+            select_caller(db, tenant, "multicom_ami", settings())
+        assert all(row.quota_cooldown_until == current + timedelta(hours=1) for row in rows)
 
 
 def test_rolled_back_allocation_does_not_consume_cooldown_or_quota(factory, prepared, tenants):

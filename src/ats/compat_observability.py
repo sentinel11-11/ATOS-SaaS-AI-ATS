@@ -97,14 +97,16 @@ def legacy_calls_query(p):
             func.coalesce(
                 case((WidgetCall.operator_id == Operator.id,
                       func.nullif(WidgetCall.crm_context["responsible_name"].as_string(), ""))),
-                func.nullif(Operator.name, ""), "",
+                func.nullif(Operator.name, ""),
+                func.nullif(WidgetCall.crm_context["responsible_name"].as_string(), ""),
+                func.nullif(Attempt.route_snapshot["operator_name"].as_string(), ""), "",
             ).label("operator_name"),
         )
         .join(
             CampaignItem,
             (CampaignItem.id == Attempt.item_id) & (CampaignItem.tenant_id == Attempt.tenant_id),
         )
-        .join(
+        .outerjoin(
             Contact,
             (Contact.id == CampaignItem.contact_id) & (Contact.tenant_id == Attempt.tenant_id),
         )
@@ -124,7 +126,7 @@ def legacy_calls_query(p):
             literal("inbound"),
             InboundCall.created_at,
             case((InboundCall.status.not_in(_LIVE_INBOUND), InboundCall.updated_at), else_=None),
-            func.coalesce(Contact.name, ""),
+            func.coalesce(Contact.name, InboundCall.contact_snapshot["name"].as_string(), ""),
             InboundCall.phone,
             cast(InboundCall.contact_id, String),
             InboundCall.destination,
@@ -479,7 +481,9 @@ def dashboard(p=Depends(principal), db=Depends(session)):
             CallerNumber.enabled & CallerNumber.verified & ~CallerNumber.quarantined
         )).where(CallerNumber.tenant_id == p.tenant_id)
     ).one()
-    operators = db.scalars(repo.query(Operator).order_by(Operator.name).limit(1000)).all()
+    operators = db.scalars(repo.query(Operator).join(
+        User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id)
+    ).where(User.active, ~User.archived, User.role == "operator").order_by(Operator.name).limit(1000)).all()
     items = dict(db.execute(
         select(CampaignItem.status, func.count()).where(CampaignItem.tenant_id == p.tenant_id)
         .group_by(CampaignItem.status)
