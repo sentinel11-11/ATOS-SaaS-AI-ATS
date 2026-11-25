@@ -61,6 +61,17 @@ scp root@89.223.127.145:/opt/ats-beta/widget.zip "%USERPROFILE%\Downloads\ATOS-a
 
 ## 1. Обновить VPS
 
+Если приложение уже вернуло `ready`, а `install-widget-webrtc.py` остановился с `PermissionError: '.env'`, установка запускалась из каталога, недоступного сервисному пользователю (например, `/root`). Исправленный установщик задаёт рабочий каталог проекта до запуска `ats-beta` и передаёт абсолютные пути файлов. Завершить подготовку существующей установки после окончания разговоров:
+
+```bash
+cd /opt/ats-beta &&
+runuser -u ats-beta -- git pull --ff-only origin main &&
+.venv/bin/python scripts/install-widget-webrtc.py &&
+asterisk -rx 'pjsip reload'
+```
+
+Готовность подтверждают строки `Prepared … private browser devices` и `WebRTC files prepared`. ZIP остаётся версии 5.4.0; после подготовки устройств можно установить его в amoCRM.
+
 Выполнять **root на VPS**, когда тестовые разговоры завершены. Не копировать приглашение `root@...#` и строки с тройными обратными кавычками.
 
 ```bash

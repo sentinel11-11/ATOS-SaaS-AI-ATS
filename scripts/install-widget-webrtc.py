@@ -105,6 +105,19 @@ def environment(original, domain):
     return "\n".join(lines + [f'{key}="{value}"' for key, value in updates.items()]) + "\n"
 
 
+def export_devices(env_file, private_output):
+    project = Path(__file__).resolve().parents[1]
+    # runuser inherits root's working directory. Settings checks .env even when
+    # the explicit service env file has already been loaded; /root is not
+    # searchable by ats-beta. Change cwd before dropping privileges, and keep
+    # caller-relative paths absolute so their meaning does not change.
+    subprocess.run([
+        "runuser", "-u", "ats-beta", "--", str(project / ".venv/bin/python"),
+        str(project / "scripts/provision-webrtc-devices.py"),
+        "--env-file", str(env_file.resolve()), "--private-output", str(private_output.resolve()),
+    ], cwd=project, check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, default=Path("/etc/ats-beta/ats.env"))
@@ -144,12 +157,10 @@ def main():
         addon = args.asterisk_dir / "http-ats-beta-webrtc.conf"
         if addon.exists() and not addon.read_text().startswith(MARKER):
             raise PreparationError("Existing HTTP addition is not managed by ATOS")
-        helper = Path(__file__).with_name("provision-webrtc-devices.py").resolve()
         with tempfile.TemporaryDirectory(prefix="ats-webrtc-", dir="/tmp") as directory:
             os.chown(directory, account.pw_uid, account.pw_gid)
             private = Path(directory) / "devices.json"
-            subprocess.run(["runuser", "-u", "ats-beta", "--", str(Path(__file__).parents[1] / ".venv/bin/python"),
-                            str(helper), "--env-file", str(args.env_file), "--private-output", str(private)], check=True)
+            export_devices(args.env_file, private)
             content = render_devices(json.loads(private.read_text()), domain)
             private.unlink()
         general = "[general](+)" if re.search(r"^\s*\[general\]", http_before, re.MULTILINE) else "[general]"

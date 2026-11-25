@@ -1,5 +1,7 @@
 import importlib.util
+import json
 import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -65,3 +67,41 @@ def test_webrtc_configuration_cannot_dial_pstn_and_preserves_env():
     assert installer.with_include(include, "private.conf") == include
     with pytest.raises(ValueError):
         installer.render_devices([{"endpoint": endpoint, "username": endpoint, "password": "bad\ninjection"}], "localhost")
+
+
+def test_webrtc_export_runs_real_helper_outside_an_inaccessible_callers_directory(factory, widget, monkeypatch, tmp_path):
+    installer = script("install-widget-webrtc.py")
+    project = Path(__file__).resolve().parents[1]
+    private = tmp_path / "devices.json"
+    env_file = tmp_path / "service.env"
+    env_file.write_text("ATS_DATABASE_URL=" + os.environ["ATS_TEST_DATABASE_URL"] + "\n"
+                        "ATS_TELEPHONY_TENANT_ID=" + str(widget["tenant_id"]) + "\n")
+    env_file.chmod(0o600)
+    blocked = tmp_path / "root-home"
+    blocked.mkdir()
+    (blocked / ".env").write_text("ATS_DATABASE_URL=invalid-caller-config\n")
+    run = subprocess.run
+    invocations = []
+
+    def service_user_run(command, **kwargs):
+        # The test process already runs without root privileges. Keep the real
+        # helper, config loading, PostgreSQL writes and private output; replace
+        # only runuser, which needs the VPS's OS account and root permissions.
+        assert command[:5] == ["runuser", "-u", "ats-beta", "--", str(project / ".venv/bin/python")]
+        invocations.append(kwargs)
+        return run(command[4:], **kwargs, capture_output=True, text=True)
+
+    monkeypatch.setattr(installer.subprocess, "run", service_user_run)
+    monkeypatch.chdir(blocked)
+    blocked.chmod(0)
+    try:
+        if os.geteuid() != 0:
+            with pytest.raises(PermissionError):
+                Path(".env").is_file()
+        installer.export_devices(env_file, private)
+    finally:
+        blocked.chmod(0o700)
+    assert invocations == [{"cwd": project, "check": True}]
+    devices = json.loads(private.read_text())
+    assert len(devices) == 8
+    assert stat.S_IMODE(private.stat().st_mode) == 0o600
