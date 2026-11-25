@@ -630,6 +630,7 @@ class Worker:
             with self.factory() as db:
                 repo = TenantRepository(db, tenant_id)
                 widget_context = {}
+                is_widget_call = False
                 if "inbound_id" in payload:
                     attempt = repo.get(InboundCall, UUID(payload["inbound_id"]))
                     if not attempt.contact_id:
@@ -641,6 +642,7 @@ class Worker:
                     item = repo.get(CampaignItem, attempt.item_id)
                     contact = repo.get(Contact, item.contact_id)
                     widget_call = db.scalar(repo.query(WidgetCall).where(WidgetCall.campaign_id == item.campaign_id))
+                    is_widget_call = widget_call is not None
                     widget_context = (widget_call.crm_context or {}) if widget_call else {}
                     direction = "outbound"
                     duration = (
@@ -684,7 +686,7 @@ class Worker:
                     payload.get("recording_url"),
                     source=getattr(attempt, "route", "ATS"),
                 )
-                if options.get("amo_auto_create_tasks"):
+                if options.get("amo_auto_create_tasks") and not is_widget_call:
                     crm.create_task(
                         attempt_id,
                         widget_context.get("entity_id") or crm_id,

@@ -584,10 +584,9 @@ def test_widget_reuses_an_admitted_phone_and_delivers_to_the_verified_crm_contac
         assert db.scalar(select(func.count()).select_from(Contact)) == 1
 
 
-@pytest.mark.parametrize("entity_type,entity_id", [("leads", 101), ("contacts", 123), ("companies", 202)])
-def test_widget_result_task_uses_source_entity_and_actual_participant(factory, widget, entity_type, entity_id):
+@pytest.fixture
+def auto_crm_tasks(factory, widget):
     from ats.models import WorkspaceSettings
-    from ats.services import finish_attempt
 
     with factory.begin() as db:
         row = db.scalar(select(WorkspaceSettings).where(WorkspaceSettings.tenant_id == widget["tenant_id"]))
@@ -595,17 +594,31 @@ def test_widget_result_task_uses_source_entity_and_actual_participant(factory, w
             row.values = {**row.values, "amo_auto_create_tasks": True}
         else:
             db.add(WorkspaceSettings(tenant_id=widget["tenant_id"], values={"amo_auto_create_tasks": True}))
-    call_id = create(widget, payload(entity_type=entity_type, entity_id=entity_id))["call_id"]
+
+
+@pytest.mark.parametrize("entity_type,entity_id", [("leads", 101), ("contacts", 123), ("companies", 202)])
+@pytest.mark.parametrize("mode", ["forward", "browser"])
+@pytest.mark.parametrize("status", ["completed", "failed"])
+def test_widget_delivers_call_and_result_without_automatic_task(
+    factory, widget, browser_agent, auto_crm_tasks, entity_type, entity_id, mode, status,
+):
+    from ats.services import finish_attempt
+
+    call_id = create(widget, payload(entity_type=entity_type, entity_id=entity_id,
+        mode=mode, protocol_version=3, session_id=browser_agent))["call_id"]
     widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
     worker = Worker(factory)
     worker.schedule()
+    recording = "https://ats.example.invalid/recording.wav"
     with factory.begin() as db:
-        finish_attempt(db, db.scalar(select(Attempt)), "failed", "fixture_finished")
-    tasks, registrations = [], []
+        attempt = db.scalar(select(Attempt))
+        attempt.agent_result = {**attempt.agent_result, "recording_url": recording}
+        finish_attempt(db, attempt, status, "fixture_finished")
+    tasks, registrations, results = [], [], []
 
     class Delivery:
         def send(self, *args):
-            pass
+            results.append(args)
 
         def register_call(self, *args, **kwargs):
             registrations.append(args)
@@ -615,9 +628,40 @@ def test_widget_result_task_uses_source_entity_and_actual_participant(factory, w
 
     worker.crm = Delivery()
     assert worker.crm_job()
+    assert results[0][1:] == (123, status)
+    assert registrations[0][2] == status
     assert registrations[0][5] == 7654321
-    assert tasks[0][0][1] == entity_id and tasks[0][0][3] == 7654321
-    assert tasks[0][1] == {"entity_type": entity_type}
+    assert registrations[0][7] == recording
+    assert tasks == []
+    with factory() as db:
+        assert db.scalar(select(Outbox).where(Outbox.kind == "crm")).status == "done"
+
+
+def test_campaign_automatic_crm_tasks_still_follow_existing_setting(factory, widget, auto_crm_tasks):
+    from ats.services import finish_attempt
+
+    with factory.begin() as db:
+        db.get(Campaign, widget["campaign_id"]).status = "running"
+    worker = Worker(factory)
+    worker.schedule()
+    with factory.begin() as db:
+        finish_attempt(db, db.scalar(select(Attempt)), "failed", "fixture_finished")
+    tasks = []
+
+    class Delivery:
+        def send(self, *args):
+            pass
+
+        def register_call(self, *args, **kwargs):
+            pass
+
+        def create_task(self, *args, **kwargs):
+            tasks.append((args, kwargs))
+
+    worker.crm = Delivery()
+    assert worker.crm_job()
+    assert len(tasks) == 1 and tasks[0][0][1] == 123
+    assert tasks[0][1] == {"entity_type": "contacts"}
 
 
 def test_widget_refuses_a_phone_changed_while_queued_before_reserving_resources(factory, widget):
