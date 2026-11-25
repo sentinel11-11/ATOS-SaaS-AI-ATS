@@ -42,7 +42,7 @@ from ats.workspace_schemas import (
     AmoWidgetCard,
     AmoWidgetClickToCall,
 )
-from ats.workspace_service import block_crm_contacts
+from ats.workspace_service import admit_crm_contact, block_crm_contacts
 
 router = APIRouter(prefix="/api/v1/workspace/amo", tags=["amocrm"])
 public_router = APIRouter(tags=["amocrm"])
@@ -443,6 +443,8 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
             if item.contact_id:
                 existing = repo.get(Contact, item.contact_id, lock=True)
                 existing.crm_context = item.crm_context or {}
+                admit_crm_contact(db, existing, p.user_id)
+                item.consent = existing.consent
                 item.applied = True
             continue
         if item.action in {"archive", "block"}:
@@ -463,9 +465,7 @@ def sync_confirm(job_id: UUID, data: AmoSyncConfirm, p=Depends(admin), db=Depend
             existing.name, existing.phone, existing.email, existing.group = item.name, item.phone, item.email, item.group
             existing.source, existing.crm_contact_id = item.source, item.crm_contact_id
             existing.crm_context = item.crm_context or {}
-            # Preserve an explicit opt-out on an existing contact.
-            if existing.consent:
-                existing.consent_source = data.consent_source
+        admit_crm_contact(db, existing, p.user_id)
         item.contact_id, item.applied, item.consent = existing.id, True, existing.consent
     job.status, job.updated_at = "completed", now()
     db.add(Audit(tenant_id=p.tenant_id, actor_id=p.user_id, action="amo.sync.confirm", entity_id=job.id))

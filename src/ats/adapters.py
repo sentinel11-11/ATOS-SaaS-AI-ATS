@@ -4,6 +4,7 @@ import re
 import socket
 import ssl
 import threading
+from time import monotonic
 from uuid import uuid4
 
 import httpx
@@ -454,6 +455,7 @@ class AMI:
         self.sock = None
         self.reader = None
         self.pending = {}
+        self.event_lists = {}
         self.lock = threading.RLock()
         self.write_lock = threading.Lock()
 
@@ -524,6 +526,38 @@ class AMI:
             with self.lock:
                 self.pending.pop(action_id, None)
 
+    def channels(self):
+        """Return only a complete, correlated CoreShowChannels snapshot."""
+        action_id = str(uuid4())
+        frames = queue.Queue(maxsize=4097)
+        with self.lock:
+            self.event_lists[action_id] = frames
+        try:
+            self.action("CoreShowChannels", [], action_id=action_id)
+            result = []
+            deadline = monotonic() + 10
+            while True:
+                try:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise Retryable("ami_channel_snapshot_incomplete")
+                    frame = frames.get(timeout=remaining)
+                except queue.Empty as exc:
+                    raise Retryable("ami_channel_snapshot_incomplete") from exc
+                if frame.get("Event") == "CoreShowChannelsComplete":
+                    if str(len(result)) != frame.get("ListItems"):
+                        raise Retryable("ami_channel_snapshot_incomplete")
+                    identities = {(row.get("Channel"), row.get("Uniqueid")) for row in result}
+                    if len(identities) != len(result) or any(not all(row) for row in identities):
+                        raise Retryable("ami_channel_snapshot_invalid")
+                    return result
+                if frame.get("Event") != "CoreShowChannel" or len(result) >= 4096:
+                    raise Retryable("ami_channel_snapshot_invalid")
+                result.append(frame)
+        finally:
+            with self.lock:
+                self.event_lists.pop(action_id, None)
+
     def _read(self, raw):
         try:
             with raw.makefile("rb") as stream:
@@ -534,6 +568,10 @@ class AMI:
                         raise OSError("AMI frame limit")
                     if line in {b"\r\n", b"\n"}:
                         if "Event" in frame:
+                            with self.lock:
+                                collector = self.event_lists.get(frame.get("ActionID"))
+                            if collector is not None:
+                                collector.put_nowait(frame)
                             self.on_event(frame)
                         elif "Response" in frame:
                             with self.lock:

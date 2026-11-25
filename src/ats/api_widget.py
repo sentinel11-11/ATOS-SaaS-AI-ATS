@@ -21,7 +21,6 @@ from ats.db import session
 from ats.domain import ACTIVE, Problem
 from ats.models import (
     Attempt,
-    BlacklistEntry,
     Campaign,
     CampaignItem,
     Contact,
@@ -36,7 +35,7 @@ from ats.webrtc import check_device, device_for, ice_servers, password_for
 from ats.widget_auth import widget_principal
 from ats.widget_context import browser_online, manager_context, read_call_card, read_responsible
 from ats.workspace_schemas import ContactEdit
-from ats.workspace_service import audit, save_contact
+from ats.workspace_service import admit_crm_contact, audit, save_contact
 
 router = APIRouter(prefix="/api/v1/amo/widget/v2", tags=["signed amoCRM widget"])
 assets_router = APIRouter(tags=["widget assets"])
@@ -141,8 +140,9 @@ def projection(db, call):
     return {
         "ok": True, "call_id": str(call.id), "attempt_id": str(attempt.id) if attempt else None,
         "state": state, "reason": reason, "mode": call.mode,
+        "cancel_requested": call.cancel_requested,
         "duration_sec": max(0, int(((attempt.bridge_ended_at or now()) - attempt.bridged_at).total_seconds()))
-        if attempt and attempt.bridged_at else 0,
+        if attempt and attempt.bridged_at and not (attempt.agent_result or {}).get("duration_unconfirmed") else 0,
         "participant": {
             "operator_id": str(call.operator_id),
             "amo_user_id": context.get("responsible_user_id") or context.get("amo_user_id"),
@@ -389,13 +389,6 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
         Contact.tenant_id == auth.p.tenant_id, Contact.phone == phone,
     ).with_for_update())
     if contact is None:
-        previous = db.scalars(select(Contact).where(
-            Contact.tenant_id == auth.p.tenant_id,
-            Contact.crm_contact_id == data.crm_contact_id,
-        ).with_for_update()).all()
-        if any(row.archived or row.blocked or not row.consent
-               or not row.consent_source.strip() for row in previous):
-            raise Problem(409, "no_consent")
         contact = save_contact(db, auth.p, ContactEdit(
             name=imported["name"] or "Без имени", phone=phone,
             email=imported["email"], group=imported["group"],
@@ -404,12 +397,9 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
         contact.source = "amoCRM"
         contact.tags = imported["tag_names"]
         contact.crm_context = contact_context(imported, {}, {}, {})
-    blacklisted = db.scalar(select(BlacklistEntry.id).where(
-        BlacklistEntry.tenant_id == auth.p.tenant_id, BlacklistEntry.phone == phone,
-    ))
-    if (contact.archived or not contact.consent or contact.blocked
-        or not contact.consent_source.strip() or blacklisted):
-        raise Problem(409, "no_consent")
+    admit_crm_contact(db, contact, auth.p.user_id, restore_for_call=True)
+    if contact.blocked:
+        raise Problem(409, "contact_blacklisted")
     if contact.crm_contact_id is None:
         # The live CRM contact, selected phone and card link were verified above.
         # Bind this admitted local number without rewriting another contact's identity.

@@ -309,7 +309,7 @@ def test_concurrent_amo_webhooks_enqueue_one_sync_job(logged, factory, tenants, 
         assert db.scalar(select(func.count()).select_from(Outbox).where(Outbox.kind == "crm_sync")) == 1
 
 
-def test_crm_import_finds_hidden_phone_and_preserves_its_restrictions(
+def test_crm_import_grants_consent_and_preserves_archive_until_an_explicit_call(
     logged, factory, sync_crm
 ):
     crm, worker = sync_crm
@@ -333,7 +333,8 @@ def test_crm_import_finds_hidden_phone_and_preserves_its_restrictions(
     assert worker.crm_sync_job()
     with factory() as db:
         row = db.get(Contact, UUID(saved["id"]))
-        assert row.archived and row.blocked and not row.consent
+        assert row.archived and row.blocked and row.consent
+        assert row.consent_source == "amoCRM"
         assert row.crm_contact_id == 123
         assert db.scalar(select(func.count()).select_from(Contact)) == 1
 

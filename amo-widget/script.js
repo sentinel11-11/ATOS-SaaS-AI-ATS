@@ -5,7 +5,7 @@ define(['jquery'], function ($) {
     if(window.RATSPhoneWidget)return window.RATSPhoneWidget;
     var self = this;
     window.RATSPhoneWidget=self;
-    var VERSION = '5.3.0';
+    var VERSION = '5.3.1';
     var ROOT = 'rats-widget-root';
     var alive = false;
     var wired = false;
@@ -55,7 +55,7 @@ define(['jquery'], function ($) {
       responsible_changed: 'Ответственный изменился. Обновите карточку и повторите звонок',
       responsible_browser_offline: 'Ответственный должен открыть amoCRM и подключить браузерный телефон',
       widget_upgrade_required: 'Обновите виджет и перезагрузите страницы amoCRM',
-      agent_in_another_tab: 'Приём звонков подключён в другой вкладке amoCRM',
+      agent_in_another_tab: 'Приём звонков подключён в другой сессии amoCRM (вкладке или на другом компьютере)',
       agent_session_lost: 'Подключение браузерного телефона обновляется',
       browser_call_mismatch: 'Вызов не относится к этому браузеру',
       invalid_rats_url: 'Укажите публичный HTTPS-адрес ATOS в настройках виджета',
@@ -85,6 +85,7 @@ define(['jquery'], function ($) {
       caller_number_unavailable: 'Выбранный А-номер временно недоступен',
       channel_limit: 'Достигнут лимит каналов транка',
       no_consent: 'Контакт не разрешён для исходящих звонков',
+      contact_blacklisted: 'Номер находится в чёрном списке ATOS. Согласие amoCRM не снимает запрет чёрного списка',
       destination_not_allowed: 'Номер клиента недоступен для звонка',
       browser_endpoint_not_ready: 'WebRTC сотрудника ещё не настроен',
       forward_number_not_set: 'Не привязан телефон сотрудника для переадресации',
@@ -212,8 +213,9 @@ define(['jquery'], function ($) {
       api('/me','GET').then(function (res) {
         if (!alive) return;
         principal = res;
-        if (res && res.initiated_call && res.initiated_call.call_id && !callId) {
-          callId = String(res.initiated_call.call_id); callState = res.initiated_call.state; callingStatus(true);
+        var active=res&&(res.initiated_call||res.active_call);
+        if (active && active.call_id && !callId) {
+          callId = String(active.call_id); callState = active.state; callingStatus(true);
           if (!refreshTimer) refreshTimer = setInterval(refreshCall, 1800); refreshCall();
         }
         if (res && res.browser_available) sipConnect().catch(function () {});
@@ -469,14 +471,15 @@ define(['jquery'], function ($) {
       api('/calls/'+encodeURIComponent(id),'GET').then(function(result){
         if(callId!==id)return;
         callState=result.state||callState;
-        if (callState !== 'ended' && callState !== 'failed') signalMediaReady();
+        if(result.cancel_requested && callState==='reconciliation_required')callState='ending';
+        if (!result.cancel_requested && callState !== 'ended' && callState !== 'failed') signalMediaReady();
         if(callState==='ended'||callState==='failed'){
           setStatus(callState==='ended'?'Звонок завершён':serverError({code:result.reason})||'Звонок завершился ошибкой');
           callId=null;requestId=null;requestBody=null;mediaReadySent=false;callingStatus(!!sipSession);
           if(sipSession&&receiveCall&&receiveCall.call_id===id)try{sipSession.terminate();}catch(ignore){}
           if(localStream&&!receiveCall){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
           if(refreshTimer)clearInterval(refreshTimer);refreshTimer=null;
-        }else { statusMessage=({ringing_operator:'Вызов менеджера',ringing_customer:'Вызываем клиента',connected:'Разговор с клиентом'})[callState]||'Ожидаем ответа';draw(); }
+        }else { statusMessage=({ringing_operator:'Вызов менеджера',ringing_customer:'Вызываем клиента',connected:'Разговор с клиентом',ending:'Проверяем завершение звонка в Asterisk'})[callState]||'Ожидаем ответа';draw(); }
       }).catch(function(e){if(e.status===401){principal=null;setError(serverError(e));}})
         .then(function(){pollInFlight=false;draw();});
     }
@@ -544,7 +547,7 @@ define(['jquery'], function ($) {
         '<button class="rats-hangup rats-danger" type="button" disabled>Завершить разговор</button>' +
         '<button class="rats-refresh rats-text" type="button">Обновить контакт</button></div>' +
         '<div class="rats-call"><span class="rats-call-state">Нет разговора</span><small class="rats-call-id"></small></div>' +
-        '<div class="rats-status" role="status" aria-live="polite"></div><div class="rats-footer">RATS · Remote Automatic Telephone System</div></section>';
+        '<div class="rats-status" role="status" aria-live="polite"></div><div class="rats-footer">RATS '+VERSION+' · Remote Automatic Telephone System</div></section>';
     }
     function loadStyles() {
       var s=settings(),path=String(s.path||(self.params&&self.params.path)||'').replace(/\/+$/,'');

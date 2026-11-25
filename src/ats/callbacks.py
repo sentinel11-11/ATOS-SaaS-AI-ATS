@@ -132,9 +132,17 @@ def queue_hangup(db, attempt):
         CallLeg.attempt_id == attempt.id, CallLeg.role == "operator", CallLeg.channel != "",
     ))
     key = f"hangup:{attempt.id}"
-    if channel and not db.scalar(select(Outbox.id).where(Outbox.tenant_id == attempt.tenant_id, Outbox.dedupe_key == key)):
+    existing = db.scalar(select(Outbox).where(Outbox.tenant_id == attempt.tenant_id, Outbox.dedupe_key == key))
+    payload = {"attempt_id": str(attempt.id), "command": "hangup", "channel": channel or ""}
+    if existing and existing.status in {"done", "dead", "unknown"}:
+        # An explicit retry must be useful after a missing channel, lost AMI
+        # response or a previous Hangup acknowledgement with missing events.
+        existing.status, existing.available_at, existing.last_error = "pending", now(), ""
+        existing.lease_token, existing.lease_until = None, None
+        existing.payload = payload
+    elif not existing:
         db.add(Outbox(tenant_id=attempt.tenant_id, kind="control", dedupe_key=key,
-                      payload={"attempt_id": str(attempt.id), "command": "hangup", "channel": channel}))
+                      payload=payload))
 
 
 def _uncertain(db, attempt, reason):

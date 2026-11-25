@@ -57,6 +57,25 @@ it('keeps calling disabled until the signed identity has arrived', async () => {
   expect(document.querySelector('.rats-user').textContent).toBe('Manager');
 });
 
+it('lets the participant cancel their active call from another computer and waits for confirmed termination', async () => {
+  let cancelled=false, ended=false;
+  const signed=mount(options => {
+    if(pathOf(options).endsWith('/me'))return {...identity,active_call:{call_id:'owned-call',state:'reconciliation_required'}};
+    if(pathOf(options).endsWith('/hangup')){cancelled=true;return {ok:true,state:'ending'};}
+    return {call_id:'owned-call',state:ended?'ended':'reconciliation_required',cancel_requested:cancelled};
+  });
+  await flush();
+  expect(document.querySelector('.rats-hangup').disabled).toBe(false);
+  document.querySelector('.rats-hangup').click();await flush();
+  expect(signed.mock.calls.some(([o])=>pathOf(o).endsWith('/owned-call/hangup'))).toBe(true);
+  await vi.advanceTimersByTimeAsync(1800);
+  expect(document.querySelector('.rats-call-state').textContent).toBe('Завершаем');
+  expect(document.querySelector('.rats-start').disabled).toBe(true);
+  ended=true;await vi.advanceTimersByTimeAsync(1800);
+  expect(document.querySelector('.rats-call-state').textContent).toBe('Завершён');
+  expect(document.querySelector('.rats-hangup').disabled).toBe(true);
+});
+
 it('double click creates and starts one request; no keypress is required', async () => {
   const signed = mount(options => pathOf(options).endsWith('/me') ? identity : {call_id: 'call-one', state: 'queued', operator_call_token: 'nonce'});
   await flush();

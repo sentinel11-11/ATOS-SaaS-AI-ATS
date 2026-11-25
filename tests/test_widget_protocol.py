@@ -381,7 +381,7 @@ def test_concurrent_widget_retries_import_one_contact_and_prepare_one_call(facto
 
 
 @pytest.mark.parametrize("restriction", ["archived", "blocked", "no_consent", "blacklist"])
-def test_widget_auto_import_cannot_bypass_restrictions_after_a_phone_change(factory, widget, restriction):
+def test_widget_active_crm_contact_has_consent_after_a_phone_change(factory, widget, restriction):
     with factory.begin() as db:
         contact = db.get(Contact, widget["contact_id"])
         contact.phone = "+79990000999"
@@ -392,10 +392,15 @@ def test_widget_auto_import_cannot_bypass_restrictions_after_a_phone_change(fact
         else:
             setattr(contact, restriction, True)
     response = widget["client"].post("/api/v1/amo/widget/v2/calls", json=payload(), headers=widget["headers"])
-    assert response.status_code == 409 and response.json()["error"] == "no_consent"
-    with factory() as db:
-        assert db.scalar(select(func.count()).select_from(Contact)) == 1
-        assert db.scalar(select(func.count()).select_from(WidgetCall)) == 0
+    if restriction == "blacklist":
+        assert response.status_code == 409 and response.json()["error"] == "contact_blacklisted"
+    else:
+        assert response.status_code == 202, response.text
+        with factory() as db:
+            current = db.scalar(select(Contact).where(Contact.phone == payload()["phone"]))
+            assert current.consent and current.consent_source == "amoCRM"
+            assert not current.blocked and not current.archived
+            assert db.get(Contact, widget["contact_id"]).phone == "+79990000999"
 
 
 def test_widget_auto_import_requires_the_contact_to_belong_to_the_card(factory, widget):
@@ -427,7 +432,7 @@ def test_widget_auto_import_keeps_another_tenants_contact_unchanged(factory, wid
 
 
 @pytest.mark.parametrize("restriction", ["archived", "blocked", "no_consent", "blacklist"])
-def test_widget_contact_resolution_preserves_local_restrictions(factory, widget, restriction):
+def test_verified_crm_call_restores_local_contact_and_consent_except_blacklist(factory, widget, restriction):
     with factory.begin() as db:
         contact = db.get(Contact, widget["contact_id"])
         contact.crm_contact_id = None
@@ -438,10 +443,16 @@ def test_widget_contact_resolution_preserves_local_restrictions(factory, widget,
         else:
             setattr(contact, restriction, True)
     response = widget["client"].post("/api/v1/amo/widget/v2/calls", json=payload(), headers=widget["headers"])
-    assert response.status_code == 409 and response.json()["error"] == "no_consent"
-    with factory() as db:
-        assert db.get(Contact, widget["contact_id"]).crm_contact_id is None
-        assert db.scalar(select(func.count()).select_from(WidgetCall)) == 0
+    if restriction == "blacklist":
+        assert response.status_code == 409 and response.json()["error"] == "contact_blacklisted"
+    else:
+        assert response.status_code == 202, response.text
+        with factory() as db:
+            contact = db.get(Contact, widget["contact_id"])
+            assert contact.consent and contact.consent_source
+            assert not contact.blocked and not contact.archived
+            assert contact.crm_contact_id == 123
+            assert db.scalar(select(func.count()).select_from(WidgetCall)) == 1
 
 
 def test_widget_reuses_an_admitted_phone_and_delivers_to_the_verified_crm_contact(factory, widget):
@@ -540,15 +551,17 @@ def test_crm_deletion_blocks_a_phone_used_via_a_different_local_crm_mapping(fact
         assert contact.crm_contact_id == 456
 
 
-def test_widget_reports_a_blocked_existing_phone_instead_of_a_missing_contact(factory, widget):
+def test_verified_crm_call_restores_an_archived_phone_without_rewriting_its_old_crm_link(factory, widget):
     with factory.begin() as db:
         contact = db.get(Contact, widget["contact_id"])
         contact.crm_contact_id, contact.archived, contact.blocked = 456, True, True
     response = widget["client"].post("/api/v1/amo/widget/v2/calls", json=payload(), headers=widget["headers"])
-    assert response.status_code == 409 and response.json()["error"] == "no_consent"
+    assert response.status_code == 202, response.text
     with factory() as db:
         assert db.get(Contact, widget["contact_id"]).crm_contact_id == 456
-        assert db.scalar(select(func.count()).select_from(WidgetCall)) == 0
+        assert db.scalar(select(func.count()).select_from(WidgetCall)) == 1
+        contact = db.get(Contact, widget["contact_id"])
+        assert contact.consent and not contact.blocked and not contact.archived
 
 
 def test_widget_cannot_bind_a_contact_outside_the_requested_card(factory, widget):

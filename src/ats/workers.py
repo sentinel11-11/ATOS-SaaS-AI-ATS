@@ -39,7 +39,7 @@ from ats.models import (
 )
 from ats.repositories import TenantRepository
 from ats.services import drain_inbox, finish_attempt, ingest, schedule_one, validate_route
-from ats.workspace_service import block_crm_contacts
+from ats.workspace_service import admit_crm_contact, block_crm_contacts
 
 log = logging.getLogger("ats.worker")
 
@@ -549,11 +549,13 @@ class Worker:
         if not job:
             return False
         job_id, token, tenant_id, payload, attempts = job
+        callback_hangup = False
         try:
             with self.factory() as db:
                 call = TenantRepository(db, tenant_id).get(Attempt, UUID(payload["attempt_id"]))
                 channel, status = call.channel, call.status
-                if payload.get("command") == "hangup" and payload.get("channel"):
+                callback_hangup = payload.get("command") == "hangup" and call.call_flow in {"mobile_callback", "browser_callback"}
+                if not callback_hangup and payload.get("command") == "hangup" and payload.get("channel"):
                     candidate = payload["channel"]
                     if candidate != call.channel and not db.scalar(select(CallLeg.id).where(
                         CallLeg.tenant_id == tenant_id, CallLeg.attempt_id == call.id, CallLeg.channel == candidate,
@@ -565,13 +567,19 @@ class Worker:
 
                 with self.factory() as config_db:
                     runtime_config = settings_for_tenant(config_db, tenant_id)
-                if tenant_id != runtime_config.telephony_tenant_id or not channel.startswith(
-                    ("Local/", "PJSIP/", "SIP/")
-                ):
+                if (tenant_id != runtime_config.telephony_tenant_id or
+                    (not callback_hangup and not channel.startswith(("Local/", "PJSIP/", "SIP/")))):
                     raise Rejected("call_channel_unavailable")
                 driver = self.driver("multicom_ami", tenant_id, runtime_config)
                 driver.connect()
-                if payload.get("command") == "callback_authorize":
+                if callback_hangup:
+                    from ats.call_reconciliation import reconcile_callback
+
+                    result = reconcile_callback(self.factory, tenant_id, call.id, driver, hangup=True)
+                    with self.factory.begin() as db:
+                        complete_job(db, job_id, token, "done" if result["state"] == "terminal" else "pending", delay=2)
+                    return True
+                elif payload.get("command") == "callback_authorize":
                     from ats.callbacks import authorize_customer
 
                     with self.factory.begin() as db:
@@ -593,8 +601,9 @@ class Worker:
                     db,
                     job_id,
                     token,
-                    "unknown" if isinstance(exc, DeliveryUnknown) else "dead",
+                    "pending" if callback_hangup else "unknown" if isinstance(exc, DeliveryUnknown) else "dead",
                     getattr(exc, "code", "hangup_outcome_unknown"),
+                    delay=min(30, 2 ** min(attempts, 5)) if callback_hangup else 0,
                 )
         else:
             with self.factory.begin() as db:
@@ -634,7 +643,7 @@ class Worker:
                     direction = "outbound"
                     duration = (
                         max(0, int(((attempt.bridge_ended_at or attempt.ended_at) - attempt.answered_at).total_seconds()))
-                        if attempt.ended_at and attempt.answered_at
+                        if attempt.ended_at and attempt.answered_at and not (attempt.agent_result or {}).get("duration_unconfirmed")
                         else 0
                     )
                 crm_id = widget_context.get("contact_id") or contact.crm_contact_id
@@ -748,6 +757,7 @@ class Worker:
                 row_job = repo.get(AmoSyncJob, UUID(payload["job_id"]), lock=True)
                 row_job.status = "running"
                 counts = {"created": 0, "updated": 0, "archived": 0, "blocked": 0, "skipped": 0}
+                blacklisted_phones = set(db.scalars(select(BlacklistEntry.phone).where(BlacklistEntry.tenant_id == tenant_id)))
                 event_payload = payload.get("payload") or {}
                 deleted = event_payload.get("contacts", {}).get("delete", []) if isinstance(event_payload, dict) else []
                 deleted = list(deleted) if isinstance(deleted, list) else []
@@ -795,6 +805,7 @@ class Worker:
                         existing.crm_contact_id, existing.source = crm_id, "amoCRM"
                         existing.crm_context = contact_context(raw, pipelines, statuses, users)
                         counts["updated"] += 1
+                    admit_crm_contact(db, existing, blacklisted=phone in blacklisted_phones)
                 row_job.counts, row_job.status, row_job.updated_at = counts, "completed", now()
                 if payload.get("event_key"):
                     event_row = db.scalar(repo.query(Inbox).where(Inbox.event_key == payload["event_key"]).with_for_update())

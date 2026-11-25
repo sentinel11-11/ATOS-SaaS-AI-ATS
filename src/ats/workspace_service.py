@@ -78,6 +78,31 @@ def block_crm_contacts(db, tenant_id, crm_contact_id, actor_id=None):
     return rows
 
 
+def admit_crm_contact(db, contact, actor_id=None, *, restore_for_call=False, blacklisted=None):
+    """Active amoCRM contacts have consent by the owner's explicit CRM policy.
+
+    A verified manual CRM call restores a local archive/block left on that phone.
+    The separately maintained blacklist remains authoritative in every path.
+    CSV/manual imports and CRM deletions do not use this policy.
+    """
+    changed = not contact.consent or not contact.consent_source.strip()
+    if changed:
+        contact.consent, contact.consent_source = True, "amoCRM"
+    if blacklisted is None:
+        blacklisted = db.scalar(select(BlacklistEntry.id).where(
+            BlacklistEntry.tenant_id == contact.tenant_id, BlacklistEntry.phone == contact.phone,
+        ))
+    if restore_for_call and not blacklisted:
+        changed = changed or contact.archived or contact.blocked
+        contact.archived, contact.blocked = False, False
+    if blacklisted and not contact.blocked:
+        contact.blocked, changed = True, True
+    if changed:
+        db.add(Audit(tenant_id=contact.tenant_id, actor_id=actor_id,
+                     action="contact.crm_admitted", entity_id=contact.id))
+    return contact
+
+
 def import_contacts(db, p, command):
     """CSV/text import: explicit consent, preserve existing revocations, never guess consent."""
     repo = TenantRepository(db, p.tenant_id)

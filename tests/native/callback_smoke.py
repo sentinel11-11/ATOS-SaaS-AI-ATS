@@ -14,7 +14,7 @@ from sqlalchemy import select
 from test_mobile_callback import start
 
 from ats.config import settings
-from ats.models import Attempt, CallLeg, Contact
+from ats.models import Attempt, CallLeg, Contact, Operator, Outbox, now
 
 IMAGE = "andrius/asterisk:20@sha256:05391d46660b1dcadd193e265758fb06a785ad484b7add2a0cb0ba5e50a76929"
 
@@ -174,3 +174,43 @@ def test_real_asterisk_failures_do_not_become_success(factory, callback, native_
         "docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json",
     ], text=True))
     assert [row["role"] for row in state["invites"]] == roles
+
+
+@pytest.mark.parametrize("native_asterisk", ["bridge"], indirect=True)
+def test_targeted_hangup_recovers_after_real_ami_terminal_events_are_lost(factory, callback, native_asterisk):
+    from datetime import timedelta
+
+    from ats.callbacks import queue_hangup
+
+    worker, ident = start(factory, callback)
+    attempt_id = UUID(ident)
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        worker.call_control()
+        with factory() as db:
+            attempt = db.get(Attempt, attempt_id)
+            if attempt.bridged_at:
+                break
+        time.sleep(0.02)
+    assert attempt.bridged_at
+    driver = worker.driver("multicom_ami", callback["tenant_id"])
+    driver.on_event = lambda _frame: None
+    # Lose the observer after a real SIP/RTP bridge. Resource release must now
+    # require a complete CoreShowChannels/Getvar read, not an AMI event or clock.
+    with factory.begin() as db:
+        attempt = db.get(Attempt, attempt_id)
+        attempt.status, attempt.reason = "unknown", "callback_evidence_missing"
+        db.scalar(select(Outbox).where(Outbox.kind == "telephony")).available_at = now() - timedelta(minutes=2)
+        queue_hangup(db, attempt)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        worker.call_control()
+        with factory() as db:
+            attempt = db.get(Attempt, attempt_id)
+            if attempt.status == "failed":
+                assert db.get(Operator, callback["operator_id"]).status == "free"
+                assert attempt.reason == "cancelled_by_user"
+                assert driver.channels() == []
+                return
+        time.sleep(0.1)
+    raise AssertionError("Real AMI channel evidence did not release the cancelled call")

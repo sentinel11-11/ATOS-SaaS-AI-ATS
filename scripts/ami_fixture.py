@@ -11,6 +11,10 @@ class AMIFixture:
         self.endpoint_checks = []
         self.setvars = []
         self.endpoints = {"mcm-cli-9990000101"}
+        self.channels = {}
+        self.hangups = []
+        self.reject_hangup = False
+        self.list_items_override = None
         fixture = self
 
         class Handler(socketserver.StreamRequestHandler):
@@ -27,15 +31,34 @@ class AMIFixture:
                     action_id = frame.get("ActionID", [""])[0]
                     if action == "Login":
                         authenticated = frame.get("Secret") == [fixture.secret]
-                    success = authenticated and action in {"Login", "Ping", "Originate", "Setvar"}
+                    success = authenticated and action in {"Login", "Ping", "Originate", "Setvar", "CoreShowChannels"}
                     if success and action == "Setvar":
                         fixture.setvars.append(frame)
                     if authenticated and action == "PJSIPShowEndpoint":
                         endpoint = frame.get("Endpoint", [""])[0]
                         fixture.endpoint_checks.append(endpoint)
                         success = endpoint in fixture.endpoints
+                    if authenticated and action in {"Getvar", "Hangup"}:
+                        channel = frame.get("Channel", [""])[0]
+                        success = channel in fixture.channels
+                        if action == "Hangup":
+                            fixture.hangups.append(channel)
+                            success = success and not fixture.reject_hangup
+                            if success:
+                                fixture.channels.pop(channel)
                     response = "Success" if success else "Error"
                     reply = f"Response: {response}\r\nActionID: {action_id}\r\n\r\n"
+                    if success and action == "Getvar":
+                        variable = frame.get("Variable", [""])[0]
+                        value = fixture.channels[channel].get(variable, "")
+                        reply = f"Response: Success\r\nActionID: {action_id}\r\nValue: {value}\r\n\r\n"
+                    if success and action == "CoreShowChannels":
+                        channels = list(fixture.channels.items())
+                        for name, values in channels:
+                            reply += (f"Event: CoreShowChannel\r\nActionID: {action_id}\r\nChannel: {name}\r\n"
+                                      f"Uniqueid: {values['UNIQUEID']}\r\nLinkedid: {values.get('LINKEDID', values['UNIQUEID'])}\r\n\r\n")
+                        count = fixture.list_items_override if fixture.list_items_override is not None else len(channels)
+                        reply += f"Event: CoreShowChannelsComplete\r\nActionID: {action_id}\r\nListItems: {count}\r\n\r\n"
                     if success and action == "Originate":
                         fixture.originates.append(frame)
                         # Duplicated terminal events and a late answer exercise

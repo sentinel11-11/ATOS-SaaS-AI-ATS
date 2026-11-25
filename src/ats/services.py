@@ -476,7 +476,11 @@ def finish_attempt(db, attempt, event, reason=""):
     queue = db.scalar(repo.query(QueueEntry).where(QueueEntry.attempt_id == attempt.id))
     if queue and queue.operator_id:
         operator = repo.get(Operator, queue.operator_id, lock=True)
-        operator.status = "free"
+        other_active = db.scalar(select(QueueEntry.id).join(Attempt, Attempt.id == QueueEntry.attempt_id).where(
+            QueueEntry.tenant_id == attempt.tenant_id, QueueEntry.operator_id == operator.id,
+            QueueEntry.attempt_id != attempt.id, Attempt.status.in_(ACTIVE),
+        ).limit(1))
+        operator.status = "busy" if other_active else "free"
         queue.status = "completed"
     if (
         queue is None

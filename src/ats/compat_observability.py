@@ -67,6 +67,7 @@ _LIVE_INBOUND = {"ringing", "answered", "accepted", "connected"}
 def legacy_calls_query(p):
     """One compatible row shape for current, incoming and imported calls."""
     duration = case(
+        (Attempt.agent_result["duration_unconfirmed"].as_boolean().is_(True), 0),
         (
             Attempt.answered_at.is_not(None) & Attempt.ended_at.is_not(None),
             func.greatest(0, extract("epoch", func.coalesce(Attempt.bridge_ended_at, Attempt.ended_at) - Attempt.answered_at)),
