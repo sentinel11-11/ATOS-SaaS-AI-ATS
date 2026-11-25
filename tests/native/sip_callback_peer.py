@@ -71,7 +71,7 @@ class Peer:
                          kind=dialog["dtmf"], marker=index == 0, stamp=event_stamp)
                     time.sleep(0.02)
                 dtmf_sent = True
-            if ((role == "customer" and elapsed > (12 if self.mode == "browser" else 2))
+            if ((role == "customer" and elapsed > (25 if self.mode == "browser" else 2))
                 or (role == "operator" and self.mode == "no_confirmation" and elapsed > 3)) and not bye_sent:
                 self.bye(dialog)
                 bye_sent = True
@@ -124,7 +124,7 @@ class Peer:
                     if self.mode == role + "_busy":
                         self.reply(data, address, "486 Busy Here")
                         continue
-                    port = 59000 if role == "operator" else 59002
+                    port = 59000 + 2 * len(self.dialogs)
                     dtmf = re.search(r"a=rtpmap:([0-9]+) telephone-event", data)
                     self.dialogs[ident] = {
                         "role": role, "port": port, "dtmf": int(dtmf.group(1)) if dtmf else 101,

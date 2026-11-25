@@ -35,7 +35,7 @@ function mount(handler, owner=identity) {
 beforeEach(() => {vi.useFakeTimers(); listeners = vi.spyOn(document, 'addEventListener'); windowListeners=vi.spyOn(window,'addEventListener');});
 afterEach(() => {
   if (widget) widget.callbacks.destroy();
-  for (const [event, listener] of listeners.mock.calls) if (event === 'click') document.removeEventListener(event, listener, false);
+  for (const [event, listener] of listeners.mock.calls) if (['click','change'].includes(event)) document.removeEventListener(event, listener, false);
   for (const [event, listener] of windowListeners.mock.calls) if (['pagehide','pageshow'].includes(event)) window.removeEventListener(event, listener);
   vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); document.body.innerHTML = '';
   delete window.RATSJsSIP;
@@ -90,6 +90,21 @@ it('double click creates and starts one request; no keypress is required', async
   expect(command.crm_contact_id).toBe(123);
   expect(command.amo_user_id).toBeUndefined();
   expect(command.operator_id).toBeUndefined();
+});
+
+it('honors forwarding selected without a mouse click and keeps it after refresh', async () => {
+  const mic=vi.fn();
+  Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:mic}});
+  const signed=mount(options=>pathOf(options).endsWith('/me')?identity:{call_id:'forward-call',state:'queued'});
+  await flush();
+  const forward=document.querySelector('.rats-mode-forward');
+  forward.checked=true;forward.dispatchEvent(new Event('change',{bubbles:true}));
+  await vi.advanceTimersByTimeAsync(1800);
+  expect(forward.checked).toBe(true);
+  document.querySelector('.rats-start').click();await flush();
+  const command=signed.mock.calls.find(([o])=>pathOf(o).endsWith('/calls'))[0];
+  expect(JSON.parse(command.data).mode).toBe('forward');
+  expect(mic).not.toHaveBeenCalled();
 });
 
 it('uses the card responsible and starts their browser without requesting the initiators microphone', async () => {
@@ -152,6 +167,87 @@ it('retries an ambiguous network failure with the same request ID', async () => 
   expect(commands[0].client_request_id).toBe(commands[1].client_request_id);
 });
 
+it('can resume an ambiguous request after navigating to another card without changing its destination or request ID', async () => {
+  let tries=0;
+  const signed=mount(options=>{
+    if(pathOf(options).endsWith('/me'))return identity;
+    if(pathOf(options).endsWith('/calls')&&++tries===1)throw {status:0};
+    return {call_id:'original-call',state:'queued'};
+  });
+  await flush();document.querySelector('.rats-mode-forward').click();
+  document.querySelector('.rats-start').click();await flush();
+  widget.system=()=>({area:'lcard',entity_id:202,subdomain:'omkr'});
+  await vi.advanceTimersByTimeAsync(5200);
+  expect(document.querySelector('.rats-retry').hidden).toBe(false);
+  document.querySelector('.rats-retry').click();await flush();
+  const requests=signed.mock.calls.filter(([o])=>pathOf(o).endsWith('/calls')).map(([o])=>JSON.parse(o.data));
+  expect(requests).toHaveLength(2);expect(requests[0]).toEqual(requests[1]);
+  expect(requests[1].entity_id).toBe(101);
+});
+
+it('resolves a clicked phone through card membership even when the SDK supplies a different contact ID', async () => {
+  const signed=mount(options=>pathOf(options).endsWith('/me')?identity:{call_id:'verified',state:'queued'});
+  await flush();document.querySelector('.rats-mode-forward').click();
+  widget.add_action.mock.calls[0][1]({contact_id:999,value:'+79990000101'});await flush();
+  const command=JSON.parse(signed.mock.calls.find(([o])=>pathOf(o).endsWith('/calls'))[0].data);
+  expect(command.crm_contact_id).toBe(123);
+});
+
+it('shares pending SIP initialization and serializes slow heartbeats', async () => {
+  const agents=[];let leased,beat;
+  class UA{
+    constructor(){this.events={};agents.push(this);}
+    on(name,fn){this.events[name]=fn;}
+    start(){}
+    stop(){}
+  }
+  window.RATSJsSIP={UA,WebSocketInterface:class{}};
+  const signed=mount(options=>{
+    const path=pathOf(options);
+    if(path.endsWith('/me'))return {...identity,browser_available:true};
+    if(path.endsWith('/agent/lease'))return new Promise(resolve=>{leased=resolve;});
+    if(path.endsWith('/webrtc/config'))return {ready:true,wss_url:'wss://ats.example.invalid/ws',sip_uri:'sip:manager@ats.example.invalid',sip_password:'fixture'};
+    if(path.endsWith('/heartbeat'))return new Promise(resolve=>{beat=resolve;});
+    return {ok:true};
+  });
+  await flush();widget.callbacks.init();await flush();
+  expect(signed.mock.calls.filter(([o])=>pathOf(o).endsWith('/agent/lease'))).toHaveLength(1);
+  leased({ok:true});await flush();expect(agents).toHaveLength(1);
+  expect(document.querySelector('.rats-agent-status').textContent).not.toContain('зарегистрирован');
+  agents[0].events.registered();await flush();
+  await vi.advanceTimersByTimeAsync(9000);
+  expect(signed.mock.calls.filter(([o])=>pathOf(o).endsWith('/heartbeat'))).toHaveLength(1);
+  beat({status:'free'});await flush();
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(signed.mock.calls.filter(([o])=>pathOf(o).endsWith('/heartbeat'))).toHaveLength(2);
+});
+
+it('ignores a late heartbeat rejection belonging to the page before back navigation', async () => {
+  const agents=[],beats=[];
+  class UA{
+    constructor(){this.events={};this.stop=vi.fn();agents.push(this);}
+    on(name,fn){this.events[name]=fn;}
+    start(){this.events.registered();}
+  }
+  window.RATSJsSIP={UA,WebSocketInterface:class{}};
+  mount(options=>{
+    const path=pathOf(options);
+    if(path.endsWith('/me'))return {...identity,browser_available:true};
+    if(path.endsWith('/webrtc/config'))return {ready:true,wss_url:'wss://ats.example.invalid/ws',sip_uri:'sip:manager@ats.example.invalid',sip_password:'fixture'};
+    if(path.endsWith('/heartbeat'))return new Promise((resolve,reject)=>beats.push({resolve,reject}));
+    return {ok:true};
+  });
+  await flush();expect(beats).toHaveLength(1);
+  window.dispatchEvent(new Event('pagehide'));
+  const event=new Event('pageshow');Object.defineProperty(event,'persisted',{value:true});
+  window.dispatchEvent(event);await flush();
+  expect(agents).toHaveLength(2);expect(beats).toHaveLength(2);
+  beats[0].reject({status:409,responseJSON:{error:'agent_session_lost'}});await flush();
+  expect(agents[1].stop).not.toHaveBeenCalled();
+  expect(document.querySelector('.rats-agent-status').textContent).toContain('зарегистрирован');
+  beats[1].resolve({status:'free'});await flush();
+});
+
 it('rejects an unrelated SIP invite and waits for the real bridge before showing a conversation', async () => {
   let ua;
   class UA {
@@ -181,11 +277,18 @@ it('rejects an unrelated SIP invite and waits for the real bridge before showing
   ua.events.newRTCSession({originator: 'remote', session, request: {getHeader: () => 'a'.repeat(48)}});
   await flush();
   expect(session.answer).toHaveBeenCalledOnce();
+  const actualEvents={};
+  const actual={connectionState:'new',addEventListener:(name,fn)=>{actualEvents[name]=fn;}};
+  handlers.peerconnection({peerconnection:actual});
   handlers.confirmed(); await flush();
   expect(document.querySelector('.rats-call-state').textContent).not.toBe('Разговор');
   expect(signed.mock.calls.some(([value]) => pathOf(value).endsWith('/ready'))).toBe(false);
-  pc.connectionState = 'connected'; pcEvents.connectionstatechange(); await flush();
+  pc.connectionState='connected';pcEvents.connectionstatechange();await flush();
+  expect(signed.mock.calls.some(([value]) => pathOf(value).endsWith('/ready'))).toBe(false);
+  actual.connectionState='connected';actualEvents.connectionstatechange();await flush();
   expect(signed.mock.calls.some(([value]) => pathOf(value).endsWith('/ready'))).toBe(true);
   serverState = 'connected'; await vi.advanceTimersByTimeAsync(1800);
   expect(document.querySelector('.rats-call-state').textContent).toBe('Разговор');
+  expect(document.querySelector('#rats-widget-root .rats-agent-host #rats-browser-agent')).not.toBeNull();
+  expect(document.querySelector('.rats-agent-hangup').hidden).toBe(true);
 });

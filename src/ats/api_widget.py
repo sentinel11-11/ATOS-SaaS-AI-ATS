@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
@@ -30,10 +30,25 @@ from ats.models import (
     now,
 )
 from ats.schemas import CampaignCreate, phone_from_import
+from ats.security import Principal
 from ats.services import create_campaign, finish_attempt, validate_route
-from ats.webrtc import check_device, device_for, ice_servers, password_for
+from ats.webrtc import (
+    browser_operator_available,
+    check_device,
+    device_for,
+    devices_for,
+    ice_servers,
+    password_for,
+    pending_calls,
+)
 from ats.widget_auth import widget_principal
-from ats.widget_context import browser_online, manager_context, read_call_card, read_responsible
+from ats.widget_context import (
+    available_browser_device,
+    browser_online,
+    manager_context,
+    read_call_card,
+    read_responsible,
+)
 from ats.workspace_schemas import ContactEdit
 from ats.workspace_service import admit_crm_contact, audit, save_contact
 
@@ -59,12 +74,14 @@ class CallCommand(BaseModel):
     entity_type: Literal["contacts", "leads", "companies"] = "contacts"
     entity_id: int | None = Field(default=None, gt=0)
     protocol_version: int = Field(default=2, ge=2, le=3)
+    session_id: UUID | None = None
 
 
 class CardCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     entity_type: Literal["contacts", "leads", "companies"]
     entity_id: int = Field(gt=0)
+    session_id: UUID | None = None
 
 
 class AgentCommand(BaseModel):
@@ -74,6 +91,13 @@ class AgentCommand(BaseModel):
 
 
 class InviteCommand(AgentCommand):
+    token: str = Field(pattern=r"^[a-f0-9]{48}$")
+
+
+class DisconnectCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    call_id: UUID
+    session_id: UUID
     token: str = Field(pattern=r"^[a-f0-9]{48}$")
 
 
@@ -184,7 +208,8 @@ def card_context(data: CardCommand, auth=Depends(widget_principal), db=Depends(s
     try:
         crm = AmoCRM(config)
         _, responsible_id = read_responsible(crm, data.entity_type, data.entity_id)
-        _, manager = manager_context(db, config, auth.p.tenant_id, responsible_id, crm)
+        _, manager = manager_context(db, config, auth.p.tenant_id, responsible_id, crm,
+                                     data.session_id if responsible_id == auth.amo_user_id else None)
         return {"ok": True, "entity_type": data.entity_type, "entity_id": data.entity_id,
                 "responsible": manager, "is_self": manager["operator_id"] == str(auth.operator_id)}
     except (Rejected, Retryable) as exc:
@@ -197,14 +222,20 @@ def card_context(data: CardCommand, auth=Depends(widget_principal), db=Depends(s
 
 
 @router.get("/me")
-def me(auth=Depends(widget_principal), db=Depends(session)):
+def me(session_id: UUID | None = None, auth=Depends(widget_principal), db=Depends(session)):
     operator = db.get(Operator, auth.operator_id)
     current = db.scalar(select(WidgetCall).join(Campaign, Campaign.id == WidgetCall.campaign_id).where(
         WidgetCall.tenant_id == auth.p.tenant_id, WidgetCall.operator_id == operator.id,
         Campaign.status.in_(["draft", "running"]), ~Campaign.archived,
+        WidgetCall.browser_session_id == session_id if session_id else True,
     ).order_by(WidgetCall.created_at.desc()).limit(1))
     initiated = db.scalar(select(WidgetCall).join(Campaign, Campaign.id == WidgetCall.campaign_id).where(
         WidgetCall.tenant_id == auth.p.tenant_id, WidgetCall.initiator_user_id == auth.p.user_id,
+        Campaign.status.in_(["draft", "running"]), ~Campaign.archived,
+        WidgetCall.crm_context["initiator_session_id"].as_string() == str(session_id) if session_id else True,
+    ).order_by(WidgetCall.created_at.desc()).limit(1))
+    forward = db.scalar(select(WidgetCall).join(Campaign, Campaign.id == WidgetCall.campaign_id).where(
+        WidgetCall.tenant_id == auth.p.tenant_id, WidgetCall.operator_id == operator.id, WidgetCall.mode == "forward",
         Campaign.status.in_(["draft", "running"]), ~Campaign.archived,
     ).order_by(WidgetCall.created_at.desc()).limit(1))
     device = device_for(db, auth.p.tenant_id, operator.id)
@@ -215,6 +246,7 @@ def me(auth=Depends(widget_principal), db=Depends(session)):
             "forward_available": bool(phone), "browser_available": bool(settings().webrtc_enabled and device),
             "active_call": call_response(db, current, auth) if current else None,
             "initiated_call": call_response(db, initiated, auth) if initiated else None,
+            "forward_call": call_response(db, forward, auth) if forward else None,
             "protocol_version": 3}
 
 
@@ -222,7 +254,7 @@ def me(auth=Depends(widget_principal), db=Depends(session)):
 def browser_config(session_id: UUID | None = None, auth=Depends(widget_principal), db=Depends(session)):
     config = settings_for_tenant(db, auth.p.tenant_id)
     operator = db.get(Operator, auth.operator_id)
-    device = check_device(db, config, operator)
+    device = check_device(db, config, operator, session_id)
     if session_id is not None and (device.agent_session_id != session_id
                                   or not device.agent_expires_at or device.agent_expires_at <= now()):
         raise Problem(409, "agent_session_lost")
@@ -233,10 +265,10 @@ def browser_config(session_id: UUID | None = None, auth=Depends(widget_principal
             "library_url": config.public_origin.rstrip("/") + "/api/v1/amo/widget/assets/jssip.min.js"}
 
 
-def require_agent(db, auth, session_id):
-    device = device_for(db, auth.p.tenant_id, auth.operator_id)
+def require_agent(db, auth, session_id, *, renew=False):
+    device = device_for(db, auth.p.tenant_id, auth.operator_id, session_id)
     if (not session_id or not device or device.agent_session_id != session_id
-        or not device.agent_expires_at or device.agent_expires_at <= now()):
+        or not device.agent_expires_at or (not renew and device.agent_expires_at <= now())):
         raise Problem(409, "agent_session_lost")
     return device
 
@@ -245,14 +277,23 @@ def require_agent(db, auth, session_id):
 def agent_lease(data: AgentCommand, auth=Depends(widget_principal), db=Depends(session)):
     db.scalar(select(Tenant).where(Tenant.id == auth.p.tenant_id).with_for_update())
     operator = db.get(Operator, auth.operator_id)
-    device = check_device(db, settings_for_tenant(db, auth.p.tenant_id), operator)
+    config = settings_for_tenant(db, auth.p.tenant_id)
+    check_device(db, config, operator)
+    device = device_for(db, auth.p.tenant_id, operator.id, data.session_id)
+    if device is None:
+        calls = pending_calls(db, operator)
+        protected = {call.browser_session_id for call in calls if attempt_for(db, call)}
+        device = next((row for row in devices_for(db, auth.p.tenant_id, operator.id)
+                       if (not row.agent_expires_at or row.agent_expires_at <= now())
+                       and row.agent_session_id not in protected), None)
+        if device is None:
+            raise Problem(409, "browser_devices_exhausted")
     if device.agent_session_id != data.session_id:
-        if (device.agent_expires_at and device.agent_expires_at > now()) or operator.status == "busy":
-            raise Problem(409, "agent_in_another_tab")
         # A new page must never answer a request bound to a former page's nonce.
         pending = db.scalars(select(WidgetCall).join(Campaign, Campaign.id == WidgetCall.campaign_id).where(
             WidgetCall.tenant_id == auth.p.tenant_id, WidgetCall.operator_id == operator.id,
-            WidgetCall.browser_session_id.is_not(None), ~Campaign.archived,
+            WidgetCall.mode == "browser", WidgetCall.browser_session_id.is_not(None),
+            WidgetCall.browser_session_id == device.agent_session_id, ~Campaign.archived,
             Campaign.status.in_(["draft", "running"]),
         )).all()
         for call in pending:
@@ -266,7 +307,9 @@ def agent_lease(data: AgentCommand, auth=Depends(widget_principal), db=Depends(s
 @router.post("/agent/heartbeat")
 def agent_heartbeat(data: AgentCommand, auth=Depends(widget_principal), db=Depends(session)):
     db.scalar(select(Tenant).where(Tenant.id == auth.p.tenant_id).with_for_update())
-    device = require_agent(db, auth, data.session_id)
+    # A throttled background page can renew its own expired slot under the lease
+    # mutex. Once reassigned, the session UUID no longer matches and renewal fails.
+    device = require_agent(db, auth, data.session_id, renew=True)
     device.agent_expires_at, device.agent_registered = now() + timedelta(seconds=90), data.registered
     operator = db.get(Operator, auth.operator_id)
     if data.registered and operator.status == "offline":
@@ -312,6 +355,41 @@ def availability(data: AvailabilityCommand, auth=Depends(widget_principal), db=D
     return {"ok": True, "status": data.status}
 
 
+async def read_disconnect(request: Request):
+    from pydantic import ValidationError
+
+    try:
+        raw = await request.body()
+        if len(raw) > 512:
+            raise ValueError("size")
+        data = DisconnectCommand.model_validate_json(raw)
+    except (ValueError, ValidationError) as exc:
+        raise Problem(422, "invalid_disconnect") from exc
+    return data
+
+
+@router.post("/agent/disconnect", status_code=202)
+def agent_disconnect(request: Request, data: DisconnectCommand = Depends(read_disconnect), db=Depends(session)):
+    # Unload beacons cannot obtain a fresh SDK signature. The already authenticated
+    # participant holds a random, single-call SIP nonce; this capability can only
+    # cancel that browser call, never initiate calls or access SIP credentials.
+    call = db.get(WidgetCall, data.call_id)
+    if (not call or call.mode != "browser" or call.browser_session_id != data.session_id
+        or not secrets.compare_digest(call.operator_token, data.token)):
+        raise Problem(403, "browser_call_mismatch")
+    config = settings_for_tenant(db, call.tenant_id)
+    if request.headers.get("origin") != config.amo_url.rstrip("/"):
+        raise Problem(403, "amo_widget_origin_rejected")
+    db.scalar(select(Tenant).where(Tenant.id == call.tenant_id).with_for_update())
+    call = db.scalar(select(WidgetCall).where(WidgetCall.id == data.call_id).with_for_update())
+    cancel_call(db, call)
+    operator = db.get(Operator, call.operator_id)
+    actor = Principal(call.tenant_id, operator.user_id, "operator", "browser-session")
+    audit(db, actor, "widget.browser_disconnected", call.id)
+    db.commit()
+    return {"ok": True, "state": "ending"}
+
+
 @router.post("/calls", status_code=202)
 def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(session)):
     config = settings_for_tenant(db, auth.p.tenant_id)
@@ -320,6 +398,8 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
     except ValueError as exc:
         raise Problem(422, "invalid_phone") from exc
     request_data = data.model_dump(mode="json")
+    if data.session_id is None:
+        request_data.pop("session_id")  # Preserve retries from widgets installed before per-session routing.
     if data.protocol_version == 2:
         request_data.pop("protocol_version")  # Preserve retries made by the installed 5.2 widget.
     fingerprint = hashlib.sha256(json.dumps(request_data, sort_keys=True).encode()).hexdigest()
@@ -364,26 +444,41 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
         # Release the tenant mutex before request logging uses a separate transaction.
         db.commit()
         return call_response(db, existing, auth)
-    operator = db.scalar(select(Operator).where(Operator.id == target_id).with_for_update())
+    operator = db.scalar(select(Operator).where(Operator.id == target_id).with_for_update()
+                         .execution_options(populate_existing=True))
     if db.scalar(select(WidgetCall.id).where(
         WidgetCall.tenant_id == auth.p.tenant_id, WidgetCall.operator_id == target_id,
         WidgetCall.client_request_id == data.client_request_id,
     )):
         raise Problem(409, "idempotency_key_reused")
-    pending = db.scalar(select(WidgetCall).join(Campaign, Campaign.id == WidgetCall.campaign_id).where(
-        WidgetCall.operator_id == operator.id, Campaign.status.in_(["draft", "running"]), ~Campaign.archived,
-    ).order_by(WidgetCall.created_at.desc()).limit(1))
-    if pending and pending.expires_at <= now() and not attempt_for(db, pending):
-        expired = db.get(Campaign, pending.campaign_id)
-        expired.status, expired.archived = "completed", True
-        pending.cancel_requested = True
-        pending = None
-    if operator.status != "free" or pending:
+    pending = pending_calls(db, operator)
+    for old in pending[:]:
+        if old.expires_at <= now() and not attempt_for(db, old):
+            expired = db.get(Campaign, old.campaign_id)
+            expired.status, expired.archived = "completed", True
+            old.cancel_requested = True
+            pending.remove(old)
+    shared_browser = data.mode == "browser" and data.protocol_version == 3
+    if shared_browser:
+        if not browser_operator_available(db, operator) or any(
+            row.mode != "browser" or not row.browser_session_id for row in pending
+        ):
+            raise Problem(409, "operator_unavailable")
+    elif operator.status != "free" or pending:
         raise Problem(409, "operator_unavailable")
     if data.mode == "forward" and not operator.mobile_phone:
         raise Problem(409, "forward_number_not_set")
     device = device_for(db, auth.p.tenant_id, operator.id) if data.mode == "browser" else None
+    if shared_browser:
+        if data.session_id and operator.id == auth.operator_id:
+            require_agent(db, auth, data.session_id)
+        device = available_browser_device(db, operator,
+            data.session_id if operator.id == auth.operator_id else None)
     if data.mode == "browser" and data.protocol_version == 3 and not browser_online(device):
+        candidates = devices_for(db, auth.p.tenant_id, operator.id)
+        if any(browser_online(row) and (operator.id != auth.operator_id or data.session_id is None
+                                       or row.agent_session_id == data.session_id) for row in candidates):
+            raise Problem(409, "operator_unavailable")
         raise Problem(409, "responsible_browser_offline")
     contact = db.scalar(select(Contact).where(
         Contact.tenant_id == auth.p.tenant_id, Contact.phone == phone,
@@ -421,6 +516,7 @@ def create_call(data: CallCommand, auth=Depends(widget_principal), db=Depends(se
                                    "entity_type": data.entity_type, "entity_id": data.entity_id,
                                    "amo_user_id": auth.amo_user_id, "phone": phone,
                                    "initiator_ats_user_id": str(auth.p.user_id),
+                                   "initiator_session_id": str(data.session_id) if data.session_id else None,
                                    "initiator_name": db.get(Operator, auth.operator_id).name,
                                    "responsible_user_id": responsible_id,
                                    "responsible_name": manager["operator_name"],
@@ -498,6 +594,13 @@ def media_ready(ident: UUID, data: ReadyCommand = ReadyCommand(), auth=Depends(w
 def hangup(ident: UUID, auth=Depends(widget_principal), db=Depends(session)):
     db.scalar(select(Tenant).where(Tenant.id == auth.p.tenant_id).with_for_update())
     call = owned_call(db, auth, ident, lock=True)
+    cancel_call(db, call)
+    audit(db, auth.p, "widget.hangup_requested", call.id)
+    db.commit()
+    return {"ok": True, "state": "ending"}
+
+
+def cancel_call(db, call):
     call.cancel_requested = True
     attempt = attempt_for(db, call)
     campaign = db.get(Campaign, call.campaign_id)
@@ -511,6 +614,3 @@ def hangup(ident: UUID, auth=Depends(widget_principal), db=Depends(session)):
         from ats.callbacks import queue_hangup
 
         queue_hangup(db, attempt)
-    audit(db, auth.p, "widget.hangup_requested", call.id)
-    db.commit()
-    return {"ok": True, "state": "ending"}

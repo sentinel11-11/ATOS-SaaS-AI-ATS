@@ -66,11 +66,14 @@ def reconcile_callback(factory, tenant_id, attempt_id, driver, *, hangup=False):
         if call.status not in ACTIVE:
             return {"state": "terminal", "status": call.status}
         dispatch = db.scalar(select(Outbox).where(Outbox.tenant_id == tenant_id, Outbox.dedupe_key == f"dial:{call.id}"))
+        outcome = call.pending_terminal or {}
+        observed_failure = (outcome.get("state") == "failed" and outcome.get("source") == "asterisk_scenario"
+                            and not outcome.get("conflict"))
         # An empty snapshot while Originate is in flight cannot prove absence.
         # The fixed Originate timeout is 30s. Allow another 15s for asynchronous
         # creation and delayed worker acknowledgement before releasing resources.
-        if (not dispatch or dispatch.status in {"pending", "leased"}
-            or dispatch.available_at > now() - timedelta(seconds=45)):
+        if not observed_failure and (not dispatch or dispatch.status in {"pending", "leased"}
+                                    or dispatch.available_at > now() - timedelta(seconds=45)):
             return {"state": "dispatch_settling", "channels": 0}
         legs = list(db.scalars(select(CallLeg).where(CallLeg.tenant_id == tenant_id, CallLeg.attempt_id == call.id)))
         timestamp = now()
@@ -82,7 +85,6 @@ def reconcile_callback(factory, tenant_id, attempt_id, driver, *, hangup=False):
         for leg in legs:
             if not leg.ended_at:
                 leg.ended_at, leg.status = timestamp, "ended" if leg.channel else "cancelled"
-        outcome = call.pending_terminal or {}
         if outcome.get("state") == "failed" and not outcome.get("conflict"):
             status, reason = "failed", outcome.get("reason") or "cancelled_by_user"
         elif outcome.get("state") == "completed" and call.bridged_at and call.bridge_ended_at and not outcome.get("conflict"):

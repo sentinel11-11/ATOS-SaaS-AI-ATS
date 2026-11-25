@@ -14,6 +14,8 @@ class AMIFixture:
         self.channels = {}
         self.hangups = []
         self.reject_hangup = False
+        self.browser_registered = True
+        self.registration_checks = []
         self.list_items_override = None
         fixture = self
 
@@ -46,11 +48,19 @@ class AMIFixture:
                             success = success and not fixture.reject_hangup
                             if success:
                                 fixture.channels.pop(channel)
+                        variable = frame.get("Variable", [""])[0]
+                        if action == "Getvar" and variable.startswith("PJSIP_DIAL_CONTACTS(") and variable.endswith(")"):
+                            success = True
+                            fixture.registration_checks.append(variable[len("PJSIP_DIAL_CONTACTS("):-1])
                     response = "Success" if success else "Error"
                     reply = f"Response: {response}\r\nActionID: {action_id}\r\n\r\n"
                     if success and action == "Getvar":
                         variable = frame.get("Variable", [""])[0]
-                        value = fixture.channels[channel].get(variable, "")
+                        if variable.startswith("PJSIP_DIAL_CONTACTS("):
+                            target = variable[len("PJSIP_DIAL_CONTACTS("):-1]
+                            value = "PJSIP/fixture/sip:registered@127.0.0.1" if fixture.browser_registered and target in fixture.endpoints else ""
+                        else:
+                            value = fixture.channels[channel].get(variable, "")
                         reply = f"Response: Success\r\nActionID: {action_id}\r\nValue: {value}\r\n\r\n"
                     if success and action == "CoreShowChannels":
                         channels = list(fixture.channels.items())

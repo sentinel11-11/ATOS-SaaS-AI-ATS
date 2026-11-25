@@ -30,4 +30,13 @@
 #rats-widget-root .rats-footer{background:#0a1218;text-align:center;padding:9px 4px;font-size:9px;letter-spacing:.2px;color:#7f909d}
 #rats-widget-root [hidden]{display:none!important}
 
-.rats-agent{position:fixed;bottom:18px;right:18px;z-index:99999;width:270px;padding:12px;box-shadow:0 4px 20px #0008}.rats-agent-status{font-size:12px}.rats-agent-client{font-weight:600;margin:8px 0}.rats-agent button{width:100%;margin-top:6px}.rats-agent[hidden],.rats-agent [hidden]{display:none!important}
+.rats-agent-status{font-size:11px;color:#a9d8cb;overflow-wrap:anywhere}
+.rats-agent-client{font-weight:600;margin:8px 0;overflow-wrap:anywhere}
+.rats-agent button{width:100%;margin-top:6px}
+.rats-agent[hidden],.rats-agent [hidden]{display:none!important}
+.rats-agent-fallback{position:fixed;bottom:18px;right:18px;z-index:99999;width:270px;box-sizing:border-box;padding:14px;background:#101922;color:#f1f4f7;border:1px solid #354757;border-radius:10px;box-shadow:0 4px 20px #0008;font:12px/1.45 Arial,sans-serif}
+.rats-agent-fallback .rats-label{font-size:11px;color:#a2afbd;margin-bottom:5px}
+.rats-agent-fallback button{display:block;border:1px solid #354757;border-radius:7px;cursor:pointer;padding:9px;font-size:12px;font-weight:700}
+.rats-agent-fallback .rats-answer{background:#106f5b;border-color:#209e84;color:white}
+.rats-agent-fallback .rats-danger{background:#4a2831;border-color:#a95b6a;color:#ffe0e0}
+.rats-agent-fallback .rats-text{background:transparent;color:#adbbc3;text-decoration:underline}

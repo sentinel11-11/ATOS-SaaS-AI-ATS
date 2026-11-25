@@ -208,3 +208,40 @@ def test_channel_snapshot_checks_action_identity_and_complete_event(factory, stu
     with pytest.raises(Retryable) as error:
         driver.channels()
     assert error.value.code == "ami_channel_snapshot_incomplete"
+
+
+def scenario_failure(factory, stuck):
+    with factory.begin() as db:
+        call = db.get(Attempt, stuck["attempt_id"])
+        if call.call_flow == "browser_callback":
+            root = f"Local/{stuck['operator_id']}@ats-beta-callback-browser-00000001;2"
+        else:
+            root = "Local/+79990001000@ats-beta-callback-operator-00000001;2"
+        db.scalar(select(Outbox).where(Outbox.kind == "telephony")).available_at = now()
+    stuck["worker"].ami_event({"Event": "UserEvent", "UserEvent": "ATSCallback",
+        "AttemptID": str(stuck["attempt_id"]), "Channel": root, "Leg": "operator",
+        "State": "failed", "DialStatus": "CHANUNAVAIL", "ReasonCode": "operator_unavailable"})
+
+
+def test_immediate_chanunavail_is_reconciled_without_a_hangup_click_or_timeout(factory, stuck):
+    scenario_failure(factory, stuck)
+    with factory() as db:
+        job = db.scalar(select(Outbox).where(Outbox.kind == "control"))
+        assert job.payload["command"] == "callback_reconcile"
+    stuck["worker"].call_control()
+    with factory() as db:
+        call = db.get(Attempt, stuck["attempt_id"])
+        assert call.status == "failed" and call.reason == "operator_unavailable"
+        assert db.get(Operator, stuck["operator_id"]).status == "free"
+    assert stuck["provider"].hangups == []
+
+
+def test_automatic_reconciliation_never_hangs_up_a_still_live_call(factory, stuck):
+    scenario_failure(factory, stuck)
+    stuck["provider"].channels["PJSIP/still-live-00000001"] = {
+        "UNIQUEID": "live.1", "ATS_ATTEMPT_ID": str(stuck["attempt_id"])}
+    stuck["worker"].call_control()
+    assert stuck["provider"].hangups == []
+    with factory() as db:
+        assert db.get(Operator, stuck["operator_id"]).status == "busy"
+        assert db.get(Attempt, stuck["attempt_id"]).status == "unknown"

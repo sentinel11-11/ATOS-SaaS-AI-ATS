@@ -66,12 +66,16 @@ server.on('upgrade',(req,socket,head)=>{
       window.RTCPeerConnection.prototype=Original.prototype;
     },{port,token,receiver});
     await page.addScriptTag({content:fs.readFileSync(path.join(cfg.root,'amo-widget/script.js'),'utf8')});
+    await page.addStyleTag({content:fs.readFileSync(path.join(cfg.root,'amo-widget/style.css'),'utf8')});
+    await page.addStyleTag({content:'main{width:280px;margin-left:auto}body{background:#102432}'});
     await page.evaluate(()=>window.install());
     return page;
     }
     const recipient=cfg.cross?await setup(fs.readFileSync(path.join(cfg.folder,'recipient-token.txt'),'utf8'),true):null;
     if(recipient)await recipient.waitForFunction(()=>document.querySelector('.rats-agent-status')?.textContent.includes('зарегистрирован'));
     const page=await setup(token);
+    const parallel=cfg.parallel?await setup(token):null;
+    if(parallel)await parallel.waitForFunction(()=>document.querySelector('.rats-agent-status')?.textContent.includes('зарегистрирован'));
     await page.locator('.rats-name').filter({hasText:'Native customer'}).waitFor();
     await page.locator('.rats-mode-browser').click();
     await page.waitForFunction(()=>document.querySelector('.rats-agent-status')?.textContent.includes('зарегистрирован'),null,{timeout:15000});
@@ -84,6 +88,14 @@ server.on('upgrade',(req,socket,head)=>{
       await recipient.locator('.rats-agent-answer').click();
     }
     await page.waitForFunction(()=>document.querySelector('.rats-call-state').textContent==='Разговор',null,{timeout:25000});
+    if(parallel){
+      await parallel.locator('.rats-start').click();
+      await parallel.waitForFunction(()=>document.querySelector('.rats-call-state').textContent==='Разговор',null,{timeout:25000});
+      if(!await page.evaluate(()=>peers.some(pc=>pc.connectionState==='connected')))throw Error('Second session displaced the first browser phone');
+    }
+    if(!await page.evaluate(()=>document.querySelector('#rats-widget-root .rats-agent-host #rats-browser-agent')!==null))throw Error('Browser controls are outside main widget');
+    if(await page.locator('.rats-agent-hangup').isVisible())throw Error('Duplicate hangup control in main widget');
+    await page.screenshot({path:path.join(cfg.root,'.runtime/widget-inline.png'),fullPage:true});
     await page.waitForTimeout(1000);
     const mediaPage=recipient||page;
     if(recipient){
@@ -91,7 +103,7 @@ server.on('upgrade',(req,socket,head)=>{
       await recipient.waitForTimeout(1500);
       if(!await recipient.evaluate(()=>peers.some(pc=>pc.connectionState==='connected')))throw Error('Closing initiator page interrupted responsible manager');
     }
-    const result=await mediaPage.evaluate(async()=>{
+    async function mediaStats(mediaPage){return mediaPage.evaluate(async()=>{
       const rows=[];let relay=false;
       for(const pc of window.peers){
         const report=await pc.getStats();
@@ -101,17 +113,32 @@ server.on('upgrade',(req,socket,head)=>{
         }
       }
       return {rows,relay};
-    });
-    const stats=result.rows;
-    console.log('media statistics',JSON.stringify(stats));
-    if(!result.relay)throw Error('Selected ICE candidate must use the TURN relay');
-    if(!stats.some(s=>s.type==='inbound-rtp'&&s.received>5)||!stats.some(s=>s.type==='outbound-rtp'&&s.sent>5))throw Error('Bidirectional browser SRTP not established');
+    });}
+    for(const active of parallel?[mediaPage,parallel]:[mediaPage]){
+      const result=await mediaStats(active),stats=result.rows;
+      console.log('media statistics',JSON.stringify(stats));
+      if(!result.relay)throw Error('Selected ICE candidate must use the TURN relay');
+      if(!stats.some(s=>s.type==='inbound-rtp'&&s.received>5)||!stats.some(s=>s.type==='outbound-rtp'&&s.sent>5))throw Error('Bidirectional browser SRTP not established');
+    }
+    if(cfg.disconnect){
+      await page.close();
+      await new Promise(resolve=>setTimeout(resolve,1500));
+      console.log('PASS: participant close sends scoped hangup beacon');
+      return;
+    }
     if(recipient){
       await recipient.locator('.rats-agent-hangup').click();
       await recipient.waitForFunction(()=>!document.querySelector('.rats-agent-hangup')||document.querySelector('.rats-agent-hangup').hidden,null,{timeout:10000});
     }else{
       await page.locator('.rats-hangup').click();
       await page.waitForFunction(()=>document.querySelector('.rats-call-state').textContent==='Завершён',null,{timeout:10000});
+    }
+    if(parallel){
+      const state=await parallel.evaluate(async({port,token})=>(await fetch('https://localhost:'+port+'/api/v1/amo/widget/v2/me',{headers:{'X-Auth-Token':token}})).json(),{port,token});
+      if(state.status!=='busy'||!await parallel.evaluate(()=>peers.some(pc=>pc.connectionState==='connected')))throw Error('First hangup interrupted second conversation or freed its operator');
+      await parallel.locator('.rats-hangup').click();
+      await parallel.waitForFunction(()=>document.querySelector('.rats-call-state').textContent==='Завершён',null,{timeout:10000});
+      console.log('PASS: shared account has two concurrent private SIP/SRTP calls and independent hangup');
     }
     console.log('PASS: shipped widget + signed API + WSS registration + real WebRTC/SRTP + bridge + hangup');
   }finally{await browser.close();server.close();}

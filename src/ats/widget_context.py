@@ -4,7 +4,7 @@ from ats.adapters import Rejected, Retryable
 from ats.domain import Problem
 from ats.models import now
 from ats.schemas import phone_from_import
-from ats.webrtc import device_for
+from ats.webrtc import browser_operator_available, device_for, devices_for, pending_calls
 from ats.widget_auth import mapped_operator
 
 
@@ -31,7 +31,19 @@ def read_call_card(crm, entity_type, entity_id, contact_id, phone):
     else:
         linked = entity.get("_embedded", {}).get("contacts", [])
         if contact_id not in {int(row["id"]) for row in linked}:
-            raise Problem(403, "contact_not_in_card")
+            # Embedded lists can be incomplete. Derive every links URL locally;
+            # a CRM response must never redirect credentialed reads to another host.
+            found = False
+            for page in range(1, 21):
+                response = crm.read(f"/api/v4/{entity_type}/{int(entity_id)}/links", {"page": page, "limit": 250})
+                rows = response.get("_embedded", {}).get("links", [])
+                if any(row.get("to_entity_type") == "contacts" and int(row.get("to_entity_id") or 0) == contact_id for row in rows):
+                    found = True
+                    break
+                if not response.get("_links", {}).get("next") and len(rows) < 250:
+                    break
+            if not found:
+                raise Problem(403, "contact_not_in_card")
         raw = crm.read(f"/api/v4/contacts/{contact_id}")
     if int(raw.get("id", 0)) != contact_id or raw.get("is_deleted") or raw.get("deleted_at"):
         raise Problem(409, "crm_contact_not_synced")
@@ -54,7 +66,15 @@ def browser_online(device):
                 and device.agent_expires_at and device.agent_expires_at > now())
 
 
-def manager_context(db, config, tenant_id, responsible_id, crm):
+def available_browser_device(db, operator, session_id=None):
+    occupied = {call.browser_session_id for call in pending_calls(db, operator)}
+    candidates = [device for device in devices_for(db, operator.tenant_id, operator.id)
+                  if browser_online(device) and device.agent_session_id not in occupied
+                  and (session_id is None or device.agent_session_id == session_id)]
+    return max(candidates, key=lambda device: device.agent_expires_at, default=None)
+
+
+def manager_context(db, config, tenant_id, responsible_id, crm, session_id=None):
     operator = None
     reason = ""
     try:
@@ -72,13 +92,16 @@ def manager_context(db, config, tenant_id, responsible_id, crm):
     device = device_for(db, tenant_id, operator.id) if operator else None
     phone = operator.mobile_phone if operator else ""
     status = operator.status if operator else "unconfigured"
-    online = bool(config.webrtc_enabled and browser_online(device))
+    online = bool(config.webrtc_enabled and operator and any(
+        browser_online(row) for row in devices_for(db, tenant_id, operator.id)))
+    browser_can_call = bool(online and browser_operator_available(db, operator)
+                            and available_browser_device(db, operator, session_id))
     return operator, {
         "amo_user_id": responsible_id, "operator_id": str(operator.id) if operator else None,
         "operator_name": name or f"Сотрудник amoCRM #{responsible_id}", "status": status,
         "forward_number_masked": phone[:2] + "***" + phone[-4:] if phone else "",
         "forward_available": bool(phone), "browser_available": bool(config.webrtc_enabled and device),
-        "browser_online": online, "reason": reason,
+        "browser_online": online, "browser_can_call": browser_can_call, "reason": reason,
     }
 
 
@@ -94,7 +117,7 @@ def verify_responsible(db, call, config, crm_class):
             or operator.id != call.operator_id):
             raise Problem(409, "responsible_changed")
         if call.browser_session_id:
-            device = device_for(db, call.tenant_id, call.operator_id)
+            device = device_for(db, call.tenant_id, call.operator_id, call.browser_session_id)
             if not browser_online(device) or device.agent_session_id != call.browser_session_id:
                 raise Problem(409, "responsible_browser_offline")
     finally:

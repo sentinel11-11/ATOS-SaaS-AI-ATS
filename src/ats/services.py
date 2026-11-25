@@ -325,9 +325,10 @@ def schedule_one(db, tenant_id):
             campaign.mode == "operator"
             or (campaign.mode == "agent" and campaign.connect_on_qualify)
         ):
+            shared_browser = bool(widget_call and widget_call.browser_session_id and schedule.get("connection_method") == "browser")
             operator_query = repo.query(Operator).join(
                 User, (User.id == Operator.user_id) & (User.tenant_id == Operator.tenant_id)
-            ).where(Operator.status == "free", User.active, User.role == "operator")
+            ).where(Operator.status.in_(["free", "busy"] if shared_browser else ["free"]), User.active, User.role == "operator")
             requested_operator_id = (campaign.schedule or {}).get("operator_id")
             if requested_operator_id:
                 operator_query = operator_query.where(Operator.id == requested_operator_id)
@@ -346,6 +347,11 @@ def schedule_one(db, tenant_id):
             operator = db.scalar(operator_query.with_for_update(skip_locked=True).limit(1))
             if not operator:
                 return False
+            if shared_browser:
+                from ats.webrtc import browser_operator_available
+
+                if not browser_operator_available(db, operator):
+                    return False
         browser_callback = bool(campaign.route == "multicom_ami" and operator and schedule.get("connection_method") == "browser")
         mobile_callback = bool(
             campaign.route == "multicom_ami" and operator and not browser_callback
@@ -355,7 +361,7 @@ def schedule_one(db, tenant_id):
         if browser_callback:
             from ats.webrtc import check_device
 
-            browser_device = check_device(db, config, operator)
+            browser_device = check_device(db, config, operator, widget_call.browser_session_id if widget_call else None)
         if mobile_callback:
             from ats.callbacks import validate_mobile
 

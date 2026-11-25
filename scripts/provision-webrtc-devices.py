@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from sqlalchemy import select, text
@@ -12,7 +13,7 @@ from sqlalchemy import select, text
 
 def provision(db, tenant_id):
     from ats.models import Operator, Tenant, User
-    from ats.webrtc import device_for, password_for, save_device
+    from ats.webrtc import SESSION_SLOTS, devices_for, password_for, save_device
 
     db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
     operators = db.scalars(select(Operator).join(User, User.id == Operator.user_id).where(
@@ -20,12 +21,14 @@ def provision(db, tenant_id):
     ).order_by(Operator.extension)).all()
     devices = []
     for operator in operators:
-        device = device_for(db, tenant_id, operator.id)
-        if not device:
-            endpoint = "ats-web-" + operator.id.hex
-            device = save_device(db, operator, endpoint, endpoint, secrets.token_urlsafe(36))
-        devices.append({"endpoint": device.endpoint, "username": device.username,
-                        "password": password_for(device)})
+        existing = {device.slot: device for device in devices_for(db, tenant_id, operator.id)}
+        for slot in range(SESSION_SLOTS):
+            device = existing.get(slot)
+            if not device:
+                endpoint = "ats-web-" + (operator.id.hex if slot == 0 else uuid4().hex)
+                device = save_device(db, operator, endpoint, endpoint, secrets.token_urlsafe(36), slot=slot)
+            devices.append({"endpoint": device.endpoint, "username": device.username,
+                            "password": password_for(device)})
     return devices
 
 
@@ -44,8 +47,8 @@ def main():
     if not config.amo_tenant_id or config.amo_tenant_id != config.telephony_tenant_id:
         parser.error("Bind amoCRM and telephony to the same tenant before provisioning")
     with session_factory()() as db:
-        if db.scalar(text("SELECT version_num FROM alembic_version")) != "0014":
-            parser.error("Update the beta database to schema 0014 first")
+        if db.scalar(text("SELECT version_num FROM alembic_version")) != "0015":
+            parser.error("Update the beta database to schema 0015 first")
         devices = provision(db, config.amo_tenant_id)
         if not devices:
             parser.error("No active operator users in the configured tenant")

@@ -76,7 +76,7 @@ def authorize_customer(db, attempt, config):
         from ats.webrtc import check_device
 
         try:
-            device = check_device(db, config, operator)
+            device = check_device(db, config, operator, widget.browser_session_id if widget else None)
         except (Problem, AttributeError):
             return False
         if not widget or not widget.media_ready_at or device.endpoint != attempt.route_snapshot.get("operator_endpoint"):
@@ -145,10 +145,24 @@ def queue_hangup(db, attempt):
                       payload=payload))
 
 
+def queue_reconciliation(db, attempt):
+    key = f"callback-reconcile:{attempt.id}"
+    existing = db.scalar(select(Outbox).where(Outbox.tenant_id == attempt.tenant_id, Outbox.dedupe_key == key))
+    if existing:
+        if existing.status in {"done", "dead", "unknown"}:
+            existing.status, existing.available_at, existing.last_error = "pending", now(), ""
+            existing.lease_token, existing.lease_until = None, None
+    else:
+        db.add(Outbox(tenant_id=attempt.tenant_id, kind="control", dedupe_key=key,
+                      payload={"attempt_id": str(attempt.id), "command": "callback_reconcile"}))
+
+
 def _uncertain(db, attempt, reason):
     if attempt.status in ACTIVE and (attempt.status != "unknown" or attempt.reason != reason):
         attempt.status, attempt.reason, attempt.updated_at = "unknown", reason, now()
         event(db, attempt, "unknown", reason)
+    if attempt.status in ACTIVE:
+        queue_reconciliation(db, attempt)
 
 
 def _finish_if_proven(db, attempt):
@@ -303,9 +317,12 @@ def handle_frame(factory, tenant_id, frame):
                     attempt.channel = channel
                 reason = frame.get("ReasonCode", "")
                 reason = reason if reason in REASONS else (
-                    "callback_originate_failed" if response else "customer_unavailable"
+                    "operator_busy" if response and frame.get("Reason") == "5"
+                    else "callback_originate_failed" if response else "customer_unavailable"
                 )
                 result = {"state": state, "reason": reason if state == "failed" else ""}
+                if custom and control:
+                    result["source"] = "asterisk_scenario"
                 previous = attempt.pending_terminal or {}
                 if previous and previous.get("state") != state:
                     result["conflict"] = True

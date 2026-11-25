@@ -12,8 +12,10 @@ from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 
 from ats.connections import cipher
-from ats.domain import Problem
-from ats.models import OperatorDevice
+from ats.domain import ACTIVE, Problem
+from ats.models import Attempt, Campaign, CampaignItem, OperatorDevice, QueueEntry, WidgetCall
+
+SESSION_SLOTS = 8
 
 
 def ice_servers(config, operator):
@@ -30,15 +32,47 @@ def ice_servers(config, operator):
     return servers
 
 
-def device_for(db, tenant_id, operator_id):
-    return db.scalar(select(OperatorDevice).where(
+def devices_for(db, tenant_id, operator_id):
+    return db.scalars(select(OperatorDevice).where(
         OperatorDevice.tenant_id == tenant_id, OperatorDevice.operator_id == operator_id,
         OperatorDevice.enabled,
-    ))
+    ).order_by(OperatorDevice.slot).execution_options(populate_existing=True)).all()
 
 
-def check_device(db, config, operator):
-    device = device_for(db, operator.tenant_id, operator.id)
+def device_for(db, tenant_id, operator_id, session_id=None):
+    devices = devices_for(db, tenant_id, operator_id)
+    return next((device for device in devices if session_id is None or device.agent_session_id == session_id), None)
+
+
+def pending_calls(db, operator):
+    return db.scalars(select(WidgetCall).join(Campaign, Campaign.id == WidgetCall.campaign_id).where(
+        WidgetCall.tenant_id == operator.tenant_id, WidgetCall.operator_id == operator.id,
+        Campaign.status.in_(["draft", "running"]), ~Campaign.archived,
+    )).all()
+
+
+def browser_operator_available(db, operator):
+    if operator.status == "free":
+        return True
+    if operator.status != "busy":
+        return False
+    # Share only private browser devices. Physical phones and ordinary ACD calls
+    # still reserve the whole operator, including attempts awaiting reconciliation.
+    calls = pending_calls(db, operator)
+    if not calls or any(call.mode != "browser" or not call.browser_session_id for call in calls):
+        return False
+    active = db.execute(select(WidgetCall.id, WidgetCall.mode, WidgetCall.browser_session_id).select_from(QueueEntry)
+        .join(Attempt, Attempt.id == QueueEntry.attempt_id)
+        .join(CampaignItem, CampaignItem.id == Attempt.item_id)
+        .outerjoin(WidgetCall, WidgetCall.campaign_id == CampaignItem.campaign_id).where(
+            QueueEntry.tenant_id == operator.tenant_id, QueueEntry.operator_id == operator.id,
+            Attempt.status.in_(ACTIVE),
+        )).all()
+    return bool(active) and all(row.id and row.mode == "browser" and row.browser_session_id for row in active)
+
+
+def check_device(db, config, operator, session_id=None):
+    device = device_for(db, operator.tenant_id, operator.id, session_id)
     if (
         not config.webrtc_enabled or not device
         or config.ami_tech != "PJSIP" or config.ami_cli_endpoint_prefix != "mcm-cli-"
@@ -52,14 +86,16 @@ def check_device(db, config, operator):
     return device
 
 
-def save_device(db, operator, endpoint, username, password):
+def save_device(db, operator, endpoint, username, password, slot=0):
     if not re.fullmatch(r"ats-web-[a-f0-9]{12,32}", endpoint) or username != endpoint:
         raise Problem(422, "invalid_browser_endpoint")
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", password):
         raise Problem(422, "invalid_browser_secret")
-    device = db.scalar(select(OperatorDevice).where(OperatorDevice.operator_id == operator.id))
+    if not 0 <= slot < SESSION_SLOTS:
+        raise Problem(422, "invalid_browser_slot")
+    device = db.scalar(select(OperatorDevice).where(OperatorDevice.operator_id == operator.id, OperatorDevice.slot == slot))
     if not device:
-        device = OperatorDevice(tenant_id=operator.tenant_id, operator_id=operator.id)
+        device = OperatorDevice(tenant_id=operator.tenant_id, operator_id=operator.id, slot=slot)
         db.add(device)
     raw = json.dumps({"tenant": str(operator.tenant_id), "operator": str(operator.id), "password": password})
     device.endpoint, device.username = endpoint, username

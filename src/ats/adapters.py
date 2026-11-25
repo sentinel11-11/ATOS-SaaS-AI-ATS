@@ -684,6 +684,12 @@ class AMI:
                 self.action("PJSIPShowEndpoint", [("Endpoint", target)])
             except Rejected as exc:
                 raise Rejected("ami_endpoint_unavailable") from exc
+        try:
+            contacts = self.action("Getvar", [("Variable", f"PJSIP_DIAL_CONTACTS({device})")]).get("Value", "")
+        except Rejected as exc:
+            raise Rejected("browser_registration_check_failed") from exc
+        if not contacts.strip():
+            raise Rejected("browser_not_registered")
         self.action("Originate", [
             ("Channel", f"Local/{operator_id}@ats-beta-callback-browser/n"),
             ("Context", "ats-beta-callback-customer"), ("Exten", "s"), ("Priority", "1"),

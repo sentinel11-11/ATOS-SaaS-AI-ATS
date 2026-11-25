@@ -455,7 +455,7 @@ class Worker:
                     else:
                         from ats.webrtc import check_device
 
-                        device = check_device(db, runtime_config, operator)
+                        device = check_device(db, runtime_config, operator, widget_call.browser_session_id if widget_call else None)
                         if device.endpoint != attempt.route_snapshot.get("operator_endpoint"):
                             raise Problem(409, "callback_operator_changed")
                     callback_operator_phone = leg.phone
@@ -549,13 +549,13 @@ class Worker:
         if not job:
             return False
         job_id, token, tenant_id, payload, attempts = job
-        callback_hangup = False
+        callback_control = False
         try:
             with self.factory() as db:
                 call = TenantRepository(db, tenant_id).get(Attempt, UUID(payload["attempt_id"]))
                 channel, status = call.channel, call.status
-                callback_hangup = payload.get("command") == "hangup" and call.call_flow in {"mobile_callback", "browser_callback"}
-                if not callback_hangup and payload.get("command") == "hangup" and payload.get("channel"):
+                callback_control = payload.get("command") in {"hangup", "callback_reconcile"} and call.call_flow in {"mobile_callback", "browser_callback"}
+                if not callback_control and payload.get("command") == "hangup" and payload.get("channel"):
                     candidate = payload["channel"]
                     if candidate != call.channel and not db.scalar(select(CallLeg.id).where(
                         CallLeg.tenant_id == tenant_id, CallLeg.attempt_id == call.id, CallLeg.channel == candidate,
@@ -568,16 +568,18 @@ class Worker:
                 with self.factory() as config_db:
                     runtime_config = settings_for_tenant(config_db, tenant_id)
                 if (tenant_id != runtime_config.telephony_tenant_id or
-                    (not callback_hangup and not channel.startswith(("Local/", "PJSIP/", "SIP/")))):
+                    (not callback_control and not channel.startswith(("Local/", "PJSIP/", "SIP/")))):
                     raise Rejected("call_channel_unavailable")
                 driver = self.driver("multicom_ami", tenant_id, runtime_config)
                 driver.connect()
-                if callback_hangup:
+                if callback_control:
                     from ats.call_reconciliation import reconcile_callback
 
-                    result = reconcile_callback(self.factory, tenant_id, call.id, driver, hangup=True)
+                    result = reconcile_callback(self.factory, tenant_id, call.id, driver,
+                                                hangup=payload.get("command") == "hangup")
                     with self.factory.begin() as db:
-                        complete_job(db, job_id, token, "done" if result["state"] == "terminal" else "pending", delay=2)
+                        complete_job(db, job_id, token, "done" if result["state"] == "terminal" else "pending",
+                                     delay=10 if result["state"] == "live" else 2)
                     return True
                 elif payload.get("command") == "callback_authorize":
                     from ats.callbacks import authorize_customer
@@ -601,9 +603,9 @@ class Worker:
                     db,
                     job_id,
                     token,
-                    "pending" if callback_hangup else "unknown" if isinstance(exc, DeliveryUnknown) else "dead",
+                    "pending" if callback_control else "unknown" if isinstance(exc, DeliveryUnknown) else "dead",
                     getattr(exc, "code", "hangup_outcome_unknown"),
-                    delay=min(30, 2 ** min(attempts, 5)) if callback_hangup else 0,
+                    delay=min(30, 2 ** min(attempts, 5)) if callback_control else 0,
                 )
         else:
             with self.factory.begin() as db:

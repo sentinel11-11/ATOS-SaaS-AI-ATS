@@ -1,0 +1,41 @@
+{
+  "widget_version": "5.4.0",
+  "schema": "0015",
+  "recorded_at": "2026-11-25T10:23:56.638940+00:00",
+  "backend": {
+    "tests": 334,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "native": {
+    "tests": 13,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "frontend": {
+    "tests": 52,
+    "failures": 0,
+    "build": "passed"
+  },
+  "incremental_checks": {
+    "expired_session_renewal_and_session_isolation": 5,
+    "migration_and_provision": 2,
+    "ruff": "passed",
+    "archive_check": "passed"
+  },
+  "native_scenarios": [
+    "unregistered_browser_before_originate",
+    "self_browser",
+    "other_responsible_browser",
+    "two_simultaneous_sessions_of_one_account",
+    "participant_tab_close",
+    "eight_mobile_callback_scenarios"
+  ],
+  "scope": "Isolated PostgreSQL, Chromium, Asterisk and coturn; synthetic CRM SDK/data and loopback SIP peer. VPS and live amoCRM not deployed or tested from this workspace.",
+  "sha256": {
+    "amo-widget/script.js": "0b7885e2f5ac583e852f82be56d823570167459f60670907ae710d665971d28d",
+    "widget.zip": "7108d2e814ee20db01ce367c7debf3edd144dc3d0d3ce262292f3c3c1809ace9"
+  }
+}

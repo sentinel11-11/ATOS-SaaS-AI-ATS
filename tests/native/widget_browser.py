@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from sqlalchemy import select
 from test_mobile_callback import callback as callback_fixture
-from test_widget_protocol import SECRET
+from test_widget_protocol import SECRET, create, payload
 from test_widget_protocol import widget as widget_fixture
 
 from ats.config import settings
@@ -39,10 +39,12 @@ TURN_IMAGE = "coturn/coturn@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39
 @pytest.fixture
 def widget(widget_base, factory, request):
     widget = widget_base
-    widget["cross"] = request.param
+    widget["cross"] = request.param is True
+    widget["parallel"] = request.param == "parallel"
+    widget["disconnect"] = request.param == "disconnect"
     widget["recipient_id"] = widget["operator_id"]
     widget["recipient_amo_id"] = 7654321
-    if request.param:
+    if request.param is True:
         with factory.begin() as db:
             user = User(tenant_id=widget["tenant_id"], login="native-recipient", role="operator", password_hash="fixture")
             db.add(user)
@@ -96,7 +98,35 @@ def certificate(folder):
 
 
 @pytest.mark.parametrize("native_asterisk", ["browser"], indirect=True)
-@pytest.mark.parametrize("widget", [False, True], indirect=True, ids=["self", "other-responsible"])
+@pytest.mark.parametrize("widget", [False], indirect=True)
+def test_native_unregistered_browser_fails_before_any_originate(factory, widget, native_asterisk, monkeypatch):
+    for key, value in {"ATS_WEBRTC_ENABLED": "true", "ATS_WEBRTC_WSS_URL": "wss://ats.example.invalid/ws",
+                       "ATS_WEBRTC_SIP_DOMAIN": "localhost"}.items():
+        monkeypatch.setenv(key, value)
+    settings.cache_clear()
+    session_id = str(uuid4())
+    for path, extra in [("lease", {}), ("heartbeat", {"registered": True})]:
+        response = widget["client"].post("/api/v1/amo/widget/v2/agent/" + path,
+            json={"session_id": session_id, **extra}, headers=widget["headers"])
+        assert response.status_code == 200, response.text
+    call_id = create(widget, payload(mode="browser", protocol_version=3))["call_id"]
+    response = widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    assert response.status_code == 202
+    worker = Worker(factory)
+    worker.schedule()
+    worker.telephony()
+    with factory() as db:
+        call = db.scalar(select(Attempt))
+        assert call.status == "failed" and call.reason == "browser_not_registered"
+        assert db.get(Operator, widget["operator_id"]).status == "free"
+    assert worker.driver("multicom_ami", widget["tenant_id"]).channels() == []
+    peer = json.loads(subprocess.check_output(["docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json"], text=True))
+    assert peer["invites"] == []
+
+
+@pytest.mark.parametrize("native_asterisk", ["browser"], indirect=True)
+@pytest.mark.parametrize("widget", [False, True, "parallel", "disconnect"], indirect=True,
+                         ids=["self", "other-responsible", "shared-account", "close-participant"])
 def test_shipped_widget_real_webrtc_bridge_and_hangup(factory, widget, native_asterisk, turn_server, tmp_path, monkeypatch):
     from ats.api import app
 
@@ -115,7 +145,8 @@ def test_shipped_widget_real_webrtc_bridge_and_hangup(factory, widget, native_as
     ws_port = int(subprocess.check_output(["docker", "port", native_asterisk, "8088/tcp"], text=True).strip().rsplit(":", 1)[1])
     config_path = tmp_path / "fixture.json"
     config_path.write_text(json.dumps({"root": str(root), "apiPort": api_port, "wsPort": ws_port,
-                                       "folder": str(tmp_path), "cross": widget["cross"]}))
+                                       "folder": str(tmp_path), "cross": widget["cross"],
+                                       "parallel": widget["parallel"], "disconnect": widget["disconnect"]}))
     # The Node process opens a TLS proxy and reports its port before launching Chromium.
     output = (tmp_path / "browser.log").open("w")
     process = subprocess.Popen(["node", str(Path(__file__).with_name("widget_browser.cjs")), str(config_path)], stdout=output, stderr=subprocess.STDOUT)
@@ -155,26 +186,32 @@ def test_shipped_widget_real_webrtc_bridge_and_hangup(factory, widget, native_as
             worker.call_control()
             worker.inbox()
             with factory() as db:
-                attempt = db.scalar(select(Attempt))
-                if attempt and attempt.status in {"completed", "failed"}:
+                rows = db.scalars(select(Attempt)).all()
+                if rows and all(row.status in {"completed", "failed"} for row in rows):
                     break
             time.sleep(0.05)
         with factory() as db:
-            attempt = db.scalar(select(Attempt))
-            assert attempt.status == "completed", (attempt.status, attempt.reason)
+            attempts = db.scalars(select(Attempt)).all()
+            assert len(attempts) == (2 if widget["parallel"] else 1)
+            assert all(row.status == "completed" for row in attempts), [(row.status, row.reason) for row in attempts]
+            if widget["parallel"]:
+                assert len({row.route_snapshot["operator_endpoint"] for row in attempts}) == 2
+            attempt = attempts[0]
             assert attempt.call_flow == "browser_callback" and attempt.channel_units == 1
             assert attempt.bridged_at and attempt.bridge_ended_at
             assert db.get(Operator, widget["operator_id"]).status == "free"
             assert db.get(Operator, widget["recipient_id"]).status == "free"
             assert attempt.route_snapshot["operator_id"] == str(widget["recipient_id"])
-            call = db.scalar(select(WidgetCall))
-            assert call.media_ready_at and call.cancel_requested
+            calls = db.scalars(select(WidgetCall)).all()
+            assert all(call.media_ready_at and call.cancel_requested for call in calls)
+            call = calls[0]
             assert call.operator_id == widget["recipient_id"]
             assert call.initiator_user_id == db.get(Operator, widget["operator_id"]).user_id
             crm = db.scalar(select(Outbox).where(Outbox.kind == "crm"))
             assert crm.payload["amo_responsible_user_id"] == widget["recipient_amo_id"]
         peer = json.loads(subprocess.check_output(["docker", "exec", native_asterisk, "cat", "/tmp/peer-state.json"], text=True))
-        assert len(peer["invites"]) == 1 and peer["invites"][0]["role"] == "customer"
+        assert len(peer["invites"]) == (2 if widget["parallel"] else 1)
+        assert all(row["role"] == "customer" for row in peer["invites"])
         assert peer["rtp_packets"] > 5
     finally:
         if process.poll() is None:

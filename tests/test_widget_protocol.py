@@ -67,6 +67,9 @@ def widget(factory, callback, client, monkeypatch):
         def read(self, path, params=None):
             if path == "/api/v4/contacts/123":
                 return raw_contact
+            if path.endswith("/links"):
+                return {"_embedded": {"links": [{"to_entity_type": "contacts", "to_entity_id": row["id"]}
+                        for row in raw_card["_embedded"]["contacts"]]}}
             return {"id": int(path.rsplit("/", 1)[-1]), **raw_card}
 
         def close(self):
@@ -181,7 +184,7 @@ def browser_agent(factory, widget, monkeypatch):
 def test_agent_lease_serializes_tabs_and_cannot_be_stolen_while_busy(factory, widget, browser_agent):
     other = str(uuid4())
     response = widget["client"].post("/api/v1/amo/widget/v2/agent/lease", json={"session_id": other}, headers=widget["headers"])
-    assert response.status_code == 409 and response.json()["error"] == "agent_in_another_tab"
+    assert response.status_code == 409 and response.json()["error"] == "browser_devices_exhausted"
     response = widget["client"].get("/api/v1/amo/widget/v2/webrtc/config", params={"session_id": other}, headers=widget["headers"])
     assert response.status_code == 409 and "sip_password" not in response.json()
     call_id = create(widget, payload(mode="browser", protocol_version=3))["call_id"]
@@ -194,6 +197,9 @@ def test_agent_lease_serializes_tabs_and_cannot_be_stolen_while_busy(factory, wi
     with factory() as db:
         assert db.scalar(select(WidgetCall)).browser_session_id == UUID(browser_agent)
         assert db.get(Operator, widget["operator_id"]).status == "busy"
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/heartbeat",
+        json={"session_id": browser_agent, "registered": True}, headers=widget["headers"])
+    assert response.status_code == 200 and response.json()["status"] == "busy"
 
 
 def test_browser_disconnected_after_allocation_never_dials_customer(factory, widget, browser_agent):
@@ -208,6 +214,20 @@ def test_browser_disconnected_after_allocation_never_dials_customer(factory, wid
     assert not widget["provider"].originates
     with factory() as db:
         assert db.scalar(select(Attempt)).reason == "responsible_browser_offline"
+        assert db.get(Operator, widget["operator_id"]).status == "free"
+
+
+def test_actual_browser_registration_is_checked_despite_a_stale_positive_heartbeat(factory, widget, browser_agent):
+    widget["provider"].browser_registered = False
+    call_id = create(widget, payload(mode="browser", protocol_version=3))["call_id"]
+    widget["client"].post(f"/api/v1/amo/widget/v2/calls/{call_id}/start", headers=widget["headers"])
+    worker = Worker(factory)
+    worker.schedule()
+    worker.telephony()
+    assert widget["provider"].registration_checks and not widget["provider"].originates
+    with factory() as db:
+        call = db.scalar(select(Attempt))
+        assert call.status == "failed" and call.reason == "browser_not_registered"
         assert db.get(Operator, widget["operator_id"]).status == "free"
 
 
@@ -240,6 +260,85 @@ def test_agent_lease_takeover_expires_queued_calls_and_blocks_old_page(factory, 
     assert state["state"] == "failed" and state["reason"] == "responsible_browser_offline"
     response = widget["client"].post("/api/v1/amo/widget/v2/agent/heartbeat", json={"session_id": browser_agent}, headers=widget["headers"])
     assert response.status_code == 409
+
+
+def test_shared_account_sessions_have_private_devices_and_independent_calls(factory, widget, browser_agent):
+    from ats.services import finish_attempt
+    from ats.webrtc import save_device
+
+    other = str(uuid4())
+    endpoint = "ats-web-" + uuid4().hex
+    with factory.begin() as db:
+        save_device(db, db.get(Operator, widget["operator_id"]), endpoint, endpoint, "y" * 48, slot=1)
+    widget["provider"].endpoints.add(endpoint)
+    for path, extra in [("lease", {}), ("heartbeat", {"registered": True})]:
+        response = widget["client"].post("/api/v1/amo/widget/v2/agent/" + path,
+            json={"session_id": other, **extra}, headers=widget["headers"])
+        assert response.status_code == 200, response.text
+    configs = [widget["client"].get("/api/v1/amo/widget/v2/webrtc/config", params={"session_id": sid},
+        headers=widget["headers"]).json() for sid in [browser_agent, other]]
+    assert configs[0]["auth_user"] != configs[1]["auth_user"]
+    assert configs[0]["sip_password"] != configs[1]["sip_password"]
+    worker = Worker(factory)
+    calls = []
+    for sid in [browser_agent, other]:
+        calls.append(create(widget, payload(mode="browser", protocol_version=3, session_id=sid))["call_id"])
+        assert widget["client"].post(f"/api/v1/amo/widget/v2/calls/{calls[-1]}/start", headers=widget["headers"]).status_code == 202
+        worker.schedule()
+    for mode, sid in [("browser", browser_agent), ("forward", other)]:
+        blocked = widget["client"].post("/api/v1/amo/widget/v2/calls",
+            json=payload(mode=mode, protocol_version=3, session_id=sid), headers=widget["headers"])
+        assert blocked.status_code == 409 and blocked.json()["error"] == "operator_unavailable"
+    for sid, ident in zip([browser_agent, other], calls, strict=True):
+        mine = widget["client"].get("/api/v1/amo/widget/v2/me", params={"session_id": sid}, headers=widget["headers"]).json()
+        assert mine["active_call"]["call_id"] == mine["initiated_call"]["call_id"] == ident
+        invites = widget["client"].get("/api/v1/amo/widget/v2/agent/calls", params={"session_id": sid}, headers=widget["headers"]).json()
+        assert [call["call_id"] for call in invites["calls"]] == [ident]
+    with factory.begin() as db:
+        attempts = db.scalars(select(Attempt).order_by(Attempt.created_at)).all()
+        assert len(attempts) == 2
+        assert len({call.route_snapshot["operator_endpoint"] for call in attempts}) == 2
+        assert all(call.channel_units == 1 for call in attempts)
+        finish_attempt(db, attempts[0], "failed", "fixture_cancelled")
+        assert db.get(Operator, widget["operator_id"]).status == "busy"
+        finish_attempt(db, attempts[1], "failed", "fixture_cancelled")
+        assert db.get(Operator, widget["operator_id"]).status == "free"
+
+
+@pytest.mark.parametrize("invalid", ["session", "token", "origin", None])
+def test_unload_beacon_can_only_cancel_its_authenticated_browser_call(factory, widget, browser_agent, invalid):
+    ident = create(widget, payload(mode="browser", protocol_version=3, session_id=browser_agent))["call_id"]
+    with factory() as db:
+        token = db.get(WidgetCall, UUID(ident)).operator_token
+    body = {"call_id": ident, "session_id": str(uuid4()) if invalid == "session" else browser_agent,
+            "token": "0" * 48 if invalid == "token" else token}
+    import json
+
+    response = widget["client"].post("/api/v1/amo/widget/v2/agent/disconnect", content=json.dumps(body),
+        headers={"Content-Type": "text/plain", "Origin": "https://foreign.amocrm.ru" if invalid == "origin" else "https://omkr.amocrm.ru"})
+    assert response.status_code == (403 if invalid else 202), response.text
+    with factory() as db:
+        assert db.get(WidgetCall, UUID(ident)).cancel_requested == (invalid is None)
+
+
+def test_call_checks_paginated_links_when_contact_is_missing_from_embedded_card(widget, monkeypatch):
+    base = __import__("ats.api_widget", fromlist=["AmoCRM"]).AmoCRM
+    pages = []
+
+    class PagedCRM(base):
+        def read(self, path, params=None):
+            if path.endswith("/links"):
+                pages.append(params["page"])
+                if params["page"] == 1:
+                    return {"_embedded": {"links": [{"to_entity_type": "companies", "to_entity_id": 123}]},
+                            "_links": {"next": {"href": "https://foreign.invalid/do-not-follow"}}}
+                return {"_embedded": {"links": [{"to_entity_type": "contacts", "to_entity_id": 123}]}}
+            return super().read(path, params)
+
+    widget["raw_card"]["_embedded"]["contacts"] = []
+    monkeypatch.setattr("ats.api_widget.AmoCRM", PagedCRM)
+    assert create(widget)["state"] == "queued"
+    assert pages == [1, 2]
 
 
 @pytest.mark.parametrize("change,value", [

@@ -57,7 +57,7 @@ def test_upgrade_preserves_beta_contacts_and_calls(factory):
             [".venv/bin/alembic", "upgrade", "head"], env=env, check=True, capture_output=True
         )
         with engine.connect() as db:
-            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0014"
+            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0015"
             assert (
                 db.scalar(text("SELECT name FROM contacts WHERE id=:id"), {"id": cid}) == "Original"
             )
@@ -78,7 +78,7 @@ def test_upgrade_preserves_beta_contacts_and_calls(factory):
         )
         assert rejected.returncode != 0 and "Callback history/configuration exists" in rejected.stderr
         with engine.connect() as db:
-            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0014"
+            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0015"
             assert db.scalar(text("SELECT channel_units FROM call_attempts WHERE id=:id"), {"id": attempt}) == 2
     finally:
         engine.dispose()

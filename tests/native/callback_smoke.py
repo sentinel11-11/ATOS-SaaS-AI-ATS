@@ -55,10 +55,11 @@ def native_asterisk(tmp_path, provider_config, monkeypatch, request):
         with factory.begin() as db:
             devices = []
             for operator in db.scalars(select(Operator).where(Operator.tenant_id == widget["tenant_id"])):
-                endpoint = "ats-web-" + operator.id.hex
-                save_device(db, operator, endpoint, endpoint, "browser-fixture-private-password-32-chars")
-                devices.append({"endpoint": endpoint, "username": endpoint,
-                                "password": "browser-fixture-private-password-32-chars"})
+                for slot in range(2):
+                    endpoint = "ats-web-" + (operator.id.hex if slot == 0 else uuid4().hex)
+                    save_device(db, operator, endpoint, endpoint, "browser-fixture-private-password-32-chars", slot=slot)
+                    devices.append({"endpoint": endpoint, "username": endpoint,
+                                    "password": "browser-fixture-private-password-32-chars"})
         import runpy
 
         render = runpy.run_path(str(root / "scripts/install-widget-webrtc.py"))["render_devices"]

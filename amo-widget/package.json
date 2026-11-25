@@ -1,6 +1,6 @@
 {
   "name": "atos-amo-widget",
-  "version": "5.3.1",
+  "version": "5.4.0",
   "private": true,
   "scripts": {"build": "esbuild vendor-entry.js --bundle --platform=browser --format=iife --target=es2020 --minify --legal-comments=eof --outfile=vendor/jssip.min.js"},
   "dependencies": {"jssip": "3.13.9"},

@@ -354,6 +354,7 @@ class CallLeg(Owned, Base):
 class OperatorDevice(Owned, Base):
     __tablename__ = "operator_devices"
     operator_id: Mapped[UUID]
+    slot: Mapped[int] = mapped_column(default=0, server_default="0")
     endpoint: Mapped[str] = mapped_column(String(80))
     username: Mapped[str] = mapped_column(String(80))
     encrypted_secret: Mapped[str] = mapped_column(Text)
@@ -364,7 +365,8 @@ class OperatorDevice(Owned, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, server_default=func.now())
     __table_args__ = (
         ForeignKeyConstraint(["tenant_id", "operator_id"], ["operators.tenant_id", "operators.id"]),
-        UniqueConstraint("operator_id"), UniqueConstraint("endpoint"),
+        UniqueConstraint("operator_id", "slot", name="uq_operator_device_slot"), UniqueConstraint("endpoint"),
+        CheckConstraint("slot >= 0 AND slot < 8", name="ck_operator_device_slot"),
     )
 
 
