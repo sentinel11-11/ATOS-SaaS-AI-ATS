@@ -1567,17 +1567,6 @@ export default function Settings({ addToast, refreshKey }) {
             </div>
 
             <div>
-              <label className="font-semibold text-muted block mb-1">Логин оператора в MegaFon ВАТС</label>
-              <input
-                className="w-full bg-[#0a1628] border border-line2 rounded-xl px-3 py-2 text-white outline-none focus:border-acc"
-                value={editingUser.megafon_user || ''}
-                onChange={(e) => setEditingUser({ ...editingUser, megafon_user: e.target.value.trim() })}
-                placeholder="например, operator1"
-              />
-              <p className="text-[11px] text-muted mt-1">Если поле пустое, для makecall используется логин пользователя ATS.</p>
-            </div>
-
-            <div>
               <label className="font-semibold text-muted block mb-1">
                 Пароль {editingUser.id ? '(оставить пустым — не менять)' : '(мин. 12 символов)'}
               </label>
