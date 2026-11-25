@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -705,6 +707,17 @@ def test_card_responsible_receives_both_modes_and_owns_resources_and_result(
         assert delivery.payload["amo_responsible_user_id"] == 7654322
         assert db.get(Operator, widget["operator_id"]).status == "free"
         assert db.get(Operator, other_id).status == "free"
+    # A different manager initiated this call. Journal attribution must use the
+    # actual participant and retain the call's name if their profile is renamed.
+    with factory.begin() as db:
+        db.get(Operator, other_id).name = "Renamed profile"
+    journal = widget["client"].post("/api/v2/calls", json={}).json()
+    row = next(row for row in journal["calls"] if row["id"] == str(attempt.id))
+    assert row["operator_name"] == "Alim"
+    exported = widget["client"].get("/api/v2/export/calls.csv")
+    assert exported.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(exported.text.lstrip("\ufeff")), delimiter=";"))
+    assert next(row for row in rows if row["id"] == str(attempt.id))["operator_name"] == "Alim"
 
 
 def test_browser_customer_gate_waits_for_real_operator_answer_and_media(factory, widget, monkeypatch):

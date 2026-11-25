@@ -134,6 +134,7 @@ export default function Journal({ addToast, refreshKey }) {
               <th className="py-2.5 px-3"># ID</th>
               <th className="py-2.5 px-3">Время</th>
               <th className="py-2.5 px-3">Контакт</th>
+              <th className="py-2.5 px-3">Оператор</th>
               <th className="py-2.5 px-3">С номера</th>
               <th className="py-2.5 px-3">Кампания</th>
               <th className="py-2.5 px-3">Длительность</th>
@@ -144,13 +145,13 @@ export default function Journal({ addToast, refreshKey }) {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-muted">
+                <td colSpan={9} className="py-8 text-center text-muted">
                   Загрузка журнала вызовов...
                 </td>
               </tr>
             ) : filteredCalls.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-dim">
+                <td colSpan={9} className="py-8 text-center text-dim">
                   Записи вызовов не найдены.
                 </td>
               </tr>
@@ -163,6 +164,7 @@ export default function Journal({ addToast, refreshKey }) {
                     <span className="font-semibold text-white block">{c.contact_name || c.contact_phone}</span>
                     {c.contact_name && <span className="font-mono text-dim text-[11px]">{c.contact_phone}</span>}
                   </td>
+                  <td className="py-3 px-3 text-muted">{c.operator_name || '—'}</td>
                   <td className="py-3 px-3 font-mono text-muted">{c.caller_id || '—'}</td>
                   <td className="py-3 px-3 text-muted">#{c.campaign_id || 0}</td>
                   <td className="py-3 px-3 text-muted">

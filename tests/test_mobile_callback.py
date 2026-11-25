@@ -98,12 +98,15 @@ def result(worker, attempt_id, state="completed", reason="", role="customer"):
     })
 
 
-def test_callback_originates_manager_first_with_two_reserved_channels(factory, callback):
+def test_callback_originates_manager_first_with_two_reserved_channels(factory, callback, logged):
     worker, attempt_id = start(factory, callback)
     frame = callback["provider"].originates[-1]
     assert frame["Channel"] == [f"Local/{MANAGER}@ats-beta-callback-operator/n"]
     assert frame["Context"] == ["ats-beta-callback-customer"]
     assert "__ATS_CUSTOMER_PHONE=+79990000101" in frame["Variable"]
+    journal = logged.post("/api/v2/calls", json={}).json()
+    assert journal["total"] == 1
+    assert journal["calls"][0]["operator_name"] == "Test manager"
     leg_event(worker, attempt_id, "operator", "created")
     leg_event(worker, attempt_id, "operator", "answered")
     native(worker, "operator", "BridgeEnter")

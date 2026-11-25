@@ -51,6 +51,7 @@ from ats.models import (
     RuntimeLog,
     Tenant,
     User,
+    WidgetCall,
     now,
 )
 from ats.repositories import TenantRepository
@@ -93,6 +94,11 @@ def legacy_calls_query(p):
             Attempt.reason.label("detail"),
             duration.label("duration_sec"),
             Attempt.external_id.label("external_call_id"),
+            func.coalesce(
+                case((WidgetCall.operator_id == Operator.id,
+                      func.nullif(WidgetCall.crm_context["responsible_name"].as_string(), ""))),
+                func.nullif(Operator.name, ""), "",
+            ).label("operator_name"),
         )
         .join(
             CampaignItem,
@@ -106,6 +112,10 @@ def legacy_calls_query(p):
             Campaign,
             (Campaign.id == CampaignItem.campaign_id) & (Campaign.tenant_id == Attempt.tenant_id),
         )
+        .outerjoin(QueueEntry, (QueueEntry.attempt_id == Attempt.id) & (QueueEntry.tenant_id == Attempt.tenant_id))
+        .outerjoin(WidgetCall, (WidgetCall.campaign_id == Campaign.id) & (WidgetCall.tenant_id == Attempt.tenant_id))
+        .outerjoin(Operator, (Operator.id == func.coalesce(QueueEntry.operator_id, WidgetCall.operator_id))
+                   & (Operator.tenant_id == Attempt.tenant_id))
         .where(Attempt.tenant_id == p.tenant_id, ~Attempt.hidden_from_journal)
     )
     incoming = (
@@ -127,6 +137,7 @@ def legacy_calls_query(p):
             literal(""),
             InboundCall.duration_seconds,
             InboundCall.external_id,
+            literal(""),
         )
         .outerjoin(
             Contact,
@@ -154,6 +165,7 @@ def legacy_calls_query(p):
         func.coalesce(func.nullif(HistoricalCall.result, ""), HistoricalCall.status),
         literal(""),
         HistoricalCall.duration_seconds,
+        literal(""),
         literal(""),
     ).where(HistoricalCall.tenant_id == p.tenant_id, ~HistoricalCall.hidden_from_journal)
     return union_all(current, incoming, historical).subquery("legacy_calls")
@@ -930,9 +942,9 @@ def export_calls(p=Depends(admin), db=Depends(session)):
     query = select(rows).order_by(rows.c.started_at.desc(), rows.c.id).limit(100000)
     content = csv_document(
         ["id", "started_at", "ended_at", "name", "phone", "caller_id", "campaign_id",
-         "direction", "result", "detail", "duration_sec", "recording"],
+         "direction", "result", "detail", "duration_sec", "recording", "operator_name"],
         ([r.id, r.started_at, r.ended_at or "", r.contact_name, r.contact_phone, r.caller_id,
-          r.campaign_id or 0, r.direction, r.result, r.detail, int(r.duration_sec or 0), ""]
+          r.campaign_id or 0, r.direction, r.result, r.detail, int(r.duration_sec or 0), "", r.operator_name]
          for r in db.execute(query.execution_options(yield_per=1000))),
     )
     audit(db, p, "export.calls.csv")
